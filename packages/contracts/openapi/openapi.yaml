@@ -1,0 +1,112 @@
+# =============================================================================
+# Katapatha API — the contract.
+#
+# LEAD-OWNED. Every $ref below was written before feature work began, so adding
+# an endpoint means adding a FILE, never editing this one. That is deliberate:
+# this file would otherwise be the one place all nine developers collide.
+#
+# Frozen after Day 1. Changes are additive only (new optional fields, new
+# endpoints). A breaking change needs LEAD approval plus one consumer ack, and
+# the Prism examples must change in the same pull request.
+# =============================================================================
+openapi: 3.1.0
+
+info:
+  title: Katapatha API
+  version: 1.0.0
+  description: |
+    Delivery coordination for Waypoint Group. One operation, four role-specific
+    workspaces: dispatcher, loader, driver, store manager.
+
+    ## Conventions that are load-bearing
+
+    - **Clock times are `"HH:MM"` strings** in Asia/Colombo wall clock, never
+      `date-time`. Calendar dates are `date`. The source data carries no
+      timezone for times and every rule is expressed in wall-clock minutes, so
+      widening these would invent information we do not have.
+    - **`TempRequirement` (an order needs) and `VehicleTemp` (a vehicle can) are
+      different types.** Conflating them is the most common way to break
+      feasibility rule 2.
+    - **Idempotency is part of the contract**, in three places: `requestId` when
+      placing orders, `clientRequestId` on a load check, and the client-minted
+      ULID that is a `StopEvent`'s primary key.
+    - **Every mutation enforces ownership**, not just role. A dispatcher is
+      scoped to a depot, a store manager to an outlet, a driver to a vehicle.
+    - **Never imply live vehicle position or background sync.** There is no GPS
+      in this system, and offline durability is claimed only once verified.
+
+servers:
+  - url: /v1
+    description: Same-origin behind the reverse proxy (production)
+  - url: http://localhost:3001/v1
+    description: Local API
+  - url: http://localhost:4010/v1
+    description: Prism mock
+
+security:
+  - cookieAuth: []
+  - bearerAuth: []
+
+tags:
+  - name: system
+  - name: auth
+  - name: reference
+  - name: orders
+    description: Store manager ordering and receipt.
+  - name: planning
+    description: Dispatcher queue, allocation and publication.
+  - name: loading
+    description: Loader dock work.
+  - name: driver
+    description: Driver run execution.
+  - name: sync
+    description: Offline outbox drain and pull.
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: katapatha_session
+      description: Used by the web app.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Used by the mobile app. Same opaque token as the cookie; only its sha256
+        hash is stored server-side.
+
+paths:
+  # ---- system / auth / reference (owner BE1) ----
+  /health:                                    { $ref: "./paths/system.yaml#/health" }
+  /auth/session:                              { $ref: "./paths/auth.yaml#/session" }
+  /auth/me:                                   { $ref: "./paths/auth.yaml#/me" }
+  /reference/outlets:                         { $ref: "./paths/reference.yaml#/outlets" }
+  /reference/vehicles:                        { $ref: "./paths/reference.yaml#/vehicles" }
+  /reference/vocabularies:                    { $ref: "./paths/reference.yaml#/vocabularies" }
+  /reference/calendar/next-operating-day:     { $ref: "./paths/reference.yaml#/nextOperatingDay" }
+
+  # ---- orders / store (owner BE2) ----
+  /orders:                                    { $ref: "./paths/orders.yaml#/collection" }
+  /orders/{orderId}:                          { $ref: "./paths/orders.yaml#/item" }
+  /orders/{orderId}/receipt:                  { $ref: "./paths/orders.yaml#/receipt" }
+
+  # ---- planning (owner BE2) ----
+  /planning-days:                             { $ref: "./paths/planning.yaml#/planningDays" }
+  /planning-days/{planningDayId}/closure:     { $ref: "./paths/planning.yaml#/closure" }
+  /plans:                                     { $ref: "./paths/planning.yaml#/plans" }
+  /plans/{planId}:                            { $ref: "./paths/planning.yaml#/planItem" }
+  /plans/{planId}/validation:                 { $ref: "./paths/planning.yaml#/planValidation" }
+  /plans/{planId}/deferrals:                  { $ref: "./paths/planning.yaml#/planDeferrals" }
+  /plans/{planId}/publication:                { $ref: "./paths/planning.yaml#/planPublication" }
+
+  # ---- loading / driver / sync (owner BE3) ----
+  /trips:                                     { $ref: "./paths/trips.yaml#/collection" }
+  /trips/{tripId}/load-list:                  { $ref: "./paths/trips.yaml#/loadList" }
+  /trips/{tripId}/load-checks/{orderId}:      { $ref: "./paths/trips.yaml#/loadCheck" }
+  /trips/{tripId}/readiness:                  { $ref: "./paths/trips.yaml#/readiness" }
+  /drivers/me/vehicle:                        { $ref: "./paths/driver.yaml#/vehicle" }
+  /drivers/me/run:                            { $ref: "./paths/driver.yaml#/run" }
+  /stops/{stopId}/events:                     { $ref: "./paths/stops.yaml#/events" }
+  /sync/stop-events:                          { $ref: "./paths/sync.yaml#/stopEvents" }
+  /sync/bootstrap:                            { $ref: "./paths/sync.yaml#/bootstrap" }

@@ -1,0 +1,83 @@
+# Owner: BE2
+PlanningDay:
+  type: object
+  required: [id, date, depotCode, status, cutoffAt]
+  properties:
+    id: { type: string, examples: ["clx0pd1a2b3c4d5e6f7g8h9i"] }
+    date: { $ref: "./common.yaml#/DateOnly" }
+    depotCode: { type: string, examples: ["Peliyagoda"] }
+    status: { type: string, enum: [OPEN, CLOSED, PLANNING, PUBLISHED] }
+    cutoffAt: { $ref: "./common.yaml#/ClockTime" }
+
+CreatePlanRequest:
+  type: object
+  required: [date, depotCode]
+  additionalProperties: false
+  properties:
+    date: { $ref: "./common.yaml#/DateOnly" }
+    depotCode: { type: string, examples: ["Peliyagoda"] }
+
+PlanStats:
+  type: object
+  required: [orders, served, deferred, tripsBuilt, hash]
+  properties:
+    orders: { type: integer, examples: [85] }
+    served: { type: integer, examples: [78] }
+    deferred: { type: integer, examples: [7] }
+    tripsBuilt: { type: integer, examples: [14] }
+    hash:
+      type: string
+      description: >
+        Deterministic fingerprint of the allocation. Identical input must always
+        produce an identical hash, so this doubles as a regression guard in CI.
+      examples: ["a3f9c1e70b4d2856"]
+
+PlanSummary:
+  type: object
+  required: [planId, status, stats]
+  properties:
+    planId: { type: string, examples: ["clx0pln1a2b3c4d5e6f7g8h"] }
+    status: { type: string, enum: [DRAFT, PUBLISHED, SUPERSEDED] }
+    stats: { $ref: "./planning.yaml#/PlanStats" }
+
+Violation:
+  type: object
+  required: [code, severity, message]
+  properties:
+    code: { type: string, examples: ["VOLUME_CAP_EXCEEDED"] }
+    severity: { type: string, enum: [error, warning] }
+    message: { type: string, examples: ["Trip 2 on VEH043 exceeds its volume capacity by 0.8 m³."] }
+    tripId: { type: [string, "null"], examples: ["clx0trp1a2b3c4d5e6f7g8h"] }
+    orderRef: { type: [string, "null"], examples: [null] }
+    overridable:
+      type: boolean
+      description: >
+        Some violations describe a real operational action (recalling a vehicle
+        from the workshop) and may be overridden with a recorded reason. Others
+        never can be: chilled goods on an ambient truck is not a judgement call.
+      examples: [false]
+
+ValidationResult:
+  type: object
+  required: [stage, violations, blocking]
+  properties:
+    stage: { type: string, enum: [draft, publish] }
+    violations: { type: array, items: { $ref: "./planning.yaml#/Violation" } }
+    blocking: { type: boolean, examples: [false] }
+
+ConfirmDeferralsRequest:
+  type: object
+  required: [decisions]
+  additionalProperties: false
+  properties:
+    decisions:
+      type: array
+      minItems: 1
+      items:
+        type: object
+        required: [assignmentId, reasonCode]
+        additionalProperties: false
+        properties:
+          assignmentId: { type: string, examples: ["clx0asg1a2b3c4d5e6f7g8h"] }
+          reasonCode: { type: string, examples: ["REEFER_FULL"] }
+          note: { type: [string, "null"], examples: [null] }

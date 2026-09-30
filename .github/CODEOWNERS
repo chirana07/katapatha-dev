@@ -1,0 +1,82 @@
+# Every path has exactly ONE owning developer. Two people should never need to
+# edit the same directory in the same week. Replace the placeholders with real
+# GitHub handles before the first pull request.
+#
+#   LEAD  @lead        scaffold, contract, schema, CI, docs, review, deploy
+#   BE1   @be1         auth, identity, reference, migrations
+#   BE2   @be2         orders, store, planning
+#   BE3   @be3         trips, loading, driver, sync
+#   WEB1  @web1        shell, auth, dispatcher planning flow
+#   WEB2  @web2        store console, dispatcher secondary views
+#   WEB3  @web3        loader tablet, driver mobile web (PWA)
+#   MOB1  @mob1        mobile shell, auth, offline outbox
+#   MOB2  @mob2        mobile driver screens
+
+# ---- shared files: LEAD only. Batch requests; LEAD lands them in one commit. ----
+*                                               @lead
+/package.json                                   @lead
+/pnpm-workspace.yaml                            @lead
+/pnpm-lock.yaml                                 @lead
+/turbo.json                                     @lead
+/tsconfig.base.json                             @lead
+/docker-compose.yml                             @lead
+/.github/                                       @lead
+/docs/                                          @lead
+
+# ---- the contract: root is LEAD; each resource file follows its route owner ----
+/packages/contracts/openapi/openapi.yaml        @lead
+/packages/contracts/openapi/components/         @lead
+/packages/contracts/openapi/paths/system.yaml     @be1
+/packages/contracts/openapi/paths/auth.yaml       @be1
+/packages/contracts/openapi/paths/reference.yaml  @be1
+/packages/contracts/openapi/paths/orders.yaml     @be2
+/packages/contracts/openapi/paths/planning.yaml   @be2
+/packages/contracts/openapi/paths/trips.yaml      @be3
+/packages/contracts/openapi/paths/driver.yaml     @be3
+/packages/contracts/openapi/paths/stops.yaml      @be3
+/packages/contracts/openapi/paths/sync.yaml       @be3
+
+# ---- shared packages ----
+/packages/core/                                 @be1
+/packages/allocator/                            @be1
+/packages/api-client/                           @web2
+/packages/tokens/                               @lead
+
+# ---- database: ONE migration author for the whole week ----
+/apps/api/prisma/schema/migrations/             @be1
+/apps/api/prisma/schema/base.prisma             @lead
+/apps/api/prisma/schema/enums.prisma            @lead
+/apps/api/prisma/schema/reference.prisma        @be1
+/apps/api/prisma/schema/identity.prisma         @be1
+/apps/api/prisma/schema/planning.prisma         @be2
+/apps/api/prisma/schema/execution.prisma        @be3
+/apps/api/prisma/schema/ledger.prisma           @be3
+/apps/api/prisma/seed/                          @be1
+
+# ---- api: one route file per resource, one owner each ----
+/apps/api/src/server.ts                         @lead
+/apps/api/src/plugins/                          @lead
+/apps/api/src/lib/                              @be1
+/apps/api/src/routes/system.ts                  @be1
+/apps/api/src/routes/auth.ts                    @be1
+/apps/api/src/routes/reference.ts               @be1
+/apps/api/src/routes/orders.ts                  @be2
+/apps/api/src/routes/planning.ts                @be2
+/apps/api/src/routes/trips.ts                   @be3
+/apps/api/src/routes/driver.ts                  @be3
+/apps/api/src/routes/stops.ts                   @be3
+/apps/api/src/routes/sync.ts                    @be3
+/apps/api/src/services/                         @be2
+/apps/api/src/services/delivery.ts              @be3
+
+# ---- web: disjoint route groups ----
+/apps/web/src/app/(shell)/                      @web1
+/apps/web/src/app/dispatcher/                   @web1
+/apps/web/src/app/store/                        @web2
+/apps/web/src/app/loader/                       @web3
+/apps/web/src/app/driver/                       @web3
+
+# ---- mobile ----
+/apps/mobile/src/outbox/                        @mob1
+/apps/mobile/src/app/                           @mob1
+/apps/mobile/src/screens/                       @mob2

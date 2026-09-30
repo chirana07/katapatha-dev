@@ -1,0 +1,20 @@
+// Waypoint delivery network — data model.
+//
+// Conventions that run through the whole schema:
+//
+//  * Clock times are "HH:MM" strings, never DateTime. The competition data has
+//    no dates on times and no timezone, and every rule in the booklet is
+//    expressed in wall-clock Asia/Colombo minutes. Converting to DateTime
+//    would invent information we do not have.
+//  * Calendar dates are @db.Date for the same reason.
+//  * Three unique indexes do correctness work rather than performance, and are
+//    marked where they appear.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}

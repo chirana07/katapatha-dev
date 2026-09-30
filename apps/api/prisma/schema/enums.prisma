@@ -1,0 +1,201 @@
+// ==========================================================================
+// enums.prisma
+//
+// All enums. Every value appears verbatim in the competition CSVs.
+// FROZEN after Day 1 — changes ripple into the OpenAPI spec and both clients.
+// LEAD approval required.
+// ==========================================================================
+
+enum Brand {
+  Fresh
+  Style
+  Tech
+}
+
+/// What an ORDER needs. Distinct from VehicleTemp on purpose.
+enum TempRequirement {
+  chilled
+  ambient
+}
+
+/// What a VEHICLE can do. A reefer may carry either; ambient may not carry chilled.
+enum VehicleTemp {
+  reefer
+  ambient
+}
+
+enum VehicleType {
+  truck
+  van
+}
+
+enum DockType {
+  rear_dock
+  street
+  mall_bay
+}
+
+enum ParkingConstraint {
+  normal
+  van_only
+  mall_dock
+}
+
+enum RoadClass {
+  urban
+  suburban
+  highway
+  hill
+}
+
+/// The two operating windows, which carry separate time budgets.
+enum Wave {
+  PREDAWN
+  DAYTIME
+}
+
+enum Role {
+  DISPATCHER
+  LOADER
+  DRIVER
+  STORE_MANAGER
+}
+
+enum VehicleStatus {
+  AVAILABLE
+  IN_WORKSHOP
+}
+
+enum PlanningDayStatus {
+  OPEN
+  CLOSED
+  PLANNING
+  PUBLISHED
+}
+
+enum OrderStatus {
+  DRAFT
+  PLACED
+  QUEUED
+  PLANNED
+  LOADED
+  IN_TRANSIT
+  DELIVERED
+  PART_DELIVERED
+  FAILED
+  DEFERRED
+  CANCELLED
+}
+
+enum PlanStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+}
+
+enum TripStatus {
+  PLANNED
+  LOADING
+  READY
+  DEPARTED
+  COMPLETED
+  CANCELLED
+}
+
+enum StopStatus {
+  PENDING
+  ARRIVED
+  UNLOADING
+  DONE
+  SKIPPED
+  FAILED
+}
+
+enum Decision {
+  SERVED
+  DEFERRED
+}
+
+enum LoadCondition {
+  OK
+  SHORT
+  DAMAGED
+  MISSING
+}
+
+enum ShortfallStatus {
+  OPEN
+  RESOLVED
+}
+
+enum ShortfallResolution {
+  SEND_SHORT
+  HOLD_ORDER
+  MOVE_TO_TRIP_2
+  CANCEL_LINE
+}
+
+enum StopEventType {
+  ARRIVED
+  UNLOAD_START
+  DELIVERED
+  PART_DELIVERED
+  FAILED
+  SKIPPED
+  POD_CAPTURED
+}
+
+enum EventSource {
+  ONLINE
+  OUTBOX
+}
+
+/// Set when a driver's offline record lands after the stop moved beneath them.
+enum ConflictState {
+  NONE
+  STALE_ASSIGNMENT
+  SUPERSEDED
+}
+
+enum ProblemKind {
+  OUTLET_CLOSED
+  ROAD_BLOCKED
+  VEHICLE_BREAKDOWN
+  ACCESS_DENIED
+  GOODS_DAMAGED
+  DELIVERY_REFUSED
+  OTHER
+}
+
+enum ProblemStatus {
+  NEW
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum ReassignmentStatus {
+  ACTIVE
+  CANCELLED
+}
+
+enum FuelEntryKind {
+  PLANNED
+  ACTUAL
+  ADJUSTMENT
+}
+
+enum CapacityActionKind {
+  RECALL_FROM_WORKSHOP
+  HIRE_RELIEF_VEHICLE
+  SHIFT_BRAND_DAY
+  RAISE_FUEL_QUOTA
+  PRE_BUILD_ORDERS
+  SPLIT_LARGE_ORDER
+}
+
+enum CapacityActionStatus {
+  PROPOSED
+  APPROVED
+  APPLIED
+  REJECTED
+}

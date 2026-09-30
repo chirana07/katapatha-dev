@@ -1,0 +1,62 @@
+Unauthorized:
+  description: No valid session.
+  content:
+    application/json:
+      schema: { $ref: "../schemas/common.yaml#/Error" }
+      example: { error: { code: UNAUTHENTICATED, message: "Sign in required." } }
+
+Forbidden:
+  description: >
+    Authenticated but not permitted. Either the role is wrong, or the record is
+    not owned by this depot, outlet or vehicle.
+  content:
+    application/json:
+      schema: { $ref: "../schemas/common.yaml#/Error" }
+      example: { error: { code: FORBIDDEN, message: "You do not own this record." } }
+
+NotFound:
+  description: No such record, or not visible at this scope.
+  content:
+    application/json:
+      schema: { $ref: "../schemas/common.yaml#/Error" }
+      example: { error: { code: NOT_FOUND, message: "No such order." } }
+
+Conflict:
+  description: The action does not apply in the record's current state.
+  content:
+    application/json:
+      schema: { $ref: "../schemas/common.yaml#/Error" }
+      example:
+        error:
+          code: PLAN_ALREADY_PUBLISHED
+          message: "This plan has already been published."
+
+ValidationFailed:
+  description: >
+    The request was well formed but the operation is blocked by business rules.
+    `details.violations` carries the reasons, so the client can render them
+    beside the failed action instead of guessing.
+  content:
+    application/json:
+      schema: { $ref: "../schemas/common.yaml#/Error" }
+      example:
+        error:
+          code: PLAN_HAS_BLOCKING_VIOLATIONS
+          message: "Two trips exceed their volume capacity."
+          details:
+            violations:
+              - code: VOLUME_CAP_EXCEEDED
+                severity: error
+                message: "Trip 2 on VEH043 exceeds its volume capacity by 0.8 m³."
+                overridable: false
+
+TooManyRequests:
+  description: Rate limited.
+  headers:
+    Retry-After:
+      schema: { type: integer }
+      description: Seconds to wait.
+  content:
+    application/json:
+      schema: { $ref: "../schemas/common.yaml#/Error" }
+      example: { error: { code: TOO_MANY_ATTEMPTS, message: "Too many sign-in attempts." } }

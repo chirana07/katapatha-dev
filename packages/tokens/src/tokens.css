@@ -1,0 +1,81 @@
+/*
+ * Katapatha design tokens.
+ *
+ * Values come from DESIGN.md, which is binding. LEAD-owned: one file, one
+ * owner, so this is never a merge conflict.
+ *
+ * There is deliberately no runtime palette switcher and no night theme.
+ * DESIGN.md: "Palette selection is not part of the product." The supplied
+ * identity is fixed, and making a review aid look like product configuration
+ * weakened brand consistency last time.
+ */
+:root {
+  --c-navy: #20364e;
+  --c-flame: #f6b723;
+  --c-ruby: #ae0109;
+  --c-ochre: #fbcd5a;
+  --c-crimson: #d80511;
+
+  --c-ink: #0f172a;
+  --c-muted: #526277;
+  --c-canvas: #f1f5f9;
+  --c-raised: #f8fafc;
+  --c-surface: #ffffff;
+  --c-line: #e2e8f0;
+  --c-link: #2563eb;
+
+  --c-brand-fresh: #157347;
+  --c-brand-style: var(--c-ruby);
+  --c-brand-tech: var(--c-link);
+
+  --radius-control: 8px;
+  --radius-card: 10px;
+
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+/* Semantic layer. Components use these, never the raw --c-* values, so a
+   palette correction lands in one place. */
+@theme inline {
+  --color-action: var(--c-flame);
+  --color-rail: var(--c-navy);
+  --color-critical: var(--c-ruby);
+  --color-canvas: var(--c-canvas);
+  --color-surface: var(--c-surface);
+  --color-raised: var(--c-raised);
+  --color-line: var(--c-line);
+  --color-ink: var(--c-ink);
+  --color-muted: var(--c-muted);
+  --color-link: var(--c-link);
+}
+
+@layer base {
+  body {
+    background: var(--c-canvas);
+    color: var(--c-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  /* Phone forms and task flows use 16px, per DESIGN.md. */
+  @media (max-width: 480px) {
+    body { font-size: 16px; }
+  }
+
+  /* Keyboard users must always be able to see where they are. */
+  :focus-visible {
+    outline: 2px solid var(--c-link);
+    outline-offset: 2px;
+  }
+
+  /* Capacity, fuel, counts, times and quantities. */
+  .tabular { font-variant-numeric: tabular-nums; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

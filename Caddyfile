@@ -1,0 +1,13 @@
+# One origin for the whole product.
+#
+# The web app and the API are served from the same host, so the session cookie
+# is first-party, CORS never applies, and SameSite never has to be relaxed.
+# The mobile app talks to the same /v1 prefix with a bearer token instead.
+:80 {
+	handle_path /v1/* {
+		reverse_proxy api:3001
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+}

@@ -1,0 +1,49 @@
+# Owner: BE1
+Outlet:
+  type: object
+  required: [id, brand, districtName, depotCode, dockType, windowOpen, windowClose]
+  properties:
+    id: { type: string, examples: ["OUT074"] }
+    displayName: { type: string, examples: ["Fresh Nugegoda"] }
+    brand: { $ref: "./common.yaml#/Brand" }
+    districtName: { type: string, examples: ["Colombo"] }
+    depotCode: { type: string, examples: ["Peliyagoda"] }
+    dockType: { type: string, enum: [rear_dock, street, mall_bay] }
+    parkingConstraint: { type: string, enum: [normal, van_only, mall_dock] }
+    windowOpen: { $ref: "./common.yaml#/ClockTime" }
+    windowClose: { $ref: "./common.yaml#/ClockTime" }
+    mallWindowOpen: { oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }] }
+    mallWindowClose: { oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }] }
+
+Vehicle:
+  type: object
+  required: [id, type, temp, weightCapKg, volumeCapM3, depotCode]
+  properties:
+    id: { type: string, examples: ["VEH043"] }
+    type: { type: string, enum: [truck, van] }
+    temp: { $ref: "./common.yaml#/VehicleTemp" }
+    weightCapKg: { type: number, examples: [3500] }
+    volumeCapM3: { type: number, examples: [18.5] }
+    kmPerL: { type: number, examples: [7.2] }
+    weeklyFuelQuotaL: { type: number, examples: [420] }
+    depotCode: { type: string, examples: ["Peliyagoda"] }
+
+Vocabularies:
+  type: object
+  description: >
+    Server-owned code lists. Clients must render these rather than hardcoding
+    their own copies, so a reason code added on the server appears everywhere.
+  required: [deferralReasons, shortfallReasons, problemReasons]
+  properties:
+    deferralReasons:
+      type: array
+      items: { type: string }
+      examples: [["REEFER_FULL","NO_VAN","WINDOW_UNREACHABLE","TIME_BUDGET","FUEL_QUOTA","VEHICLE_IN_WORKSHOP","ORDER_TOO_LARGE","AFTER_CUTOFF"]]
+    shortfallReasons:
+      type: array
+      items: { type: string }
+      examples: [["MISSING","DAMAGED","SHORT_QUANTITY","NOT_COLD_ENOUGH"]]
+    problemReasons:
+      type: array
+      items: { type: string }
+      examples: [["OUTLET_CLOSED","ACCESS_DENIED","VEHICLE_BREAKDOWN","ROAD_BLOCKED","DELIVERY_REFUSED"]]

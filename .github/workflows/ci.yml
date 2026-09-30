@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: katapatha
+          POSTGRES_PASSWORD: katapatha
+          POSTGRES_DB: katapatha
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U katapatha -d katapatha"
+          --health-interval 3s --health-timeout 5s --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://katapatha:katapatha@localhost:5432/katapatha?schema=public
+      SHADOW_DATABASE_URL: postgresql://katapatha:katapatha@localhost:5432/katapatha_shadow?schema=public
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # --frozen-lockfile so a lockfile edited by hand fails here rather than
+      # drifting silently, which is how the previous repo ended up running a
+      # different Prisma than it had pinned.
+      - run: pnpm install --frozen-lockfile
+
+      - name: Contract lints
+        run: pnpm contract:lint
+
+      - name: Generated artefacts are up to date
+        run: pnpm gen:check
+
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+
+      - name: Create shadow database
+        run: PGPASSWORD=katapatha psql -h localhost -U katapatha -d katapatha -c 'CREATE DATABASE katapatha_shadow;'
+
+      - name: Apply migrations
+        working-directory: apps/api
+        run: pnpm exec prisma migrate deploy
+
+      - name: Schema drift gate
+        working-directory: apps/api
+        run: |
+          pnpm exec prisma migrate diff \
+            --from-migrations prisma/schema/migrations \
+            --to-schema-datamodel prisma/schema \
+            --shadow-database-url "$SHADOW_DATABASE_URL" \
+            --exit-code
+
+      - name: Seed
+        working-directory: apps/api
+        run: pnpm run db:seed

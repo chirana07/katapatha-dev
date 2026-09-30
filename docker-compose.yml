@@ -1,0 +1,58 @@
+# Committed and deliberately safe to publish: it mounts no data folder, so the
+# database seeds from the synthetic fixture in apps/api/prisma/seed/fixture.
+# To opt into the confidential CSVs, copy docker-compose.override.yml.example.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: katapatha
+      POSTGRES_PASSWORD: katapatha
+      POSTGRES_DB: katapatha
+    ports:
+      # Loopback only. The previous repo deliberately removed Postgres' default
+      # host exposure; this keeps local prisma/psql working without putting the
+      # database on the network.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U katapatha -d katapatha"]
+      interval: 3s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://katapatha:katapatha@db:5432/katapatha?schema=public
+      NODE_ENV: production
+      PORT: 3001
+      ALLOW_DEMO_ACCESS: ${ALLOW_DEMO_ACCESS:-0}
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    depends_on: [api]
+    environment:
+      NODE_ENV: production
+      # Same origin: the proxy routes /v1/* to the api service.
+      API_BASE_URL: http://api:3001/v1
+    restart: unless-stopped
+
+  proxy:
+    image: caddy:2-alpine
+    depends_on: [web, api]
+    ports:
+      - "8080:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    restart: unless-stopped
+
+volumes:
+  db-data:

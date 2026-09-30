@@ -1,0 +1,98 @@
+// ==========================================================================
+// identity.prisma
+//
+// Identity, sessions, audit, notifications. Owner: BE1.
+// ==========================================================================
+
+model User {
+  id               String   @id @default(cuid())
+  email            String   @unique
+  name             String
+  role             Role
+  passwordHash     String
+  depotCode        String?
+  outletId         String?
+  outlet           Outlet?  @relation(fields: [outletId], references: [id])
+  defaultVehicleId String?
+  createdAt        DateTime @default(now())
+
+  sessions      Session[]
+  auditEvents   AuditEvent[]
+  notifications Notification[]
+
+  @@index([role])
+}
+
+model Session {
+  token     String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 30 days, deliberately without rotation: a driver's phone must stay signed
+  /// in across an offline stretch, so short-lived rotating tokens are wrong here.
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  userAgent String?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Hashed email and IP buckets used to slow credential guessing without
+/// storing raw identifiers in the throttle table.
+model LoginThrottle {
+  // The three timestamps are @db.Timestamptz(3) to match the deployed table.
+  // The hand-written login_throttle migration created them as TIMESTAMPTZ(3),
+  // but the model declared a bare DateTime (which Prisma maps to a timestamp
+  // WITHOUT time zone), so the datamodel and the database disagreed on three
+  // columns. That made `prisma migrate dev` emit a surprise corrective
+  // migration and would fail a CI drift gate on day one. Annotating the model
+  // is the right direction to fix it: an absolute instant like "blocked until"
+  // genuinely wants a time zone, and this needs no ALTER on a live table.
+  key            String    @id
+  failures       Int       @default(0)
+  firstFailureAt DateTime  @default(now()) @db.Timestamptz(3)
+  blockedUntil   DateTime? @db.Timestamptz(3)
+  updatedAt      DateTime  @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@index([blockedUntil])
+}
+
+/// Every decision, with who made it, when, and why. This is the answer to the
+/// brief's "deferrals lack a clear record".
+model AuditEvent {
+  id          String   @id @default(cuid())
+  at          DateTime @default(now())
+  actorUserId String?
+  actor       User?    @relation(fields: [actorUserId], references: [id])
+  actorRole   Role?
+  action      String
+  entityType  String
+  entityId    String
+  reasonCode  String?
+  note        String?
+  before      Json?
+  after       Json?
+  requestId   String?
+
+  @@index([entityType, entityId, at])
+  @@index([actorUserId, at])
+  @@index([action, at])
+  @@index([at])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String?
+  user      User?     @relation(fields: [userId], references: [id])
+  outletId  String?
+  outlet    Outlet?   @relation(fields: [outletId], references: [id])
+  kind      String
+  title     String
+  body      String
+  payload   Json?
+  createdAt DateTime  @default(now())
+  readAt    DateTime?
+
+  @@index([userId, readAt])
+  @@index([outletId, createdAt])
+}

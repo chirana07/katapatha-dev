@@ -1,0 +1,34 @@
+# Owner: BE1
+SignInRequest:
+  type: object
+  required: [email, password]
+  additionalProperties: false
+  properties:
+    email: { type: string, format: email, examples: ["nimal@waypoint.lk"] }
+    password: { type: string, minLength: 1, examples: ["waypoint"] }
+
+Session:
+  type: object
+  required: [token, user, home]
+  properties:
+    token:
+      type: string
+      description: >
+        Opaque bearer token. The same value is also set as an httpOnly cookie.
+        Web uses the cookie; the mobile app uses the bearer token. Only a sha256
+        hash of this is stored server-side.
+      examples: ["k7Qw2nT9xR4mB1vY6pL0aZ8cJ3hF5sD-eG"]
+    user: { $ref: "./auth.yaml#/SessionUser" }
+    home: { type: string, examples: ["/dispatcher"] }
+
+SessionUser:
+  type: object
+  required: [id, email, name, role]
+  properties:
+    id: { type: string, examples: ["clx0a1b2c3d4e5f6g7h8i9j0"] }
+    email: { type: string, format: email, examples: ["nimal@waypoint.lk"] }
+    name: { type: string, examples: ["Nimal Perera"] }
+    role: { $ref: "./common.yaml#/Role" }
+    depotCode: { type: [string, "null"], examples: ["Peliyagoda"] }
+    outletId: { type: [string, "null"], examples: [null] }
+    defaultVehicleId: { type: [string, "null"], examples: [null] }

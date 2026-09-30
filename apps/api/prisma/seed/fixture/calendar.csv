@@ -1,0 +1,11 @@
+date,dow,dow_name,is_weekend,iso_year,iso_week,is_payday,festival,festival_ramp,is_holiday,monsoon,is_operating
+2026-04-09,4,Thursday,0,2026,15,0,,0.3,0,1,1
+2026-04-10,5,Friday,0,2026,15,0,,0.4,0,1,1
+2026-04-11,6,Saturday,1,2026,15,0,,0.5,0,1,1
+2026-04-12,7,Sunday,1,2026,15,0,,0.6,0,1,0
+2026-04-13,1,Monday,0,2026,16,0,New Year,0.8,0,1,1
+2026-04-14,2,Tuesday,0,2026,16,0,New Year,1,1,1,0
+2026-04-15,3,Wednesday,0,2026,16,1,New Year,0.8,0,1,1
+2026-04-16,4,Thursday,0,2026,16,0,,0.5,0,1,1
+2026-04-17,5,Friday,0,2026,16,0,,0.3,0,1,1
+2026-04-18,6,Saturday,1,2026,16,0,,0.2,0,1,1

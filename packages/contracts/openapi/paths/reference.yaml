@@ -1,0 +1,94 @@
+# Owner: BE1
+outlets:
+  get:
+    operationId: listOutlets
+    summary: Outlets visible to the caller
+    tags: [reference]
+    responses:
+      "200":
+        description: Outlets.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/reference.yaml#/Outlet" }
+            example:
+              - id: "OUT074"
+                displayName: "Fresh Nugegoda"
+                brand: Fresh
+                districtName: "Colombo"
+                depotCode: "Peliyagoda"
+                dockType: rear_dock
+                parkingConstraint: van_only
+                windowOpen: "06:00"
+                windowClose: "11:00"
+                mallWindowOpen: null
+                mallWindowClose: null
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+
+vehicles:
+  get:
+    operationId: listVehicles
+    summary: Vehicles at the caller's depot
+    tags: [reference]
+    responses:
+      "200":
+        description: Vehicles.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/reference.yaml#/Vehicle" }
+            example:
+              - id: "VEH043"
+                type: truck
+                temp: reefer
+                weightCapKg: 3500
+                volumeCapM3: 18.5
+                kmPerL: 7.2
+                weeklyFuelQuotaL: 420
+                depotCode: "Peliyagoda"
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+
+vocabularies:
+  get:
+    operationId: getVocabularies
+    summary: Server-owned reason-code lists
+    description: >
+      Clients render these rather than hardcoding their own copies, so a reason
+      code added on the server appears in web and mobile without a release.
+    tags: [reference]
+    responses:
+      "200":
+        description: Code lists.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/reference.yaml#/Vocabularies" }
+            example:
+              deferralReasons: [REEFER_FULL, NO_VAN, WINDOW_UNREACHABLE, TIME_BUDGET, FUEL_QUOTA, VEHICLE_IN_WORKSHOP, ORDER_TOO_LARGE, AFTER_CUTOFF]
+              shortfallReasons: [MISSING, DAMAGED, SHORT_QUANTITY, NOT_COLD_ENOUGH]
+              problemReasons: [OUTLET_CLOSED, ACCESS_DENIED, VEHICLE_BREAKDOWN, ROAD_BLOCKED, DELIVERY_REFUSED]
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+
+nextOperatingDay:
+  get:
+    operationId: getNextOperatingDay
+    summary: The next date the network operates
+    tags: [reference]
+    parameters:
+      - name: after
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+    responses:
+      "200":
+        description: Next operating date.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date]
+              properties:
+                date: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+            example: { date: "2026-10-01" }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }

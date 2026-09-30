@@ -1,0 +1,247 @@
+# Owner: BE2
+planningDays:
+  get:
+    operationId: listPlanningDays
+    summary: The order queue state for a date
+    tags: [planning]
+    parameters:
+      - $ref: "../components/parameters/common.yaml#/Date"
+      - $ref: "../components/parameters/common.yaml#/DepotCode"
+    responses:
+      "200":
+        description: Planning day.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/planning.yaml#/PlanningDay" }
+            example:
+              - id: "clx0pd1a2b3c4d5e6f7g8h9i"
+                date: "2026-10-01"
+                depotCode: "Peliyagoda"
+                status: OPEN
+                cutoffAt: "16:00"
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+
+closure:
+  parameters:
+    - name: planningDayId
+      in: path
+      required: true
+      schema: { type: string }
+  post:
+    operationId: closeOrderQueue
+    summary: Close the order queue for the day
+    description: >
+      OPEN to CLOSED, writing a queue snapshot. Replaying returns 200 with the
+      current state rather than an error — closing twice is not a mistake worth
+      blocking a dispatcher for.
+    tags: [planning]
+    responses:
+      "200":
+        description: Queue closed (or already closed).
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/planning.yaml#/PlanningDay" }
+            example:
+              id: "clx0pd1a2b3c4d5e6f7g8h9i"
+              date: "2026-10-01"
+              depotCode: "Peliyagoda"
+              status: CLOSED
+              cutoffAt: "16:00"
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+
+plans:
+  get:
+    operationId: listPlans
+    summary: Plans for a date
+    tags: [planning]
+    parameters:
+      - $ref: "../components/parameters/common.yaml#/Date"
+      - $ref: "../components/parameters/common.yaml#/DepotCode"
+    responses:
+      "200":
+        description: Plans.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/planning.yaml#/PlanSummary" }
+            example:
+              - planId: "clx0pln1a2b3c4d5e6f7g8h"
+                status: DRAFT
+                stats: { orders: 85, served: 78, deferred: 7, tripsBuilt: 14, hash: "a3f9c1e70b4d2856" }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+  post:
+    operationId: createPlan
+    summary: Run the allocator and produce a draft plan
+    description: >
+      Also the re-run path: an existing DRAFT for the day is replaced, so
+      re-running is free and leaves no trail of half-plans. Requires the
+      planning day to be CLOSED or PLANNING.
+    tags: [planning]
+    parameters:
+      - $ref: "../components/parameters/common.yaml#/IdempotencyKey"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/planning.yaml#/CreatePlanRequest" }
+    responses:
+      "201":
+        description: Draft plan created.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/planning.yaml#/PlanSummary" }
+            example:
+              planId: "clx0pln1a2b3c4d5e6f7g8h"
+              status: DRAFT
+              stats: { orders: 85, served: 78, deferred: 7, tripsBuilt: 14, hash: "a3f9c1e70b4d2856" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "409": { $ref: "../components/responses/common.yaml#/Conflict" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+planItem:
+  parameters:
+    - name: planId
+      in: path
+      required: true
+      schema: { type: string }
+  get:
+    operationId: getPlan
+    summary: The plan board
+    tags: [planning]
+    responses:
+      "200":
+        description: Plan with trips and assignments.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planId, status, stats, trips]
+              properties:
+                planId: { type: string }
+                status: { type: string, enum: [DRAFT, PUBLISHED, SUPERSEDED] }
+                stats: { $ref: "../components/schemas/planning.yaml#/PlanStats" }
+                trips:
+                  type: array
+                  items: { $ref: "../components/schemas/trips.yaml#/Trip" }
+            example:
+              planId: "clx0pln1a2b3c4d5e6f7g8h"
+              status: DRAFT
+              stats: { orders: 85, served: 78, deferred: 7, tripsBuilt: 14, hash: "a3f9c1e70b4d2856" }
+              trips:
+                - id: "clx0trp1a2b3c4d5e6f7g8h"
+                  vehicleId: "VEH043"
+                  tripNo: 1
+                  brand: Fresh
+                  districtName: "Colombo"
+                  wave: PREDAWN
+                  status: PLANNED
+                  plannedDepartAt: "03:30"
+                  plannedMinutes: 212
+                  sumWeightKg: 3210.5
+                  sumVolumeM3: 16.8
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+
+planValidation:
+  parameters:
+    - name: planId
+      in: path
+      required: true
+      schema: { type: string }
+  get:
+    operationId: getPlanValidation
+    summary: Run the shared validator against a plan
+    description: >
+      The same isomorphic validator the allocator self-checks with and that
+      publication gates on. Exposing it lets the board show violations live
+      instead of discovering them at publish time.
+    tags: [planning]
+    parameters:
+      - name: stage
+        in: query
+        required: false
+        schema: { type: string, enum: [draft, publish], default: draft }
+    responses:
+      "200":
+        description: Validation result.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/planning.yaml#/ValidationResult" }
+            example:
+              stage: draft
+              blocking: false
+              violations:
+                - code: HIGH_PRIORITY_DEFERRED
+                  severity: warning
+                  message: "OUT074 was deferred yesterday and is deferred again."
+                  tripId: null
+                  orderRef: "ORD-004312"
+                  overridable: false
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+
+planDeferrals:
+  parameters:
+    - name: planId
+      in: path
+      required: true
+      schema: { type: string }
+  put:
+    operationId: confirmDeferrals
+    summary: Attach a reason code to each deferred order
+    description: >
+      Every deferral carries a reason. Publication is blocked while any deferred
+      order lacks one.
+    tags: [planning]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/planning.yaml#/ConfirmDeferralsRequest" }
+    responses:
+      "200":
+        description: Reasons recorded.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmed]
+              properties:
+                confirmed: { type: integer }
+            example: { confirmed: 7 }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+planPublication:
+  parameters:
+    - name: planId
+      in: path
+      required: true
+      schema: { type: string }
+  post:
+    operationId: publishPlan
+    summary: Publish the plan
+    description: >
+      An atomic one-time claim. Publishing commits fuel, notifies deferred
+      outlets, and moves served orders to PLANNED. A second attempt is a 409,
+      not a silent success.
+    tags: [planning]
+    parameters:
+      - $ref: "../components/parameters/common.yaml#/IdempotencyKey"
+    responses:
+      "201":
+        description: Published.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/planning.yaml#/PlanSummary" }
+            example:
+              planId: "clx0pln1a2b3c4d5e6f7g8h"
+              status: PUBLISHED
+              stats: { orders: 85, served: 78, deferred: 7, tripsBuilt: 14, hash: "a3f9c1e70b4d2856" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "409": { $ref: "../components/responses/common.yaml#/Conflict" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }

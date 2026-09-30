@@ -1,0 +1,139 @@
+# Owner: BE3
+collection:
+  get:
+    operationId: listTrips
+    summary: Published trips at the caller's depot
+    tags: [loading]
+    parameters:
+      - $ref: "../components/parameters/common.yaml#/Date"
+      - name: status
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/TripStatus" }
+    responses:
+      "200":
+        description: Trips.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/trips.yaml#/Trip" }
+            example:
+              - id: "clx0trp1a2b3c4d5e6f7g8h"
+                vehicleId: "VEH043"
+                tripNo: 1
+                brand: Fresh
+                districtName: "Colombo"
+                wave: PREDAWN
+                status: PLANNED
+                plannedDepartAt: "03:30"
+                plannedMinutes: 212
+                sumWeightKg: 3210.5
+                sumVolumeM3: 16.8
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+
+loadList:
+  parameters:
+    - name: tripId
+      in: path
+      required: true
+      schema: { type: string }
+  get:
+    operationId: getLoadList
+    summary: What to load, in loading order
+    description: Lines come back in REVERSE delivery order, because the driver unloads from the back.
+    tags: [loading]
+    responses:
+      "200":
+        description: Load list.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/trips.yaml#/LoadList" }
+            example:
+              tripId: "clx0trp1a2b3c4d5e6f7g8h"
+              status: PLANNED
+              lines:
+                - orderId: "clx0ord1a2b3c4d5e6f7g8h9"
+                  orderRef: "ORD-004312"
+                  outletId: "OUT074"
+                  seq: 3
+                  expectedUnits: 120
+                  loadedUnits: null
+                  condition: null
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+
+loadCheck:
+  parameters:
+    - name: tripId
+      in: path
+      required: true
+      schema: { type: string }
+    - name: orderId
+      in: path
+      required: true
+      schema: { type: string }
+  put:
+    operationId: recordLoadCheck
+    summary: Record one line as loaded
+    description: >
+      An upsert, so re-checking a line corrects it rather than duplicating it.
+      A non-OK condition opens a shortfall that blocks departure until resolved.
+    tags: [loading]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/trips.yaml#/LoadCheckRequest" }
+    responses:
+      "200":
+        description: Line recorded.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/trips.yaml#/LoadCheck" }
+            example:
+              tripId: "clx0trp1a2b3c4d5e6f7g8h"
+              orderId: "clx0ord1a2b3c4d5e6f7g8h9"
+              expectedUnits: 120
+              loadedUnits: 120
+              condition: OK
+              shortfallId: null
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "409": { $ref: "../components/responses/common.yaml#/Conflict" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+readiness:
+  parameters:
+    - name: tripId
+      in: path
+      required: true
+      schema: { type: string }
+  post:
+    operationId: markTripReady
+    summary: Release the vehicle
+    description: >
+      Gated: every line must be checked and no open shortfall may block
+      departure. A blocked attempt returns 409 with the specific reason, so the
+      loader can see what is missing rather than a generic failure.
+    tags: [loading]
+    responses:
+      "200":
+        description: Released.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/trips.yaml#/ReadinessResult" }
+            example:
+              tripId: "clx0trp1a2b3c4d5e6f7g8h"
+              status: READY
+              releasedAt: "2026-09-30T03:05:00Z"
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "409":
+        description: Blocked by an incomplete load or an open shortfall.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/common.yaml#/Error" }
+            example:
+              error:
+                code: LOAD_INCOMPLETE
+                message: "3 of 7 lines are still unchecked."
+                details: { checked: 4, expected: 7 }

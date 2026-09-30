@@ -1,0 +1,27 @@
+{
+  "name": "@katapatha/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@katapatha/api-client": "workspace:*",
+    "@katapatha/contracts": "workspace:*",
+    "@katapatha/core": "workspace:*",
+    "@katapatha/tokens": "workspace:*",
+    "expo": "57.0.26",
+    "expo-router": "57.0.24",
+    "expo-secure-store": "57.0.4",
+    "expo-sqlite": "57.0.3",
+    "react": "19.2.8",
+    "react-native": "0.87.1"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/react": "19.2.2"
+  }
+}

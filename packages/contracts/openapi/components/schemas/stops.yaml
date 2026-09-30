@@ -1,0 +1,131 @@
+# Owner: BE3
+Run:
+  type: object
+  required: [date, vehicleId, trips]
+  properties:
+    date: { $ref: "./common.yaml#/DateOnly" }
+    vehicleId: { type: string, examples: ["VEH043"] }
+    trips:
+      type: array
+      items:
+        type: object
+        required: [tripId, tripNo, wave, stops]
+        properties:
+          tripId: { type: string, examples: ["clx0trp1a2b3c4d5e6f7g8h"] }
+          tripNo: { type: integer, examples: [1] }
+          wave: { $ref: "./common.yaml#/Wave" }
+          stops: { type: array, items: { $ref: "./stops.yaml#/Stop" } }
+
+Stop:
+  type: object
+  required: [id, seq, outletId, status]
+  properties:
+    id: { type: string, examples: ["clx0stp1a2b3c4d5e6f7g8h"] }
+    seq: { type: integer, examples: [1] }
+    outletId: { type: string, examples: ["OUT074"] }
+    outletName: { type: string, examples: ["Fresh Nugegoda"] }
+    status: { $ref: "./common.yaml#/StopStatus" }
+    plannedArrivalAt: { $ref: "./common.yaml#/ClockTime" }
+    windowOpen: { $ref: "./common.yaml#/ClockTime" }
+    windowClose: { $ref: "./common.yaml#/ClockTime" }
+    accessNote: { type: [string, "null"], examples: ["Rear dock. Van only."] }
+    orders:
+      type: array
+      items:
+        type: object
+        required: [orderId, orderRef, expectedUnits]
+        properties:
+          orderId: { type: string, examples: ["clx0ord1a2b3c4d5e6f7g8h9"] }
+          orderRef: { type: string, examples: ["ORD-004312"] }
+          expectedUnits: { type: integer, examples: [120] }
+
+StopEvent:
+  type: object
+  description: >
+    One recorded fact about a stop. The client mints the ULID id, so replaying
+    an event — online or from the offline outbox — is idempotent by
+    construction. `occurredAt` is the DEVICE clock and must be presented as
+    "recorded on device"; the server records its own receipt time separately.
+  required: [id, type, occurredAt]
+  properties:
+    id: { $ref: "./common.yaml#/Ulid" }
+    type:
+      type: string
+      enum: [ARRIVED, UNLOAD_START, DELIVERED, PART_DELIVERED, FAILED, SKIPPED, POD_CAPTURED]
+      examples: ["ARRIVED"]
+    occurredAt: { type: string, format: date-time, examples: ["2026-09-30T04:12:00Z"] }
+    orderId: { type: [string, "null"], examples: [null] }
+    deliveredUnits: { type: [integer, "null"], examples: [null] }
+    recipientName: { type: [string, "null"], examples: [null] }
+    signatureData: { type: [string, "null"], description: Base64 data URL., examples: [null] }
+    photoData: { type: [string, "null"], description: Base64 data URL., examples: [null] }
+    reasonCode: { type: [string, "null"], examples: [null] }
+
+SubmitEventsRequest:
+  type: object
+  required: [deviceId, events]
+  additionalProperties: false
+  properties:
+    deviceId: { type: string, examples: ["device-7f3a91"] }
+    events:
+      type: array
+      minItems: 1
+      items: { $ref: "./stops.yaml#/StopEvent" }
+
+EventResult:
+  type: object
+  required: [id, status]
+  properties:
+    id: { $ref: "./common.yaml#/Ulid" }
+    status:
+      type: string
+      description: >
+        `duplicate` is a success, not an error — it is what a correct outbox
+        replay looks like.
+      enum: [accepted, duplicate, conflict]
+      examples: ["accepted"]
+    conflictState:
+      type: [string, "null"]
+      enum: [NONE, STALE_ASSIGNMENT, SUPERSEDED, null]
+
+SubmitEventsResult:
+  type: object
+  required: [accepted, duplicates, conflicts, results]
+  properties:
+    accepted: { type: integer, examples: [3] }
+    duplicates: { type: integer, examples: [0] }
+    conflicts: { type: integer, examples: [0] }
+    results: { type: array, items: { $ref: "./stops.yaml#/EventResult" } }
+
+SyncBatchRequest:
+  type: object
+  description: >
+    The offline outbox drain. Events may span several stops. This is the same
+    applier as POST /stops/{stopId}/events, batched and unscoped, so the online
+    and offline paths can never diverge.
+  required: [deviceId, clientClockAt, events]
+  additionalProperties: false
+  properties:
+    deviceId: { type: string, examples: ["device-7f3a91"] }
+    clientClockAt:
+      type: string
+      format: date-time
+      description: Device clock at drain time, used to measure skew.
+      examples: ["2026-09-30T06:02:11Z"]
+    events:
+      type: array
+      minItems: 1
+      items: { $ref: "./stops.yaml#/StopEvent" }
+
+SyncBatchResult:
+  allOf:
+    - $ref: "./stops.yaml#/SubmitEventsResult"
+    - type: object
+      required: [clockSkewMs, serverSeq]
+      properties:
+        clockSkewMs: { type: integer, examples: [842] }
+        serverSeq:
+          type: integer
+          format: int64
+          description: Highest server sequence assigned in this batch; use as the next `sinceSeq`.
+          examples: [10428]

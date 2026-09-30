@@ -1,0 +1,82 @@
+# Cross-cutting primitives. LEAD-owned. Changing these ripples into every client.
+
+ClockTime:
+  type: string
+  description: >
+    Wall-clock time in Asia/Colombo as "HH:MM". Never a date-time. The source
+    data carries no date and no timezone for times, and every rule in the
+    booklet is expressed in wall-clock minutes, so widening this to date-time
+    would invent information we do not have.
+  pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+  examples: ["03:30", "16:00"]
+
+DateOnly:
+  type: string
+  format: date
+  description: A calendar date with no time component.
+  pattern: '^\d{4}-\d{2}-\d{2}$'
+  examples: ["2026-09-30"]
+
+Ulid:
+  type: string
+  description: >
+    Client-generated, time-sortable identifier (Crockford base32). The client
+    mints this so that replaying a write is idempotent by construction.
+  pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'
+  examples: ["01JB2X8Q9K7YC4V3M0ZQ5T6RWE"]
+
+Role:
+  type: string
+  enum: [DISPATCHER, LOADER, DRIVER, STORE_MANAGER]
+
+Brand:
+  type: string
+  enum: [Fresh, Style, Tech]
+
+TempRequirement:
+  type: string
+  description: What an ORDER needs. Deliberately distinct from VehicleTemp.
+  enum: [chilled, ambient]
+
+VehicleTemp:
+  type: string
+  description: >
+    What a VEHICLE can do. A reefer may carry either; ambient may not carry
+    chilled. Conflating this with TempRequirement is the single most common way
+    to break feasibility rule 2.
+  enum: [reefer, ambient]
+
+Wave:
+  type: string
+  enum: [PREDAWN, DAYTIME]
+
+OrderStatus:
+  type: string
+  enum: [DRAFT, PLACED, QUEUED, PLANNED, LOADED, IN_TRANSIT, DELIVERED,
+         PART_DELIVERED, FAILED, DEFERRED, CANCELLED]
+
+TripStatus:
+  type: string
+  enum: [PLANNED, LOADING, READY, DEPARTED, COMPLETED, CANCELLED]
+
+StopStatus:
+  type: string
+  enum: [PENDING, ARRIVED, UNLOADING, DONE, SKIPPED, FAILED]
+
+Error:
+  type: object
+  required: [error]
+  properties:
+    error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          examples: ["FORBIDDEN"]
+        message:
+          type: string
+          examples: ["You do not own this record."]
+        details:
+          type: object
+          additionalProperties: true

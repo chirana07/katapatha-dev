@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Katapatha Driver",
+    "slug": "katapatha-driver",
+    "scheme": "katapatha",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": ["expo-router", "expo-secure-store"],
+    "android": { "package": "lk.waypoint.katapatha.driver" },
+    "extra": { "apiBaseUrl": "http://localhost:3001/v1" }
+  }
+}

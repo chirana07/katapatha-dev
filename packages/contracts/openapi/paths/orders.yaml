@@ -1,0 +1,148 @@
+# Owner: BE2
+collection:
+  get:
+    operationId: listOrders
+    summary: Orders visible to the caller
+    description: A store manager sees their own outlet; a dispatcher sees their depot.
+    tags: [orders]
+    parameters:
+      - name: date
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+    responses:
+      "200":
+        description: Orders.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/orders.yaml#/Order" }
+            example:
+              - id: "clx0ord1a2b3c4d5e6f7g8h9"
+                ref: "ORD-004312"
+                outletId: "OUT074"
+                brand: Fresh
+                districtName: "Colombo"
+                tempRequirement: chilled
+                units: 120
+                weightKg: 860.4
+                volumeM3: 4.32
+                windowOpen: "06:00"
+                windowClose: "11:00"
+                requestedDate: "2026-10-01"
+                status: QUEUED
+                storeState: queued
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+  post:
+    operationId: placeOrders
+    summary: Place orders for the next operating day
+    description: >
+      Units only. Outlet, brand, district and depot come from the session, never
+      the body. Idempotent on `requestId`, so a retry over a flaky connection
+      cannot double-order.
+    tags: [orders]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/orders.yaml#/PlaceOrdersRequest" }
+    responses:
+      "201":
+        description: Orders placed.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/orders.yaml#/Order" }
+            example:
+              - id: "clx0ord1a2b3c4d5e6f7g8h9"
+                ref: "ORD-004312"
+                outletId: "OUT074"
+                brand: Fresh
+                districtName: "Colombo"
+                tempRequirement: chilled
+                units: 120
+                weightKg: 860.4
+                volumeM3: 4.32
+                windowOpen: "06:00"
+                windowClose: "11:00"
+                requestedDate: "2026-10-01"
+                status: QUEUED
+                storeState: queued
+      "200":
+        description: Replay of an earlier request with the same `requestId`.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/orders.yaml#/Order" }
+            example: []
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+item:
+  parameters:
+    - name: orderId
+      in: path
+      required: true
+      schema: { type: string }
+  get:
+    operationId: getOrder
+    summary: One order
+    tags: [orders]
+    responses:
+      "200":
+        description: Order.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/orders.yaml#/Order" }
+            example:
+              id: "clx0ord1a2b3c4d5e6f7g8h9"
+              ref: "ORD-004312"
+              outletId: "OUT074"
+              brand: Fresh
+              districtName: "Colombo"
+              tempRequirement: chilled
+              units: 120
+              weightKg: 860.4
+              volumeM3: 4.32
+              windowOpen: "06:00"
+              windowClose: "11:00"
+              requestedDate: "2026-10-01"
+              status: DELIVERED
+              storeState: delivered
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+
+receipt:
+  parameters:
+    - name: orderId
+      in: path
+      required: true
+      schema: { type: string }
+  put:
+    operationId: confirmReceipt
+    summary: Confirm receipt of a delivered order
+    description: Idempotent — one receipt per order, upserted.
+    tags: [orders]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/orders.yaml#/ReceiptRequest" }
+    responses:
+      "200":
+        description: Receipt recorded.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/orders.yaml#/Receipt" }
+            example:
+              orderId: "clx0ord1a2b3c4d5e6f7g8h9"
+              confirmedAt: "2026-09-30T05:41:00Z"
+              unitsReceived: 120
+              matches: true
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }

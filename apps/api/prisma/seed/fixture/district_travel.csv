@@ -1,0 +1,6 @@
+district,depot,road_class,free_flow_kmh,depot_to_district_km,depot_to_district_freeflow_min,inter_stop_km,inter_stop_freeflow_min
+Colombo,Peliyagoda,urban,28,14,35,5,14
+Gampaha,Peliyagoda,suburban,42,28,45,8,14
+Puttalam,Peliyagoda,highway,55,120,135,14,18
+Kandy,Kandy,hill,32,12,28,6,12
+Matale,Kandy,hill,35,35,60,9,16

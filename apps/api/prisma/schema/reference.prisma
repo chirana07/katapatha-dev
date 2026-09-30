@@ -1,0 +1,218 @@
+// ==========================================================================
+// reference.prisma
+//
+// Reference / master data and demand history. Owner: BE1.
+// ==========================================================================
+
+model Depot {
+  code      String     @id
+  name      String
+  districts District[]
+  outlets   Outlet[]
+  vehicles  Vehicle[]
+}
+
+/// One row per district, merged with district_travel.csv because the mapping
+/// from district to depot is 1:1 — depot assignment is a lookup, not a choice.
+model District {
+  name                       String    @id
+  depotCode                  String
+  depot                      Depot     @relation(fields: [depotCode], references: [code])
+  roadClass                  RoadClass
+  freeFlowKmh                Float
+  depotToDistrictKm          Float
+  depotToDistrictFreeflowMin Int
+  interStopKm                Float
+  interStopFreeflowMin       Int
+
+  outlets Outlet[]
+
+  @@index([depotCode])
+}
+
+model Outlet {
+  id                String            @id
+  brand             Brand
+  districtName      String
+  district          District          @relation(fields: [districtName], references: [name])
+  depotCode         String
+  depot             Depot             @relation(fields: [depotCode], references: [code])
+  dockType          DockType
+  parkingConstraint ParkingConstraint
+  /// Fixed mall access window. Null for the 108 outlets outside malls.
+  mallWindowOpen    String?
+  mallWindowClose   String?
+  windowOpen        String
+  windowClose       String
+  displayName       String?
+
+  orders       Order[]
+  tripStops    TripStop[]
+  users        User[]
+  notifications Notification[]
+
+  @@index([depotCode, brand])
+  @@index([districtName, brand])
+  @@index([parkingConstraint])
+}
+
+model Vehicle {
+  id               String      @id
+  type             VehicleType
+  temp             VehicleTemp
+  weightCapKg      Int
+  volumeCapM3      Float
+  fuelType         String
+  kmPerL           Float
+  weeklyFuelQuotaL Int
+  depotCode        String
+  depot            Depot       @relation(fields: [depotCode], references: [code])
+
+  trips       Trip[]
+  dayStatuses VehicleDayStatus[]
+  fuelLedgers FuelLedger[]
+
+  /// The allocator's candidate filter is exactly this triple.
+  @@index([depotCode, temp, type])
+}
+
+model ServiceAllowance {
+  brand    Brand
+  dockType DockType
+  minutes  Int
+
+  @@id([brand, dockType])
+}
+
+model CalendarDay {
+  date         DateTime @id @db.Date
+  dow          Int
+  dowName      String
+  isWeekend    Boolean
+  isoYear      Int
+  isoWeek      Int
+  isPayday     Boolean
+  festival     String?
+  festivalRamp Float
+  isHoliday    Boolean
+  monsoon      Boolean
+  isOperating  Boolean
+
+  @@index([isoYear, isoWeek])
+  @@index([isOperating, date])
+}
+
+model TrafficSpeed {
+  districtName String
+  hour         Int
+  monsoon      Boolean
+  speedIndex   Int
+
+  @@id([districtName, hour, monsoon])
+}
+
+model RoadCondition {
+  districtName    String
+  date            DateTime @db.Date
+  disruptionIndex Int
+
+  @@id([districtName, date])
+}
+
+/// Editable fleet availability. Replaces task2b_peak_day_fleet.csv with a
+/// record a dispatcher can actually change, which is what makes the workshop
+/// toggle a real control rather than a label.
+model VehicleDayStatus {
+  date        DateTime      @db.Date
+  vehicleId   String
+  vehicle     Vehicle       @relation(fields: [vehicleId], references: [id])
+  status      VehicleStatus
+  note        String?
+  setByUserId String?
+  setAt       DateTime      @default(now())
+
+  @@id([date, vehicleId])
+  @@index([date, status])
+}
+
+model WeeklyDemandHistory {
+  isoYear         Int
+  isoWeek         Int
+  depotCode       String
+  brand           Brand
+  totalVolumeM3   Float
+  chilledVolumeM3 Float
+  orderCount      Int
+  deferredCount   Int
+
+  @@id([isoYear, isoWeek, depotCode, brand])
+}
+
+model DailyDemandHistory {
+  date      DateTime        @db.Date
+  depotCode String
+  brand     Brand
+  temp      TempRequirement
+  orders    Int
+  units     Int
+  weightKg  Float
+  volumeM3  Float
+  deferred  Int
+  notRun    Int
+
+  @@id([date, depotCode, brand, temp])
+  @@index([depotCode, date])
+}
+
+/// Mirrors submission_task2a.csv exactly: depot x brand x ISO week.
+model DemandForecast {
+  isoYear             Int
+  isoWeek             Int
+  depotCode           String
+  brand               Brand
+  predTotalVolumeM3   Float
+  predChilledVolumeM3 Float
+  method              String
+  generatedAt         DateTime @default(now())
+
+  @@id([isoYear, isoWeek, depotCode, brand])
+  @@index([depotCode, isoYear])
+}
+
+/// Observed handling times from route_legs_train actuals. Lets the UI say
+/// honestly that the planning standard allows 15 minutes where reality is 18.
+model ServiceObservation {
+  id            String   @id @default(cuid())
+  brand         Brand
+  dockType      DockType
+  districtName  String
+  monsoon       Boolean
+  n             Int
+  meanActualMin Float
+  p90ActualMin  Float
+
+  @@unique([brand, dockType, districtName, monsoon])
+  @@index([brand, dockType])
+}
+
+/// Real legs for the hero window, so the tracking replay uses genuine timings.
+model HistoricalLeg {
+  id              String   @id
+  date            DateTime @db.Date
+  routeId         String
+  vehicleId       String
+  districtName    String
+  brand           Brand
+  seq             Int
+  fromPoint       String
+  outletId        String
+  distanceKm      Float
+  plannedDepart   String
+  plannedArrival  String
+  actualDepart    String?
+  arrivalTime     String?
+  leaveOutletTime String?
+
+  @@index([date, vehicleId])
+  @@index([routeId, seq])
+}

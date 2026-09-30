@@ -1,0 +1,195 @@
+// ==========================================================================
+// planning.prisma
+//
+// Order intake through allocation and publication. Owner: BE2.
+// ==========================================================================
+
+/// The artefact of "close orders": one queue per depot per day.
+model PlanningDay {
+  id               String            @id @default(cuid())
+  date             DateTime          @db.Date
+  depotCode        String
+  status           PlanningDayStatus @default(OPEN)
+  cutoffAt         String            @default("16:00")
+  closedAt         DateTime?
+  closedByUserId   String?
+  queueSnapshot    Json?
+
+  plans Plan[]
+
+  @@unique([date, depotCode])
+  @@index([status])
+}
+
+model Order {
+  id                  String          @id @default(cuid())
+  /// Allocation key. Matches order_ref in the organisers' submission CSV.
+  ref                 String
+  outletId            String
+  outlet              Outlet          @relation(fields: [outletId], references: [id])
+  brand               Brand
+  districtName        String
+  depotCode           String
+  tempRequirement     TempRequirement
+  units               Int
+  weightKg            Float
+  volumeM3            Float
+  windowOpen          String
+  windowClose         String
+  requestedDate       DateTime        @db.Date
+  placedAt            DateTime        @default(now())
+  placedByUserId      String?
+  status              OrderStatus     @default(PLACED)
+  /// Fairness signals. Supplied in the peak-day scenario, derived elsewhere.
+  deferredYesterday   Boolean         @default(false)
+  daysSinceLastServed Int             @default(1)
+  rolledFromOrderId   String?
+  /// Idempotency key for order placement from a flaky connection.
+  clientRequestId     String?         @unique
+
+  assignments  Assignment[]
+  tripStopLinks TripStopOrder[]
+  deferrals    Deferral[]
+  loadChecks   LoadCheck[]
+  shortfalls   Shortfall[]
+  stopEvents   StopEvent[]
+  problems     Problem[]
+  receipt      ReceiptConfirmation?
+
+  /// One decision per order per day. Also the dispatcher queue's hot path.
+  @@unique([ref, requestedDate])
+  @@index([requestedDate, depotCode, status])
+  @@index([outletId, requestedDate])
+  @@index([status])
+}
+
+model Plan {
+  id                String      @id @default(cuid())
+  planningDayId     String
+  planningDay       PlanningDay @relation(fields: [planningDayId], references: [id], onDelete: Cascade)
+  status            PlanStatus  @default(DRAFT)
+  createdByUserId   String?
+  createdAt         DateTime    @default(now())
+  publishedAt       DateTime?
+  publishedByUserId String?
+  allocatorVersion  String?
+  objectiveSummary  Json?
+
+  trips       Trip[]
+  assignments Assignment[]
+  deferrals   Deferral[]
+
+  @@index([planningDayId, status])
+}
+
+model Trip {
+  id                String     @id @default(cuid())
+  planId            String
+  plan              Plan       @relation(fields: [planId], references: [id], onDelete: Cascade)
+  vehicleId         String
+  vehicle           Vehicle    @relation(fields: [vehicleId], references: [id])
+  /// 1 or 2. The organisers' trip_id.
+  tripNo            Int
+  brand             Brand
+  districtName      String
+  wave              Wave
+  plannedDepartAt   String
+  plannedMinutes    Float
+  plannedDistanceKm Float
+  plannedFuelL      Float
+  sumWeightKg       Float
+  sumVolumeM3       Float
+  status            TripStatus @default(PLANNED)
+  loadConfirmedAt   DateTime?
+  departedAt        DateTime?
+  completedAt       DateTime?
+
+  stops             TripStop[]
+  loadChecks        LoadCheck[]
+  shortfalls        Shortfall[]
+  problems          Problem[]
+  fromReassignments StopReassignment[] @relation("ReassignFrom")
+  toReassignments   StopReassignment[] @relation("ReassignTo")
+  fuelEntries       FuelLedgerEntry[]
+
+  /// Enforces rule 7 (at most two trips a day) in the database, not just in code.
+  @@unique([planId, vehicleId, tripNo])
+  @@index([planId])
+  @@index([vehicleId, status])
+}
+
+model TripStop {
+  id               String     @id @default(cuid())
+  tripId           String
+  trip             Trip       @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  seq              Int
+  outletId         String
+  outlet           Outlet     @relation(fields: [outletId], references: [id])
+  status           StopStatus @default(PENDING)
+  plannedArrivalAt String
+  etaAt            String?
+  arrivedAt        DateTime?
+  leftAt           DateTime?
+
+  orders        TripStopOrder[]
+  assignments   Assignment[]
+  stopEvents    StopEvent[]
+  problems      Problem[]
+  reassignments StopReassignment[]
+
+  @@unique([tripId, seq])
+  @@index([outletId])
+}
+
+/// Join table: one stop may deliver several orders (a Fresh outlet routinely
+/// takes a dry order and a chilled order on the same day).
+model TripStopOrder {
+  tripStopId String
+  tripStop   TripStop @relation(fields: [tripStopId], references: [id], onDelete: Cascade)
+  orderId    String
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@id([tripStopId, orderId])
+  @@index([orderId])
+}
+
+/// One row per order per plan — this maps 1:1 to a line of the organisers'
+/// submission CSV, and the unique index is the guarantee that every order is
+/// decided exactly once.
+model Assignment {
+  id          String    @id @default(cuid())
+  planId      String
+  plan        Plan      @relation(fields: [planId], references: [id], onDelete: Cascade)
+  orderId     String
+  order       Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  tripStopId  String?
+  tripStop    TripStop? @relation(fields: [tripStopId], references: [id])
+  decision    Decision
+  reasonCode  String?
+  /// The allocator's machine-derived cause: binding constraint, near miss,
+  /// and what would have made the order fit.
+  explanation Json?
+  createdAt   DateTime  @default(now())
+
+  @@unique([planId, orderId])
+  @@index([tripStopId])
+  @@index([planId, decision])
+}
+
+model Deferral {
+  id              String    @id @default(cuid())
+  planId          String
+  plan            Plan      @relation(fields: [planId], references: [id], onDelete: Cascade)
+  orderId         String
+  order           Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  reasonCode      String
+  note            String?
+  rolledToDate    DateTime? @db.Date
+  decidedByUserId String?
+  decidedAt       DateTime  @default(now())
+  storeNotifiedAt DateTime?
+  acknowledgedAt  DateTime?
+
+  @@unique([planId, orderId])
+  @@index([orderId])
+}

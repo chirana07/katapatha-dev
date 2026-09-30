@@ -1,0 +1,137 @@
+// ==========================================================================
+// execution.prisma
+//
+// Loading, delivery execution, problems, receipts. Owner: BE3.
+// ==========================================================================
+
+/// Who owned a stop, and from when. This is what makes offline conflict
+/// detection answerable: "which vehicle was carrying OUT107 at 05:52?"
+model StopReassignment {
+  id              String             @id @default(cuid())
+  tripStopId      String
+  tripStop        TripStop           @relation(fields: [tripStopId], references: [id], onDelete: Cascade)
+  fromTripId      String
+  fromTrip        Trip               @relation("ReassignFrom", fields: [fromTripId], references: [id])
+  toTripId        String
+  toTrip          Trip               @relation("ReassignTo", fields: [toTripId], references: [id])
+  at              DateTime           @default(now())
+  byUserId        String?
+  reasonCode      String
+  note            String?
+  status          ReassignmentStatus @default(ACTIVE)
+  cancelledReason String?
+
+  @@index([tripStopId, at])
+}
+
+model LoadCheck {
+  id              String        @id @default(cuid())
+  tripId          String
+  trip            Trip          @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  orderId         String
+  order           Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  expectedUnits   Int
+  loadedUnits     Int
+  condition       LoadCondition @default(OK)
+  /// The dock terminal is shared, so the actor is captured per action rather
+  /// than taken from the session.
+  checkedByName   String
+  checkedByUserId String?
+  checkedAt       DateTime      @default(now())
+  clientRequestId String?       @unique
+
+  shortfalls Shortfall[]
+
+  @@unique([tripId, orderId])
+}
+
+model Shortfall {
+  id               String               @id @default(cuid())
+  tripId           String
+  trip             Trip                 @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  orderId          String
+  order            Order                @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  loadCheckId      String?
+  loadCheck        LoadCheck?           @relation(fields: [loadCheckId], references: [id])
+  kind             LoadCondition
+  missingUnits     Int
+  raisedByUserId   String?
+  raisedByName     String?
+  raisedAt         DateTime             @default(now())
+  status           ShortfallStatus      @default(OPEN)
+  resolution       ShortfallResolution?
+  resolvedByUserId String?
+  resolvedAt       DateTime?
+  reasonCode       String?
+  note             String?
+  /// True while the vehicle may not depart — the loader's ready gate.
+  blocksDeparture  Boolean              @default(true)
+
+  /// The dispatcher's inbox query.
+  @@index([status, raisedAt])
+  @@index([tripId])
+}
+
+/// The driver's record of what happened. The primary key IS the client's ULID,
+/// which makes replaying an offline outbox idempotent by construction.
+model StopEvent {
+  id             String        @id
+  tripStopId     String
+  tripStop       TripStop      @relation(fields: [tripStopId], references: [id], onDelete: Cascade)
+  orderId        String?
+  order          Order?        @relation(fields: [orderId], references: [id])
+  type           StopEventType
+  payload        Json?
+  deliveredUnits Int?
+  recipientName  String?
+  signatureData  String?
+  photoData      String?
+  /// Device clock. Labelled "recorded on device" in the UI, never trusted
+  /// across devices — ULID ordering does that job.
+  occurredAt     DateTime
+  recordedAt     DateTime      @default(now())
+  deviceId       String?
+  actorUserId    String?
+  source         EventSource   @default(ONLINE)
+  conflictState  ConflictState @default(NONE)
+  serverSeq      BigInt        @default(autoincrement())
+
+  @@index([tripStopId, occurredAt])
+  @@index([serverSeq])
+  @@index([conflictState])
+}
+
+model Problem {
+  id                   String        @id
+  kind                 ProblemKind
+  tripId               String?
+  trip                 Trip?         @relation(fields: [tripId], references: [id])
+  tripStopId           String?
+  tripStop             TripStop?     @relation(fields: [tripStopId], references: [id])
+  orderId              String?
+  order                Order?        @relation(fields: [orderId], references: [id])
+  note                 String?
+  photoData            String?
+  raisedByUserId       String?
+  occurredAt           DateTime
+  recordedAt           DateTime      @default(now())
+  status               ProblemStatus @default(NEW)
+  acknowledgedByUserId String?
+  acknowledgedAt       DateTime?
+  resolution           String?
+  reasonCode           String?
+
+  @@index([status, recordedAt])
+}
+
+model ReceiptConfirmation {
+  id              String   @id @default(cuid())
+  orderId         String   @unique
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  confirmedByUserId String?
+  confirmedAt     DateTime @default(now())
+  unitsReceived   Int
+  matches         Boolean
+  issueKind       String?
+  note            String?
+}

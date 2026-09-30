@@ -1,0 +1,11 @@
+extends:
+  - recommended
+rules:
+  # Prism is only useful if every success response carries a realistic example.
+  # A mock that returns {} is worse than no mock: clients build against fiction.
+  no-invalid-media-type-examples: error
+  operation-4xx-response: warn
+  operation-operationId: error
+  operation-summary: error
+  security-defined: off
+  no-unused-components: warn

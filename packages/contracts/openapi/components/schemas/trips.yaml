@@ -1,0 +1,77 @@
+# Owner: BE3
+Trip:
+  type: object
+  required: [id, vehicleId, tripNo, brand, districtName, wave, status]
+  properties:
+    id: { type: string, examples: ["clx0trp1a2b3c4d5e6f7g8h"] }
+    vehicleId: { type: string, examples: ["VEH043"] }
+    tripNo: { type: integer, enum: [1, 2], examples: [1] }
+    brand: { $ref: "./common.yaml#/Brand" }
+    districtName: { type: string, examples: ["Colombo"] }
+    wave: { $ref: "./common.yaml#/Wave" }
+    status: { $ref: "./common.yaml#/TripStatus" }
+    plannedDepartAt: { $ref: "./common.yaml#/ClockTime" }
+    plannedMinutes: { type: integer, examples: [212] }
+    sumWeightKg: { type: number, examples: [3210.5] }
+    sumVolumeM3: { type: number, examples: [16.8] }
+
+LoadList:
+  type: object
+  description: >
+    Stops are returned in REVERSE delivery order. The driver unloads from the
+    back, so the loader must load the last stop first. This ordering is part of
+    the contract, not a client concern.
+  required: [tripId, status, lines]
+  properties:
+    tripId: { type: string, examples: ["clx0trp1a2b3c4d5e6f7g8h"] }
+    status: { $ref: "./common.yaml#/TripStatus" }
+    lines:
+      type: array
+      items:
+        type: object
+        required: [orderId, orderRef, outletId, seq, expectedUnits]
+        properties:
+          orderId: { type: string, examples: ["clx0ord1a2b3c4d5e6f7g8h9"] }
+          orderRef: { type: string, examples: ["ORD-004312"] }
+          outletId: { type: string, examples: ["OUT074"] }
+          seq: { type: integer, description: Delivery sequence (lines are sorted descending). , examples: [3] }
+          expectedUnits: { type: integer, examples: [120] }
+          loadedUnits: { type: [integer, "null"], examples: [null] }
+          condition:
+            type: [string, "null"]
+            enum: [OK, SHORT, DAMAGED, MISSING, null]
+
+LoadCheckRequest:
+  type: object
+  required: [loadedUnits, condition, checkedByName]
+  additionalProperties: false
+  properties:
+    loadedUnits: { type: integer, minimum: 0, examples: [120] }
+    condition: { type: string, enum: [OK, SHORT, DAMAGED, MISSING], examples: ["OK"] }
+    checkedByName:
+      type: string
+      description: >
+        Typed in per action. The dock terminal is shared between loaders, so the
+        actor cannot be taken from the session.
+      examples: ["Ranjith Silva"]
+    reasonCode: { type: [string, "null"], examples: [null] }
+    clientRequestId: { type: [string, "null"], format: uuid, examples: [null] }
+
+LoadCheck:
+  type: object
+  required: [tripId, orderId, expectedUnits, loadedUnits, condition]
+  properties:
+    tripId: { type: string, examples: ["clx0trp1a2b3c4d5e6f7g8h"] }
+    orderId: { type: string, examples: ["clx0ord1a2b3c4d5e6f7g8h9"] }
+    expectedUnits: { type: integer, examples: [120] }
+    loadedUnits: { type: integer, examples: [120] }
+    condition: { type: string, enum: [OK, SHORT, DAMAGED, MISSING], examples: ["OK"] }
+    shortfallId: { type: [string, "null"], examples: [null] }
+
+ReadinessResult:
+  type: object
+  required: [tripId, status]
+  properties:
+    tripId: { type: string, examples: ["clx0trp1a2b3c4d5e6f7g8h"] }
+    status: { $ref: "./common.yaml#/TripStatus" }
+    releasedAt: { type: string, format: date-time, examples: ["2026-09-30T03:05:00Z"] }

@@ -1,0 +1,15 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Packages allowed to run install scripts. Declared here so no developer is
+# prompted by `pnpm approve-builds` on a fresh clone.
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  '@scarf/scarf': false  # telemetry phone-home from Redocly; denied on purpose
+  esbuild: true
+  prisma: true
+
+minimumReleaseAgeExclude:
+  - '@redocly/cli@2.57.0'

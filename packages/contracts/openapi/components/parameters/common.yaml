@@ -1,0 +1,22 @@
+Date:
+  name: date
+  in: query
+  required: true
+  schema: { $ref: "../schemas/common.yaml#/DateOnly" }
+  description: Operating date (Asia/Colombo).
+
+DepotCode:
+  name: depot
+  in: query
+  required: false
+  schema: { type: string }
+  description: Depot. Defaults to the caller's own depot; a caller may not read another.
+
+IdempotencyKey:
+  name: Idempotency-Key
+  in: header
+  required: false
+  schema: { type: string, format: uuid }
+  description: >
+    Replaying a request with the same key returns the original response.
+    Reusing a key with a different body is rejected with 422.

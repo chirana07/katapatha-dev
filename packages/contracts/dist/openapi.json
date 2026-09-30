@@ -1,0 +1,3468 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Katapatha API",
+    "version": "1.0.0",
+    "description": "Delivery coordination for Waypoint Group. One operation, four role-specific\nworkspaces: dispatcher, loader, driver, store manager.\n\n## Conventions that are load-bearing\n\n- **Clock times are `\"HH:MM\"` strings** in Asia/Colombo wall clock, never\n  `date-time`. Calendar dates are `date`. The source data carries no\n  timezone for times and every rule is expressed in wall-clock minutes, so\n  widening these would invent information we do not have.\n- **`TempRequirement` (an order needs) and `VehicleTemp` (a vehicle can) are\n  different types.** Conflating them is the most common way to break\n  feasibility rule 2.\n- **Idempotency is part of the contract**, in three places: `requestId` when\n  placing orders, `clientRequestId` on a load check, and the client-minted\n  ULID that is a `StopEvent`'s primary key.\n- **Every mutation enforces ownership**, not just role. A dispatcher is\n  scoped to a depot, a store manager to an outlet, a driver to a vehicle.\n- **Never imply live vehicle position or background sync.** There is no GPS\n  in this system, and offline durability is claimed only once verified.\n"
+  },
+  "servers": [
+    {
+      "url": "/v1",
+      "description": "Same-origin behind the reverse proxy (production)"
+    },
+    {
+      "url": "http://localhost:3001/v1",
+      "description": "Local API"
+    },
+    {
+      "url": "http://localhost:4010/v1",
+      "description": "Prism mock"
+    }
+  ],
+  "security": [
+    {
+      "cookieAuth": []
+    },
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "system"
+    },
+    {
+      "name": "auth"
+    },
+    {
+      "name": "reference"
+    },
+    {
+      "name": "orders",
+      "description": "Store manager ordering and receipt."
+    },
+    {
+      "name": "planning",
+      "description": "Dispatcher queue, allocation and publication."
+    },
+    {
+      "name": "loading",
+      "description": "Loader dock work."
+    },
+    {
+      "name": "driver",
+      "description": "Driver run execution."
+    },
+    {
+      "name": "sync",
+      "description": "Offline outbox drain and pull."
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Liveness and reachability probe",
+        "description": "The connectivity authority. `navigator.onLine` is a hint only; the driver UI must confirm reachability against this before claiming Connected.\n",
+        "tags": [
+          "system"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service is up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "at"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                },
+                "example": {
+                  "ok": true,
+                  "at": "2026-09-30T06:00:00Z"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/session": {
+      "post": {
+        "operationId": "createSession",
+        "summary": "Sign in",
+        "description": "Sets an httpOnly cookie AND returns a bearer token. Web uses the cookie; the mobile app uses the token. Only a sha256 hash is stored server-side. Throttled per hashed email and IP.\n",
+        "tags": [
+          "auth"
+        ],
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignInRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                },
+                "example": {
+                  "token": "k7Qw2nT9xR4mB1vY6pL0aZ8cJ3hF5sD-eG",
+                  "home": "/dispatcher",
+                  "user": {
+                    "id": "clx0a1b2c3d4e5f6g7h8i9j0",
+                    "email": "nimal@waypoint.lk",
+                    "name": "Nimal Perera",
+                    "role": "DISPATCHER",
+                    "depotCode": "Peliyagoda",
+                    "outletId": null,
+                    "defaultVehicleId": null
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSession",
+        "summary": "Sign out",
+        "tags": [
+          "auth"
+        ],
+        "responses": {
+          "204": {
+            "description": "Signed out."
+          }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "operationId": "getMe",
+        "summary": "The signed-in user and their home route",
+        "tags": [
+          "auth"
+        ],
+        "responses": {
+          "200": {
+            "description": "Current session user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionUser"
+                },
+                "example": {
+                  "id": "clx0a1b2c3d4e5f6g7h8i9j0",
+                  "email": "fathima@waypoint.lk",
+                  "name": "Fathima Rizvi",
+                  "role": "STORE_MANAGER",
+                  "depotCode": null,
+                  "outletId": "OUT074",
+                  "defaultVehicleId": null
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/reference/outlets": {
+      "get": {
+        "operationId": "listOutlets",
+        "summary": "Outlets visible to the caller",
+        "tags": [
+          "reference"
+        ],
+        "responses": {
+          "200": {
+            "description": "Outlets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Outlet"
+                  }
+                },
+                "example": [
+                  {
+                    "id": "OUT074",
+                    "displayName": "Fresh Nugegoda",
+                    "brand": "Fresh",
+                    "districtName": "Colombo",
+                    "depotCode": "Peliyagoda",
+                    "dockType": "rear_dock",
+                    "parkingConstraint": "van_only",
+                    "windowOpen": "06:00",
+                    "windowClose": "11:00",
+                    "mallWindowOpen": null,
+                    "mallWindowClose": null
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/reference/vehicles": {
+      "get": {
+        "operationId": "listVehicles",
+        "summary": "Vehicles at the caller's depot",
+        "tags": [
+          "reference"
+        ],
+        "responses": {
+          "200": {
+            "description": "Vehicles.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Vehicle"
+                  }
+                },
+                "example": [
+                  {
+                    "id": "VEH043",
+                    "type": "truck",
+                    "temp": "reefer",
+                    "weightCapKg": 3500,
+                    "volumeCapM3": 18.5,
+                    "kmPerL": 7.2,
+                    "weeklyFuelQuotaL": 420,
+                    "depotCode": "Peliyagoda"
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/reference/vocabularies": {
+      "get": {
+        "operationId": "getVocabularies",
+        "summary": "Server-owned reason-code lists",
+        "description": "Clients render these rather than hardcoding their own copies, so a reason code added on the server appears in web and mobile without a release.\n",
+        "tags": [
+          "reference"
+        ],
+        "responses": {
+          "200": {
+            "description": "Code lists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Vocabularies"
+                },
+                "example": {
+                  "deferralReasons": [
+                    "REEFER_FULL",
+                    "NO_VAN",
+                    "WINDOW_UNREACHABLE",
+                    "TIME_BUDGET",
+                    "FUEL_QUOTA",
+                    "VEHICLE_IN_WORKSHOP",
+                    "ORDER_TOO_LARGE",
+                    "AFTER_CUTOFF"
+                  ],
+                  "shortfallReasons": [
+                    "MISSING",
+                    "DAMAGED",
+                    "SHORT_QUANTITY",
+                    "NOT_COLD_ENOUGH"
+                  ],
+                  "problemReasons": [
+                    "OUTLET_CLOSED",
+                    "ACCESS_DENIED",
+                    "VEHICLE_BREAKDOWN",
+                    "ROAD_BLOCKED",
+                    "DELIVERY_REFUSED"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/reference/calendar/next-operating-day": {
+      "get": {
+        "operationId": "getNextOperatingDay",
+        "summary": "The next date the network operates",
+        "tags": [
+          "reference"
+        ],
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DateOnly"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Next operating date.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "date"
+                  ],
+                  "properties": {
+                    "date": {
+                      "$ref": "#/components/schemas/DateOnly"
+                    }
+                  }
+                },
+                "example": {
+                  "date": "2026-10-01"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/orders": {
+      "get": {
+        "operationId": "listOrders",
+        "summary": "Orders visible to the caller",
+        "description": "A store manager sees their own outlet; a dispatcher sees their depot.",
+        "tags": [
+          "orders"
+        ],
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DateOnly"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Orders.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Order"
+                  }
+                },
+                "example": [
+                  {
+                    "id": "clx0ord1a2b3c4d5e6f7g8h9",
+                    "ref": "ORD-004312",
+                    "outletId": "OUT074",
+                    "brand": "Fresh",
+                    "districtName": "Colombo",
+                    "tempRequirement": "chilled",
+                    "units": 120,
+                    "weightKg": 860.4,
+                    "volumeM3": 4.32,
+                    "windowOpen": "06:00",
+                    "windowClose": "11:00",
+                    "requestedDate": "2026-10-01",
+                    "status": "QUEUED",
+                    "storeState": "queued"
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "operationId": "placeOrders",
+        "summary": "Place orders for the next operating day",
+        "description": "Units only. Outlet, brand, district and depot come from the session, never the body. Idempotent on `requestId`, so a retry over a flaky connection cannot double-order.\n",
+        "tags": [
+          "orders"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaceOrdersRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Replay of an earlier request with the same `requestId`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Order"
+                  }
+                },
+                "example": []
+              }
+            }
+          },
+          "201": {
+            "description": "Orders placed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Order"
+                  }
+                },
+                "example": [
+                  {
+                    "id": "clx0ord1a2b3c4d5e6f7g8h9",
+                    "ref": "ORD-004312",
+                    "outletId": "OUT074",
+                    "brand": "Fresh",
+                    "districtName": "Colombo",
+                    "tempRequirement": "chilled",
+                    "units": 120,
+                    "weightKg": 860.4,
+                    "volumeM3": 4.32,
+                    "windowOpen": "06:00",
+                    "windowClose": "11:00",
+                    "requestedDate": "2026-10-01",
+                    "status": "QUEUED",
+                    "storeState": "queued"
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/orders/{orderId}": {
+      "parameters": [
+        {
+          "name": "orderId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getOrder",
+        "summary": "One order",
+        "tags": [
+          "orders"
+        ],
+        "responses": {
+          "200": {
+            "description": "Order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                },
+                "example": {
+                  "id": "clx0ord1a2b3c4d5e6f7g8h9",
+                  "ref": "ORD-004312",
+                  "outletId": "OUT074",
+                  "brand": "Fresh",
+                  "districtName": "Colombo",
+                  "tempRequirement": "chilled",
+                  "units": 120,
+                  "weightKg": 860.4,
+                  "volumeM3": 4.32,
+                  "windowOpen": "06:00",
+                  "windowClose": "11:00",
+                  "requestedDate": "2026-10-01",
+                  "status": "DELIVERED",
+                  "storeState": "delivered"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/orders/{orderId}/receipt": {
+      "parameters": [
+        {
+          "name": "orderId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "put": {
+        "operationId": "confirmReceipt",
+        "summary": "Confirm receipt of a delivered order",
+        "description": "Idempotent — one receipt per order, upserted.",
+        "tags": [
+          "orders"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReceiptRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Receipt recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Receipt"
+                },
+                "example": {
+                  "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
+                  "confirmedAt": "2026-09-30T05:41:00Z",
+                  "unitsReceived": 120,
+                  "matches": true
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/planning-days": {
+      "get": {
+        "operationId": "listPlanningDays",
+        "summary": "The order queue state for a date",
+        "tags": [
+          "planning"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Date"
+          },
+          {
+            "$ref": "#/components/parameters/DepotCode"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Planning day.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PlanningDay"
+                  }
+                },
+                "example": [
+                  {
+                    "id": "clx0pd1a2b3c4d5e6f7g8h9i",
+                    "date": "2026-10-01",
+                    "depotCode": "Peliyagoda",
+                    "status": "OPEN",
+                    "cutoffAt": "16:00"
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/planning-days/{planningDayId}/closure": {
+      "parameters": [
+        {
+          "name": "planningDayId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "closeOrderQueue",
+        "summary": "Close the order queue for the day",
+        "description": "OPEN to CLOSED, writing a queue snapshot. Replaying returns 200 with the current state rather than an error — closing twice is not a mistake worth blocking a dispatcher for.\n",
+        "tags": [
+          "planning"
+        ],
+        "responses": {
+          "200": {
+            "description": "Queue closed (or already closed).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanningDay"
+                },
+                "example": {
+                  "id": "clx0pd1a2b3c4d5e6f7g8h9i",
+                  "date": "2026-10-01",
+                  "depotCode": "Peliyagoda",
+                  "status": "CLOSED",
+                  "cutoffAt": "16:00"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/plans": {
+      "get": {
+        "operationId": "listPlans",
+        "summary": "Plans for a date",
+        "tags": [
+          "planning"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Date"
+          },
+          {
+            "$ref": "#/components/parameters/DepotCode"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plans.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PlanSummary"
+                  }
+                },
+                "example": [
+                  {
+                    "planId": "clx0pln1a2b3c4d5e6f7g8h",
+                    "status": "DRAFT",
+                    "stats": {
+                      "orders": 85,
+                      "served": 78,
+                      "deferred": 7,
+                      "tripsBuilt": 14,
+                      "hash": "a3f9c1e70b4d2856"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPlan",
+        "summary": "Run the allocator and produce a draft plan",
+        "description": "Also the re-run path: an existing DRAFT for the day is replaced, so re-running is free and leaves no trail of half-plans. Requires the planning day to be CLOSED or PLANNING.\n",
+        "tags": [
+          "planning"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePlanRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Draft plan created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanSummary"
+                },
+                "example": {
+                  "planId": "clx0pln1a2b3c4d5e6f7g8h",
+                  "status": "DRAFT",
+                  "stats": {
+                    "orders": 85,
+                    "served": 78,
+                    "deferred": 7,
+                    "tripsBuilt": 14,
+                    "hash": "a3f9c1e70b4d2856"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/plans/{planId}": {
+      "parameters": [
+        {
+          "name": "planId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getPlan",
+        "summary": "The plan board",
+        "tags": [
+          "planning"
+        ],
+        "responses": {
+          "200": {
+            "description": "Plan with trips and assignments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "planId",
+                    "status",
+                    "stats",
+                    "trips"
+                  ],
+                  "properties": {
+                    "planId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "DRAFT",
+                        "PUBLISHED",
+                        "SUPERSEDED"
+                      ]
+                    },
+                    "stats": {
+                      "$ref": "#/components/schemas/PlanStats"
+                    },
+                    "trips": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Trip"
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "planId": "clx0pln1a2b3c4d5e6f7g8h",
+                  "status": "DRAFT",
+                  "stats": {
+                    "orders": 85,
+                    "served": 78,
+                    "deferred": 7,
+                    "tripsBuilt": 14,
+                    "hash": "a3f9c1e70b4d2856"
+                  },
+                  "trips": [
+                    {
+                      "id": "clx0trp1a2b3c4d5e6f7g8h",
+                      "vehicleId": "VEH043",
+                      "tripNo": 1,
+                      "brand": "Fresh",
+                      "districtName": "Colombo",
+                      "wave": "PREDAWN",
+                      "status": "PLANNED",
+                      "plannedDepartAt": "03:30",
+                      "plannedMinutes": 212,
+                      "sumWeightKg": 3210.5,
+                      "sumVolumeM3": 16.8
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/plans/{planId}/validation": {
+      "parameters": [
+        {
+          "name": "planId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getPlanValidation",
+        "summary": "Run the shared validator against a plan",
+        "description": "The same isomorphic validator the allocator self-checks with and that publication gates on. Exposing it lets the board show violations live instead of discovering them at publish time.\n",
+        "tags": [
+          "planning"
+        ],
+        "parameters": [
+          {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "publish"
+              ],
+              "default": "draft"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Validation result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationResult"
+                },
+                "example": {
+                  "stage": "draft",
+                  "blocking": false,
+                  "violations": [
+                    {
+                      "code": "HIGH_PRIORITY_DEFERRED",
+                      "severity": "warning",
+                      "message": "OUT074 was deferred yesterday and is deferred again.",
+                      "tripId": null,
+                      "orderRef": "ORD-004312",
+                      "overridable": false
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/plans/{planId}/deferrals": {
+      "parameters": [
+        {
+          "name": "planId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "put": {
+        "operationId": "confirmDeferrals",
+        "summary": "Attach a reason code to each deferred order",
+        "description": "Every deferral carries a reason. Publication is blocked while any deferred order lacks one.\n",
+        "tags": [
+          "planning"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmDeferralsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Reasons recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "confirmed"
+                  ],
+                  "properties": {
+                    "confirmed": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                "example": {
+                  "confirmed": 7
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/plans/{planId}/publication": {
+      "parameters": [
+        {
+          "name": "planId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "publishPlan",
+        "summary": "Publish the plan",
+        "description": "An atomic one-time claim. Publishing commits fuel, notifies deferred outlets, and moves served orders to PLANNED. A second attempt is a 409, not a silent success.\n",
+        "tags": [
+          "planning"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Published.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanSummary"
+                },
+                "example": {
+                  "planId": "clx0pln1a2b3c4d5e6f7g8h",
+                  "status": "PUBLISHED",
+                  "stats": {
+                    "orders": 85,
+                    "served": 78,
+                    "deferred": 7,
+                    "tripsBuilt": 14,
+                    "hash": "a3f9c1e70b4d2856"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/trips": {
+      "get": {
+        "operationId": "listTrips",
+        "summary": "Published trips at the caller's depot",
+        "tags": [
+          "loading"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Date"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TripStatus"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Trips.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Trip"
+                  }
+                },
+                "example": [
+                  {
+                    "id": "clx0trp1a2b3c4d5e6f7g8h",
+                    "vehicleId": "VEH043",
+                    "tripNo": 1,
+                    "brand": "Fresh",
+                    "districtName": "Colombo",
+                    "wave": "PREDAWN",
+                    "status": "PLANNED",
+                    "plannedDepartAt": "03:30",
+                    "plannedMinutes": 212,
+                    "sumWeightKg": 3210.5,
+                    "sumVolumeM3": 16.8
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/trips/{tripId}/load-list": {
+      "parameters": [
+        {
+          "name": "tripId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getLoadList",
+        "summary": "What to load, in loading order",
+        "description": "Lines come back in REVERSE delivery order, because the driver unloads from the back.",
+        "tags": [
+          "loading"
+        ],
+        "responses": {
+          "200": {
+            "description": "Load list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoadList"
+                },
+                "example": {
+                  "tripId": "clx0trp1a2b3c4d5e6f7g8h",
+                  "status": "PLANNED",
+                  "lines": [
+                    {
+                      "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
+                      "orderRef": "ORD-004312",
+                      "outletId": "OUT074",
+                      "seq": 3,
+                      "expectedUnits": 120,
+                      "loadedUnits": null,
+                      "condition": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/trips/{tripId}/load-checks/{orderId}": {
+      "parameters": [
+        {
+          "name": "tripId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "orderId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "put": {
+        "operationId": "recordLoadCheck",
+        "summary": "Record one line as loaded",
+        "description": "An upsert, so re-checking a line corrects it rather than duplicating it. A non-OK condition opens a shortfall that blocks departure until resolved.\n",
+        "tags": [
+          "loading"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoadCheckRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Line recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoadCheck"
+                },
+                "example": {
+                  "tripId": "clx0trp1a2b3c4d5e6f7g8h",
+                  "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
+                  "expectedUnits": 120,
+                  "loadedUnits": 120,
+                  "condition": "OK",
+                  "shortfallId": null
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/trips/{tripId}/readiness": {
+      "parameters": [
+        {
+          "name": "tripId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "markTripReady",
+        "summary": "Release the vehicle",
+        "description": "Gated: every line must be checked and no open shortfall may block departure. A blocked attempt returns 409 with the specific reason, so the loader can see what is missing rather than a generic failure.\n",
+        "tags": [
+          "loading"
+        ],
+        "responses": {
+          "200": {
+            "description": "Released.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResult"
+                },
+                "example": {
+                  "tripId": "clx0trp1a2b3c4d5e6f7g8h",
+                  "status": "READY",
+                  "releasedAt": "2026-09-30T03:05:00Z"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "Blocked by an incomplete load or an open shortfall.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "LOAD_INCOMPLETE",
+                    "message": "3 of 7 lines are still unchecked.",
+                    "details": {
+                      "checked": 4,
+                      "expected": 7
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/drivers/me/vehicle": {
+      "put": {
+        "operationId": "chooseVehicle",
+        "summary": "Claim a vehicle for the day",
+        "description": "Assignment happens at the dock; it is persisted on the user.",
+        "tags": [
+          "driver"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "vehicleId"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "vehicleId": {
+                    "type": "string",
+                    "examples": [
+                      "VEH043"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Vehicle claimed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "vehicleId"
+                  ],
+                  "properties": {
+                    "vehicleId": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "example": {
+                  "vehicleId": "VEH043"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "clearVehicle",
+        "summary": "Release the claimed vehicle",
+        "tags": [
+          "driver"
+        ],
+        "responses": {
+          "204": {
+            "description": "Released."
+          }
+        }
+      }
+    },
+    "/drivers/me/run": {
+      "get": {
+        "operationId": "getRun",
+        "summary": "Today's run for the claimed vehicle",
+        "tags": [
+          "driver"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Date"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                },
+                "example": {
+                  "date": "2026-09-30",
+                  "vehicleId": "VEH043",
+                  "trips": [
+                    {
+                      "tripId": "clx0trp1a2b3c4d5e6f7g8h",
+                      "tripNo": 1,
+                      "wave": "PREDAWN",
+                      "stops": [
+                        {
+                          "id": "clx0stp1a2b3c4d5e6f7g8h",
+                          "seq": 1,
+                          "outletId": "OUT074",
+                          "outletName": "Fresh Nugegoda",
+                          "status": "PENDING",
+                          "plannedArrivalAt": "04:12",
+                          "windowOpen": "06:00",
+                          "windowClose": "11:00",
+                          "accessNote": "Rear dock. Van only.",
+                          "orders": [
+                            {
+                              "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
+                              "orderRef": "ORD-004312",
+                              "expectedUnits": 120
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/stops/{stopId}/events": {
+      "parameters": [
+        {
+          "name": "stopId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "submitStopEvents",
+        "summary": "Record arrival, unloading and completion",
+        "description": "All three driver transitions are one endpoint, because they are all just StopEvents. The client mints each event's ULID, so this is idempotent by construction and the offline outbox has exactly one write shape to replay. `duplicate` in the response is a success, not a failure.\n",
+        "tags": [
+          "driver"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitEventsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Events applied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitEventsResult"
+                },
+                "example": {
+                  "accepted": 1,
+                  "duplicates": 0,
+                  "conflicts": 0,
+                  "results": [
+                    {
+                      "id": "01JB2X8Q9K7YC4V3M0ZQ5T6RWE",
+                      "status": "accepted",
+                      "conflictState": "NONE"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/sync/stop-events": {
+      "post": {
+        "operationId": "syncStopEvents",
+        "summary": "Drain the driver's offline outbox",
+        "description": "The same applier as POST /stops/{stopId}/events, batched and spanning several stops, so the online and offline paths can never diverge. Writes a SyncLog row and measures device clock skew. Replaying an identical batch must report every event as a duplicate and change nothing.\n",
+        "tags": [
+          "sync"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncBatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Batch applied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncBatchResult"
+                },
+                "example": {
+                  "accepted": 3,
+                  "duplicates": 0,
+                  "conflicts": 0,
+                  "clockSkewMs": 842,
+                  "serverSeq": 10428,
+                  "results": [
+                    {
+                      "id": "01JB2X8Q9K7YC4V3M0ZQ5T6RWE",
+                      "status": "accepted",
+                      "conflictState": "NONE"
+                    },
+                    {
+                      "id": "01JB2X8Q9K7YC4V3M0ZQ5T6RWF",
+                      "status": "accepted",
+                      "conflictState": "NONE"
+                    },
+                    {
+                      "id": "01JB2X8Q9K7YC4V3M0ZQ5T6RWG",
+                      "status": "accepted",
+                      "conflictState": "NONE"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      },
+      "get": {
+        "operationId": "pullStopEvents",
+        "summary": "Pull events recorded since a sequence number",
+        "description": "Lets a reconnecting device learn about changes it missed, such as a stop reassigned to another vehicle while it was offline.\n",
+        "tags": [
+          "sync"
+        ],
+        "parameters": [
+          {
+            "name": "sinceSeq",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Events after `sinceSeq`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "serverSeq",
+                    "events"
+                  ],
+                  "properties": {
+                    "serverSeq": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/StopEvent"
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "serverSeq": 10428,
+                  "events": []
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/sync/bootstrap": {
+      "get": {
+        "operationId": "getSyncBootstrap",
+        "summary": "Everything the device must cache to work offline",
+        "description": "One response containing the run plus the reference data a driver needs with no connectivity. Offline durability is only claimed once this and the outbox drain are verified end to end.\n",
+        "tags": [
+          "sync"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Date"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bootstrap payload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "serverSeq",
+                    "run",
+                    "vocabularies"
+                  ],
+                  "properties": {
+                    "serverSeq": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "run": {
+                      "$ref": "#/components/schemas/Run"
+                    },
+                    "vocabularies": {
+                      "$ref": "#/components/schemas/Vocabularies"
+                    }
+                  }
+                },
+                "example": {
+                  "serverSeq": 10428,
+                  "run": {
+                    "date": "2026-09-30",
+                    "vehicleId": "VEH043",
+                    "trips": []
+                  },
+                  "vocabularies": {
+                    "deferralReasons": [
+                      "REEFER_FULL"
+                    ],
+                    "shortfallReasons": [
+                      "MISSING"
+                    ],
+                    "problemReasons": [
+                      "OUTLET_CLOSED",
+                      "ACCESS_DENIED",
+                      "VEHICLE_BREAKDOWN",
+                      "ROAD_BLOCKED",
+                      "DELIVERY_REFUSED"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "katapatha_session",
+        "description": "Used by the web app."
+      },
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Used by the mobile app. Same opaque token as the cookie; only its sha256 hash is stored server-side.\n"
+      }
+    },
+    "schemas": {
+      "SignInRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "examples": [
+              "nimal@waypoint.lk"
+            ]
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "examples": [
+              "waypoint"
+            ]
+          }
+        }
+      },
+      "Role": {
+        "type": "string",
+        "enum": [
+          "DISPATCHER",
+          "LOADER",
+          "DRIVER",
+          "STORE_MANAGER"
+        ]
+      },
+      "SessionUser": {
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "name",
+          "role"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "clx0a1b2c3d4e5f6g7h8i9j0"
+            ]
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "examples": [
+              "nimal@waypoint.lk"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "examples": [
+              "Nimal Perera"
+            ]
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "depotCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "Peliyagoda"
+            ]
+          },
+          "outletId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              null
+            ]
+          },
+          "defaultVehicleId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              null
+            ]
+          }
+        }
+      },
+      "Session": {
+        "type": "object",
+        "required": [
+          "token",
+          "user",
+          "home"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Opaque bearer token. The same value is also set as an httpOnly cookie. Web uses the cookie; the mobile app uses the bearer token. Only a sha256 hash of this is stored server-side.\n",
+            "examples": [
+              "k7Qw2nT9xR4mB1vY6pL0aZ8cJ3hF5sD-eG"
+            ]
+          },
+          "user": {
+            "$ref": "#/components/schemas/SessionUser"
+          },
+          "home": {
+            "type": "string",
+            "examples": [
+              "/dispatcher"
+            ]
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "examples": [
+                  "FORBIDDEN"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "examples": [
+                  "You do not own this record."
+                ]
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "Brand": {
+        "type": "string",
+        "enum": [
+          "Fresh",
+          "Style",
+          "Tech"
+        ]
+      },
+      "ClockTime": {
+        "type": "string",
+        "description": "Wall-clock time in Asia/Colombo as \"HH:MM\". Never a date-time. The source data carries no date and no timezone for times, and every rule in the booklet is expressed in wall-clock minutes, so widening this to date-time would invent information we do not have.\n",
+        "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+        "examples": [
+          "03:30",
+          "16:00"
+        ]
+      },
+      "Outlet": {
+        "type": "object",
+        "required": [
+          "id",
+          "brand",
+          "districtName",
+          "depotCode",
+          "dockType",
+          "windowOpen",
+          "windowClose"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "OUT074"
+            ]
+          },
+          "displayName": {
+            "type": "string",
+            "examples": [
+              "Fresh Nugegoda"
+            ]
+          },
+          "brand": {
+            "$ref": "#/components/schemas/Brand"
+          },
+          "districtName": {
+            "type": "string",
+            "examples": [
+              "Colombo"
+            ]
+          },
+          "depotCode": {
+            "type": "string",
+            "examples": [
+              "Peliyagoda"
+            ]
+          },
+          "dockType": {
+            "type": "string",
+            "enum": [
+              "rear_dock",
+              "street",
+              "mall_bay"
+            ]
+          },
+          "parkingConstraint": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "van_only",
+              "mall_dock"
+            ]
+          },
+          "windowOpen": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "windowClose": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "mallWindowOpen": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClockTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mallWindowClose": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClockTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "VehicleTemp": {
+        "type": "string",
+        "description": "What a VEHICLE can do. A reefer may carry either; ambient may not carry chilled. Conflating this with TempRequirement is the single most common way to break feasibility rule 2.\n",
+        "enum": [
+          "reefer",
+          "ambient"
+        ]
+      },
+      "Vehicle": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "temp",
+          "weightCapKg",
+          "volumeCapM3",
+          "depotCode"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "VEH043"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "truck",
+              "van"
+            ]
+          },
+          "temp": {
+            "$ref": "#/components/schemas/VehicleTemp"
+          },
+          "weightCapKg": {
+            "type": "number",
+            "examples": [
+              3500
+            ]
+          },
+          "volumeCapM3": {
+            "type": "number",
+            "examples": [
+              18.5
+            ]
+          },
+          "kmPerL": {
+            "type": "number",
+            "examples": [
+              7.2
+            ]
+          },
+          "weeklyFuelQuotaL": {
+            "type": "number",
+            "examples": [
+              420
+            ]
+          },
+          "depotCode": {
+            "type": "string",
+            "examples": [
+              "Peliyagoda"
+            ]
+          }
+        }
+      },
+      "Vocabularies": {
+        "type": "object",
+        "description": "Server-owned code lists. Clients must render these rather than hardcoding their own copies, so a reason code added on the server appears everywhere.\n",
+        "required": [
+          "deferralReasons",
+          "shortfallReasons",
+          "problemReasons"
+        ],
+        "properties": {
+          "deferralReasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "examples": [
+              [
+                "REEFER_FULL",
+                "NO_VAN",
+                "WINDOW_UNREACHABLE",
+                "TIME_BUDGET",
+                "FUEL_QUOTA",
+                "VEHICLE_IN_WORKSHOP",
+                "ORDER_TOO_LARGE",
+                "AFTER_CUTOFF"
+              ]
+            ]
+          },
+          "shortfallReasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "examples": [
+              [
+                "MISSING",
+                "DAMAGED",
+                "SHORT_QUANTITY",
+                "NOT_COLD_ENOUGH"
+              ]
+            ]
+          },
+          "problemReasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "examples": [
+              [
+                "OUTLET_CLOSED",
+                "ACCESS_DENIED",
+                "VEHICLE_BREAKDOWN",
+                "ROAD_BLOCKED",
+                "DELIVERY_REFUSED"
+              ]
+            ]
+          }
+        }
+      },
+      "DateOnly": {
+        "type": "string",
+        "format": "date",
+        "description": "A calendar date with no time component.",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+        "examples": [
+          "2026-09-30"
+        ]
+      },
+      "TempRequirement": {
+        "type": "string",
+        "description": "What an ORDER needs. Deliberately distinct from VehicleTemp.",
+        "enum": [
+          "chilled",
+          "ambient"
+        ]
+      },
+      "OrderStatus": {
+        "type": "string",
+        "enum": [
+          "DRAFT",
+          "PLACED",
+          "QUEUED",
+          "PLANNED",
+          "LOADED",
+          "IN_TRANSIT",
+          "DELIVERED",
+          "PART_DELIVERED",
+          "FAILED",
+          "DEFERRED",
+          "CANCELLED"
+        ]
+      },
+      "Order": {
+        "type": "object",
+        "required": [
+          "id",
+          "ref",
+          "outletId",
+          "brand",
+          "tempRequirement",
+          "units",
+          "requestedDate",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "clx0ord1a2b3c4d5e6f7g8h9"
+            ]
+          },
+          "ref": {
+            "type": "string",
+            "examples": [
+              "ORD-004312"
+            ]
+          },
+          "outletId": {
+            "type": "string",
+            "examples": [
+              "OUT074"
+            ]
+          },
+          "brand": {
+            "$ref": "#/components/schemas/Brand"
+          },
+          "districtName": {
+            "type": "string",
+            "examples": [
+              "Colombo"
+            ]
+          },
+          "tempRequirement": {
+            "$ref": "#/components/schemas/TempRequirement"
+          },
+          "units": {
+            "type": "integer",
+            "examples": [
+              120
+            ]
+          },
+          "weightKg": {
+            "type": "number",
+            "examples": [
+              860.4
+            ]
+          },
+          "volumeM3": {
+            "type": "number",
+            "examples": [
+              4.32
+            ]
+          },
+          "windowOpen": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "windowClose": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "requestedDate": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          },
+          "storeState": {
+            "type": "string",
+            "description": "The narrower projection a store manager sees.",
+            "enum": [
+              "queued",
+              "planned",
+              "on_the_way",
+              "delivered",
+              "deferred",
+              "cancelled"
+            ]
+          }
+        }
+      },
+      "PlaceOrdersRequest": {
+        "type": "object",
+        "description": "The store manager supplies units only. Outlet, brand, district and depot are derived server-side from the session — never trusted from the body. Weight and volume are estimated from the outlet's own history.\n",
+        "required": [
+          "requestId",
+          "forDate",
+          "lines"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Idempotency key. Replaying the same requestId returns the original result.",
+            "examples": [
+              "9f1c1d7e-2a4b-4c8d-9e0f-1a2b3c4d5e6f"
+            ]
+          },
+          "forDate": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "lines": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "tempRequirement",
+                "units"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "tempRequirement": {
+                  "$ref": "#/components/schemas/TempRequirement"
+                },
+                "units": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10000,
+                  "examples": [
+                    120
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "ReceiptRequest": {
+        "type": "object",
+        "required": [
+          "unitsReceived",
+          "matches"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "unitsReceived": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [
+              120
+            ]
+          },
+          "matches": {
+            "type": "boolean",
+            "examples": [
+              true
+            ]
+          },
+          "issueKind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "ITEMS_MISSING",
+              "ITEMS_DAMAGED",
+              "ARRIVED_WARM",
+              "WRONG_ITEMS",
+              null
+            ]
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              null
+            ]
+          }
+        }
+      },
+      "Receipt": {
+        "type": "object",
+        "required": [
+          "orderId",
+          "confirmedAt",
+          "unitsReceived",
+          "matches"
+        ],
+        "properties": {
+          "orderId": {
+            "type": "string",
+            "examples": [
+              "clx0ord1a2b3c4d5e6f7g8h9"
+            ]
+          },
+          "confirmedAt": {
+            "type": "string",
+            "format": "date-time",
+            "examples": [
+              "2026-09-30T05:41:00Z"
+            ]
+          },
+          "unitsReceived": {
+            "type": "integer",
+            "examples": [
+              120
+            ]
+          },
+          "matches": {
+            "type": "boolean",
+            "examples": [
+              true
+            ]
+          }
+        }
+      },
+      "PlanningDay": {
+        "type": "object",
+        "required": [
+          "id",
+          "date",
+          "depotCode",
+          "status",
+          "cutoffAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "clx0pd1a2b3c4d5e6f7g8h9i"
+            ]
+          },
+          "date": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "depotCode": {
+            "type": "string",
+            "examples": [
+              "Peliyagoda"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "OPEN",
+              "CLOSED",
+              "PLANNING",
+              "PUBLISHED"
+            ]
+          },
+          "cutoffAt": {
+            "$ref": "#/components/schemas/ClockTime"
+          }
+        }
+      },
+      "PlanStats": {
+        "type": "object",
+        "required": [
+          "orders",
+          "served",
+          "deferred",
+          "tripsBuilt",
+          "hash"
+        ],
+        "properties": {
+          "orders": {
+            "type": "integer",
+            "examples": [
+              85
+            ]
+          },
+          "served": {
+            "type": "integer",
+            "examples": [
+              78
+            ]
+          },
+          "deferred": {
+            "type": "integer",
+            "examples": [
+              7
+            ]
+          },
+          "tripsBuilt": {
+            "type": "integer",
+            "examples": [
+              14
+            ]
+          },
+          "hash": {
+            "type": "string",
+            "description": "Deterministic fingerprint of the allocation. Identical input must always produce an identical hash, so this doubles as a regression guard in CI.\n",
+            "examples": [
+              "a3f9c1e70b4d2856"
+            ]
+          }
+        }
+      },
+      "PlanSummary": {
+        "type": "object",
+        "required": [
+          "planId",
+          "status",
+          "stats"
+        ],
+        "properties": {
+          "planId": {
+            "type": "string",
+            "examples": [
+              "clx0pln1a2b3c4d5e6f7g8h"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DRAFT",
+              "PUBLISHED",
+              "SUPERSEDED"
+            ]
+          },
+          "stats": {
+            "$ref": "#/components/schemas/PlanStats"
+          }
+        }
+      },
+      "CreatePlanRequest": {
+        "type": "object",
+        "required": [
+          "date",
+          "depotCode"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "depotCode": {
+            "type": "string",
+            "examples": [
+              "Peliyagoda"
+            ]
+          }
+        }
+      },
+      "Wave": {
+        "type": "string",
+        "enum": [
+          "PREDAWN",
+          "DAYTIME"
+        ]
+      },
+      "TripStatus": {
+        "type": "string",
+        "enum": [
+          "PLANNED",
+          "LOADING",
+          "READY",
+          "DEPARTED",
+          "COMPLETED",
+          "CANCELLED"
+        ]
+      },
+      "Trip": {
+        "type": "object",
+        "required": [
+          "id",
+          "vehicleId",
+          "tripNo",
+          "brand",
+          "districtName",
+          "wave",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "clx0trp1a2b3c4d5e6f7g8h"
+            ]
+          },
+          "vehicleId": {
+            "type": "string",
+            "examples": [
+              "VEH043"
+            ]
+          },
+          "tripNo": {
+            "type": "integer",
+            "enum": [
+              1,
+              2
+            ],
+            "examples": [
+              1
+            ]
+          },
+          "brand": {
+            "$ref": "#/components/schemas/Brand"
+          },
+          "districtName": {
+            "type": "string",
+            "examples": [
+              "Colombo"
+            ]
+          },
+          "wave": {
+            "$ref": "#/components/schemas/Wave"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TripStatus"
+          },
+          "plannedDepartAt": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "plannedMinutes": {
+            "type": "integer",
+            "examples": [
+              212
+            ]
+          },
+          "sumWeightKg": {
+            "type": "number",
+            "examples": [
+              3210.5
+            ]
+          },
+          "sumVolumeM3": {
+            "type": "number",
+            "examples": [
+              16.8
+            ]
+          }
+        }
+      },
+      "Violation": {
+        "type": "object",
+        "required": [
+          "code",
+          "severity",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "examples": [
+              "VOLUME_CAP_EXCEEDED"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warning"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "examples": [
+              "Trip 2 on VEH043 exceeds its volume capacity by 0.8 m³."
+            ]
+          },
+          "tripId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "clx0trp1a2b3c4d5e6f7g8h"
+            ]
+          },
+          "orderRef": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              null
+            ]
+          },
+          "overridable": {
+            "type": "boolean",
+            "description": "Some violations describe a real operational action (recalling a vehicle from the workshop) and may be overridden with a recorded reason. Others never can be: chilled goods on an ambient truck is not a judgement call.\n",
+            "examples": [
+              false
+            ]
+          }
+        }
+      },
+      "ValidationResult": {
+        "type": "object",
+        "required": [
+          "stage",
+          "violations",
+          "blocking"
+        ],
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "publish"
+            ]
+          },
+          "violations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Violation"
+            }
+          },
+          "blocking": {
+            "type": "boolean",
+            "examples": [
+              false
+            ]
+          }
+        }
+      },
+      "ConfirmDeferralsRequest": {
+        "type": "object",
+        "required": [
+          "decisions"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "decisions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "assignmentId",
+                "reasonCode"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "assignmentId": {
+                  "type": "string",
+                  "examples": [
+                    "clx0asg1a2b3c4d5e6f7g8h"
+                  ]
+                },
+                "reasonCode": {
+                  "type": "string",
+                  "examples": [
+                    "REEFER_FULL"
+                  ]
+                },
+                "note": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "examples": [
+                    null
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "LoadList": {
+        "type": "object",
+        "description": "Stops are returned in REVERSE delivery order. The driver unloads from the back, so the loader must load the last stop first. This ordering is part of the contract, not a client concern.\n",
+        "required": [
+          "tripId",
+          "status",
+          "lines"
+        ],
+        "properties": {
+          "tripId": {
+            "type": "string",
+            "examples": [
+              "clx0trp1a2b3c4d5e6f7g8h"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/TripStatus"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "orderId",
+                "orderRef",
+                "outletId",
+                "seq",
+                "expectedUnits"
+              ],
+              "properties": {
+                "orderId": {
+                  "type": "string",
+                  "examples": [
+                    "clx0ord1a2b3c4d5e6f7g8h9"
+                  ]
+                },
+                "orderRef": {
+                  "type": "string",
+                  "examples": [
+                    "ORD-004312"
+                  ]
+                },
+                "outletId": {
+                  "type": "string",
+                  "examples": [
+                    "OUT074"
+                  ]
+                },
+                "seq": {
+                  "type": "integer",
+                  "description": "Delivery sequence (lines are sorted descending).",
+                  "examples": [
+                    3
+                  ]
+                },
+                "expectedUnits": {
+                  "type": "integer",
+                  "examples": [
+                    120
+                  ]
+                },
+                "loadedUnits": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "examples": [
+                    null
+                  ]
+                },
+                "condition": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "OK",
+                    "SHORT",
+                    "DAMAGED",
+                    "MISSING",
+                    null
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "LoadCheckRequest": {
+        "type": "object",
+        "required": [
+          "loadedUnits",
+          "condition",
+          "checkedByName"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "loadedUnits": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [
+              120
+            ]
+          },
+          "condition": {
+            "type": "string",
+            "enum": [
+              "OK",
+              "SHORT",
+              "DAMAGED",
+              "MISSING"
+            ],
+            "examples": [
+              "OK"
+            ]
+          },
+          "checkedByName": {
+            "type": "string",
+            "description": "Typed in per action. The dock terminal is shared between loaders, so the actor cannot be taken from the session.\n",
+            "examples": [
+              "Ranjith Silva"
+            ]
+          },
+          "reasonCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              null
+            ]
+          },
+          "clientRequestId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "examples": [
+              null
+            ]
+          }
+        }
+      },
+      "LoadCheck": {
+        "type": "object",
+        "required": [
+          "tripId",
+          "orderId",
+          "expectedUnits",
+          "loadedUnits",
+          "condition"
+        ],
+        "properties": {
+          "tripId": {
+            "type": "string",
+            "examples": [
+              "clx0trp1a2b3c4d5e6f7g8h"
+            ]
+          },
+          "orderId": {
+            "type": "string",
+            "examples": [
+              "clx0ord1a2b3c4d5e6f7g8h9"
+            ]
+          },
+          "expectedUnits": {
+            "type": "integer",
+            "examples": [
+              120
+            ]
+          },
+          "loadedUnits": {
+            "type": "integer",
+            "examples": [
+              120
+            ]
+          },
+          "condition": {
+            "type": "string",
+            "enum": [
+              "OK",
+              "SHORT",
+              "DAMAGED",
+              "MISSING"
+            ],
+            "examples": [
+              "OK"
+            ]
+          },
+          "shortfallId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              null
+            ]
+          }
+        }
+      },
+      "ReadinessResult": {
+        "type": "object",
+        "required": [
+          "tripId",
+          "status"
+        ],
+        "properties": {
+          "tripId": {
+            "type": "string",
+            "examples": [
+              "clx0trp1a2b3c4d5e6f7g8h"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/TripStatus"
+          },
+          "releasedAt": {
+            "type": "string",
+            "format": "date-time",
+            "examples": [
+              "2026-09-30T03:05:00Z"
+            ]
+          }
+        }
+      },
+      "StopStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "ARRIVED",
+          "UNLOADING",
+          "DONE",
+          "SKIPPED",
+          "FAILED"
+        ]
+      },
+      "Stop": {
+        "type": "object",
+        "required": [
+          "id",
+          "seq",
+          "outletId",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "clx0stp1a2b3c4d5e6f7g8h"
+            ]
+          },
+          "seq": {
+            "type": "integer",
+            "examples": [
+              1
+            ]
+          },
+          "outletId": {
+            "type": "string",
+            "examples": [
+              "OUT074"
+            ]
+          },
+          "outletName": {
+            "type": "string",
+            "examples": [
+              "Fresh Nugegoda"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/StopStatus"
+          },
+          "plannedArrivalAt": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "windowOpen": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "windowClose": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "accessNote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "Rear dock. Van only."
+            ]
+          },
+          "orders": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "orderId",
+                "orderRef",
+                "expectedUnits"
+              ],
+              "properties": {
+                "orderId": {
+                  "type": "string",
+                  "examples": [
+                    "clx0ord1a2b3c4d5e6f7g8h9"
+                  ]
+                },
+                "orderRef": {
+                  "type": "string",
+                  "examples": [
+                    "ORD-004312"
+                  ]
+                },
+                "expectedUnits": {
+                  "type": "integer",
+                  "examples": [
+                    120
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "Run": {
+        "type": "object",
+        "required": [
+          "date",
+          "vehicleId",
+          "trips"
+        ],
+        "properties": {
+          "date": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "vehicleId": {
+            "type": "string",
+            "examples": [
+              "VEH043"
+            ]
+          },
+          "trips": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "tripId",
+                "tripNo",
+                "wave",
+                "stops"
+              ],
+              "properties": {
+                "tripId": {
+                  "type": "string",
+                  "examples": [
+                    "clx0trp1a2b3c4d5e6f7g8h"
+                  ]
+                },
+                "tripNo": {
+                  "type": "integer",
+                  "examples": [
+                    1
+                  ]
+                },
+                "wave": {
+                  "$ref": "#/components/schemas/Wave"
+                },
+                "stops": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Stop"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "Ulid": {
+        "type": "string",
+        "description": "Client-generated, time-sortable identifier (Crockford base32). The client mints this so that replaying a write is idempotent by construction.\n",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "examples": [
+          "01JB2X8Q9K7YC4V3M0ZQ5T6RWE"
+        ]
+      },
+      "StopEvent": {
+        "type": "object",
+        "description": "One recorded fact about a stop. The client mints the ULID id, so replaying an event — online or from the offline outbox — is idempotent by construction. `occurredAt` is the DEVICE clock and must be presented as \"recorded on device\"; the server records its own receipt time separately.\n",
+        "required": [
+          "id",
+          "type",
+          "occurredAt"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "ARRIVED",
+              "UNLOAD_START",
+              "DELIVERED",
+              "PART_DELIVERED",
+              "FAILED",
+              "SKIPPED",
+              "POD_CAPTURED"
+            ],
+            "examples": [
+              "ARRIVED"
+            ]
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time",
+            "examples": [
+              "2026-09-30T04:12:00Z"
+            ]
+          },
+          "orderId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              null
+            ]
+          },
+          "deliveredUnits": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "examples": [
+              null
+            ]
+          },
+          "recipientName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              null
+            ]
+          },
+          "signatureData": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base64 data URL.",
+            "examples": [
+              null
+            ]
+          },
+          "photoData": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base64 data URL.",
+            "examples": [
+              null
+            ]
+          },
+          "reasonCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              null
+            ]
+          }
+        }
+      },
+      "SubmitEventsRequest": {
+        "type": "object",
+        "required": [
+          "deviceId",
+          "events"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "examples": [
+              "device-7f3a91"
+            ]
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/StopEvent"
+            }
+          }
+        }
+      },
+      "EventResult": {
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "status": {
+            "type": "string",
+            "description": "`duplicate` is a success, not an error — it is what a correct outbox replay looks like.\n",
+            "enum": [
+              "accepted",
+              "duplicate",
+              "conflict"
+            ],
+            "examples": [
+              "accepted"
+            ]
+          },
+          "conflictState": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "NONE",
+              "STALE_ASSIGNMENT",
+              "SUPERSEDED",
+              null
+            ]
+          }
+        }
+      },
+      "SubmitEventsResult": {
+        "type": "object",
+        "required": [
+          "accepted",
+          "duplicates",
+          "conflicts",
+          "results"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "integer",
+            "examples": [
+              3
+            ]
+          },
+          "duplicates": {
+            "type": "integer",
+            "examples": [
+              0
+            ]
+          },
+          "conflicts": {
+            "type": "integer",
+            "examples": [
+              0
+            ]
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventResult"
+            }
+          }
+        }
+      },
+      "SyncBatchRequest": {
+        "type": "object",
+        "description": "The offline outbox drain. Events may span several stops. This is the same applier as POST /stops/{stopId}/events, batched and unscoped, so the online and offline paths can never diverge.\n",
+        "required": [
+          "deviceId",
+          "clientClockAt",
+          "events"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "examples": [
+              "device-7f3a91"
+            ]
+          },
+          "clientClockAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Device clock at drain time, used to measure skew.",
+            "examples": [
+              "2026-09-30T06:02:11Z"
+            ]
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/StopEvent"
+            }
+          }
+        }
+      },
+      "SyncBatchResult": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SubmitEventsResult"
+          },
+          {
+            "type": "object",
+            "required": [
+              "clockSkewMs",
+              "serverSeq"
+            ],
+            "properties": {
+              "clockSkewMs": {
+                "type": "integer",
+                "examples": [
+                  842
+                ]
+              },
+              "serverSeq": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Highest server sequence assigned in this batch; use as the next `sinceSeq`.",
+                "examples": [
+                  10428
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "No valid session.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "code": "UNAUTHENTICATED",
+                "message": "Sign in required."
+              }
+            }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "description": "Rate limited.",
+        "headers": {
+          "Retry-After": {
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Seconds to wait."
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "code": "TOO_MANY_ATTEMPTS",
+                "message": "Too many sign-in attempts."
+              }
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Authenticated but not permitted. Either the role is wrong, or the record is not owned by this depot, outlet or vehicle.\n",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "code": "FORBIDDEN",
+                "message": "You do not own this record."
+              }
+            }
+          }
+        }
+      },
+      "ValidationFailed": {
+        "description": "The request was well formed but the operation is blocked by business rules. `details.violations` carries the reasons, so the client can render them beside the failed action instead of guessing.\n",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "code": "PLAN_HAS_BLOCKING_VIOLATIONS",
+                "message": "Two trips exceed their volume capacity.",
+                "details": {
+                  "violations": [
+                    {
+                      "code": "VOLUME_CAP_EXCEEDED",
+                      "severity": "error",
+                      "message": "Trip 2 on VEH043 exceeds its volume capacity by 0.8 m³.",
+                      "overridable": false
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "No such record, or not visible at this scope.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "code": "NOT_FOUND",
+                "message": "No such order."
+              }
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "The action does not apply in the record's current state.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "code": "PLAN_ALREADY_PUBLISHED",
+                "message": "This plan has already been published."
+              }
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "Date": {
+        "name": "date",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/DateOnly"
+        },
+        "description": "Operating date (Asia/Colombo)."
+      },
+      "DepotCode": {
+        "name": "depot",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Depot. Defaults to the caller's own depot; a caller may not read another."
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "description": "Replaying a request with the same key returns the original response. Reusing a key with a different body is rejected with 422.\n"
+      }
+    }
+  }
+}

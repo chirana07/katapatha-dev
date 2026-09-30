@@ -1,0 +1,22 @@
+# Owner: BE1
+health:
+  get:
+    operationId: getHealth
+    summary: Liveness and reachability probe
+    description: >
+      The connectivity authority. `navigator.onLine` is a hint only; the driver
+      UI must confirm reachability against this before claiming Connected.
+    tags: [system]
+    security: []
+    responses:
+      "200":
+        description: Service is up.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ok, at]
+              properties:
+                ok: { type: boolean }
+                at: { type: string, format: date-time }
+            example: { ok: true, at: "2026-09-30T06:00:00Z" }

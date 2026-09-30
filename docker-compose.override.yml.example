@@ -1,0 +1,8 @@
+# Copy to docker-compose.override.yml to seed from the real competition CSVs.
+# docker-compose.override.yml is gitignored; the dataset is confidential.
+services:
+  api:
+    volumes:
+      - ../katapatha-project/data:/data:ro
+    environment:
+      DATA_DIR: /data

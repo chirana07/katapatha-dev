@@ -1,0 +1,28 @@
+{
+  "name": "katapatha",
+  "private": true,
+  "packageManager": "pnpm@12.3.4",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "gen": "pnpm --filter @katapatha/contracts gen",
+    "gen:check": "pnpm gen && git diff --exit-code",
+    "contract:lint": "pnpm --filter @katapatha/contracts lint",
+    "mock": "pnpm --filter @katapatha/contracts mock",
+    "db:up": "docker compose up -d db",
+    "db:migrate": "pnpm --filter @katapatha/api db:migrate",
+    "db:seed": "pnpm --filter @katapatha/api db:seed",
+    "db:studio": "pnpm --filter @katapatha/api db:studio"
+  },
+  "devDependencies": {
+    "turbo": "2.5.8",
+    "typescript": "5.9.3",
+    "@types/node": "24.19.0"
+  }
+}

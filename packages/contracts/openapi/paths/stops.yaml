@@ -1,0 +1,39 @@
+# Owner: BE3
+events:
+  parameters:
+    - name: stopId
+      in: path
+      required: true
+      schema: { type: string }
+  post:
+    operationId: submitStopEvents
+    summary: Record arrival, unloading and completion
+    description: >
+      All three driver transitions are one endpoint, because they are all just
+      StopEvents. The client mints each event's ULID, so this is idempotent by
+      construction and the offline outbox has exactly one write shape to replay.
+      `duplicate` in the response is a success, not a failure.
+    tags: [driver]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/stops.yaml#/SubmitEventsRequest" }
+    responses:
+      "200":
+        description: Events applied.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/stops.yaml#/SubmitEventsResult" }
+            example:
+              accepted: 1
+              duplicates: 0
+              conflicts: 0
+              results:
+                - id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWE"
+                  status: accepted
+                  conflictState: NONE
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+      "409": { $ref: "../components/responses/common.yaml#/Conflict" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }

@@ -1,0 +1,71 @@
+# Owner: BE3
+vehicle:
+  put:
+    operationId: chooseVehicle
+    summary: Claim a vehicle for the day
+    description: Assignment happens at the dock; it is persisted on the user.
+    tags: [driver]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [vehicleId]
+            additionalProperties: false
+            properties:
+              vehicleId: { type: string, examples: ["VEH043"] }
+    responses:
+      "200":
+        description: Vehicle claimed.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vehicleId]
+              properties:
+                vehicleId: { type: string }
+            example: { vehicleId: "VEH043" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+  delete:
+    operationId: clearVehicle
+    summary: Release the claimed vehicle
+    tags: [driver]
+    responses:
+      "204": { description: Released. }
+
+run:
+  get:
+    operationId: getRun
+    summary: Today's run for the claimed vehicle
+    tags: [driver]
+    parameters:
+      - $ref: "../components/parameters/common.yaml#/Date"
+    responses:
+      "200":
+        description: The run.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/stops.yaml#/Run" }
+            example:
+              date: "2026-09-30"
+              vehicleId: "VEH043"
+              trips:
+                - tripId: "clx0trp1a2b3c4d5e6f7g8h"
+                  tripNo: 1
+                  wave: PREDAWN
+                  stops:
+                    - id: "clx0stp1a2b3c4d5e6f7g8h"
+                      seq: 1
+                      outletId: "OUT074"
+                      outletName: "Fresh Nugegoda"
+                      status: PENDING
+                      plannedArrivalAt: "04:12"
+                      windowOpen: "06:00"
+                      windowClose: "11:00"
+                      accessNote: "Rear dock. Van only."
+                      orders:
+                        - orderId: "clx0ord1a2b3c4d5e6f7g8h9"
+                          orderRef: "ORD-004312"
+                          expectedUnits: 120
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }

@@ -1,0 +1,13 @@
+order_ref,outlet_id,brand,district,depot,temp_requirement,order_units,order_weight_kg,order_volume_m3,window_open_time,window_close_time,deferred_yesterday,days_since_last_served
+DEMO-001,OUT010,Fresh,Colombo,Peliyagoda,chilled,40,500,4.0,05:00,08:30,0,1
+DEMO-002,OUT010,Fresh,Colombo,Peliyagoda,ambient,60,650,5.0,05:00,08:30,0,1
+DEMO-003,OUT020,Style,Colombo,Peliyagoda,ambient,36,420,3.2,09:00,11:00,0,2
+DEMO-004,OUT030,Tech,Gampaha,Peliyagoda,ambient,28,330,2.6,09:00,16:00,0,1
+DEMO-005,OUT040,Fresh,Puttalam,Peliyagoda,ambient,70,800,6.0,05:00,09:30,1,4
+DEMO-006,OUT074,Fresh,Puttalam,Peliyagoda,chilled,45,520,4.4,05:30,10:00,1,5
+DEMO-007,OUT074,Fresh,Puttalam,Peliyagoda,ambient,55,630,5.1,05:30,10:00,0,2
+DEMO-008,OUT080,Fresh,Gampaha,Peliyagoda,chilled,24,290,2.2,05:00,09:00,0,2
+DEMO-009,OUT020,Style,Colombo,Peliyagoda,ambient,40,450,3.8,09:00,11:00,0,1
+DEMO-010,OUT030,Tech,Gampaha,Peliyagoda,ambient,35,390,3.0,09:00,16:00,0,1
+DEMO-011,OUT040,Fresh,Puttalam,Peliyagoda,ambient,80,900,7.0,05:00,09:30,1,3
+DEMO-012,OUT010,Fresh,Colombo,Peliyagoda,ambient,400,5200,45.0,05:00,08:30,1,5

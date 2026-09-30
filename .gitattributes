@@ -1,0 +1,5 @@
+# Generated artefacts: never hand-merge. Resolve with `pnpm gen && git add`.
+*.gen.ts            -diff linguist-generated=true merge=binary
+*.gen.d.ts          -diff linguist-generated=true merge=binary
+packages/contracts/dist/*.json  -diff linguist-generated=true merge=binary
+pnpm-lock.yaml      -diff linguist-generated=true merge=binary

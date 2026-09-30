@@ -1,0 +1,21 @@
+node_modules/
+.next/
+dist/
+out/
+build/
+.turbo/
+coverage/
+*.tsbuildinfo
+.env
+.env.local
+docker-compose.override.yml
+.expo/
+.DS_Store
+next-env.d.ts
+
+# The bundled contract and the generated client types ARE committed, so a
+# developer on Expo Go never needs the Redocly toolchain to build. They are
+# marked merge=binary in .gitattributes: never hand-merge them, run
+# `pnpm gen && git add`. CI enforces they are in sync via `pnpm gen:check`.
+!packages/contracts/dist/
+!packages/contracts/dist/openapi.json

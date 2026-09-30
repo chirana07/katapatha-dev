@@ -1,0 +1,104 @@
+# Owner: BE3
+stopEvents:
+  post:
+    operationId: syncStopEvents
+    summary: Drain the driver's offline outbox
+    description: >
+      The same applier as POST /stops/{stopId}/events, batched and spanning
+      several stops, so the online and offline paths can never diverge. Writes a
+      SyncLog row and measures device clock skew. Replaying an identical batch
+      must report every event as a duplicate and change nothing.
+    tags: [sync]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/stops.yaml#/SyncBatchRequest" }
+    responses:
+      "200":
+        description: Batch applied.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/stops.yaml#/SyncBatchResult" }
+            example:
+              accepted: 3
+              duplicates: 0
+              conflicts: 0
+              clockSkewMs: 842
+              serverSeq: 10428
+              results:
+                - id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWE"
+                  status: accepted
+                  conflictState: NONE
+                - id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWF"
+                  status: accepted
+                  conflictState: NONE
+                - id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWG"
+                  status: accepted
+                  conflictState: NONE
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+  get:
+    operationId: pullStopEvents
+    summary: Pull events recorded since a sequence number
+    description: >
+      Lets a reconnecting device learn about changes it missed, such as a stop
+      reassigned to another vehicle while it was offline.
+    tags: [sync]
+    parameters:
+      - name: sinceSeq
+        in: query
+        required: true
+        schema: { type: integer, format: int64 }
+    responses:
+      "200":
+        description: Events after `sinceSeq`.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serverSeq, events]
+              properties:
+                serverSeq: { type: integer, format: int64 }
+                events:
+                  type: array
+                  items: { $ref: "../components/schemas/stops.yaml#/StopEvent" }
+            example:
+              serverSeq: 10428
+              events: []
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+
+bootstrap:
+  get:
+    operationId: getSyncBootstrap
+    summary: Everything the device must cache to work offline
+    description: >
+      One response containing the run plus the reference data a driver needs
+      with no connectivity. Offline durability is only claimed once this and the
+      outbox drain are verified end to end.
+    tags: [sync]
+    parameters:
+      - $ref: "../components/parameters/common.yaml#/Date"
+    responses:
+      "200":
+        description: Bootstrap payload.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serverSeq, run, vocabularies]
+              properties:
+                serverSeq: { type: integer, format: int64 }
+                run: { $ref: "../components/schemas/stops.yaml#/Run" }
+                vocabularies: { $ref: "../components/schemas/reference.yaml#/Vocabularies" }
+            example:
+              serverSeq: 10428
+              run:
+                date: "2026-09-30"
+                vehicleId: "VEH043"
+                trips: []
+              vocabularies:
+                deferralReasons: [REEFER_FULL]
+                shortfallReasons: [MISSING]
+                problemReasons: [OUTLET_CLOSED, ACCESS_DENIED, VEHICLE_BREAKDOWN, ROAD_BLOCKED, DELIVERY_REFUSED]
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }

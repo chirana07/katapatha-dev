@@ -1,0 +1,23 @@
+{
+  "name": "@katapatha/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./openapi.json": "./dist/openapi.json",
+    "./types": "./src/schema.gen.d.ts"
+  },
+  "scripts": {
+    "bundle": "redocly bundle openapi/openapi.yaml -o dist/openapi.json",
+    "types": "openapi-typescript dist/openapi.json -o src/schema.gen.d.ts",
+    "gen": "pnpm bundle && pnpm types",
+    "lint": "redocly lint openapi/openapi.yaml",
+    "mock": "prism mock dist/openapi.json --port 4010",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@redocly/cli": "2.57.0",
+    "openapi-typescript": "7.13.0",
+    "@stoplight/prism-cli": "5.16.0"
+  }
+}
