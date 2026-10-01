@@ -1,23 +1,21 @@
 import type { FastifyInstance } from "fastify";
+import { validatePlan } from "@katapatha/core/validation/rules";
+import type { PlanStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
-import { runAutoPlan, loadPlan } from "../services/plans.js";
+import { loadDayContext, loadPlan, runAutoPlan } from "../services/plans.js";
+import { snapshotFromPlan } from "../services/snapshot.js";
+import type { DepotCode } from "@katapatha/core/domain/types";
 
 /**
  * Owner: BE2
  *
- * Read side is live and backed by the real database. The write/validate
- * endpoints below (closure, validation, deferrals, publication) are still
- * stubs — each needs its own transactional path and the publication path
- * carries the atomic one-time claim DOMAIN.md gates on. They land in a
- * follow-up slice; the Prism mock on :4010 keeps the dispatcher UI
- * unblocked in the meantime.
+ * Reads, allocator run, and the publication path all live here. The
+ * publish handler uses an atomic one-time claim: the DRAFT -> PUBLISHED
+ * update is gated on the current status matching DRAFT, so a second
+ * attempt updates zero rows and the handler returns 409 instead of
+ * silently succeeding. DOMAIN.md calls that explicitly out as the
+ * guarantee publication offers.
  */
-const NOT_IMPLEMENTED = {
-  error: {
-    code: "NOT_IMPLEMENTED",
-    message: "Not built yet. Use the Prism mock on :4010 for this endpoint.",
-  },
-} as const;
 
 const ERROR_RESPONSE = {
   type: "object",
@@ -351,18 +349,352 @@ export default async function (fastify: FastifyInstance) {
 
   fastify.post(
     "/planning-days/:planningDayId/closure",
-    async (_req, reply) => reply.status(501).send(NOT_IMPLEMENTED),
+    {
+      schema: {
+        params: {
+          type: "object",
+          required: ["planningDayId"],
+          properties: { planningDayId: { type: "string", minLength: 1 } },
+        },
+        response: {
+          200: PLANNING_DAY,
+          403: ERROR_RESPONSE,
+          404: ERROR_RESPONSE,
+        },
+      },
+    },
+    async (request, reply) => {
+      const user = request.requireRole("DISPATCHER");
+      const { planningDayId } = request.params as { planningDayId: string };
+      const day = await prisma.planningDay.findFirst({
+        where: { id: planningDayId, depotCode: user.depotCode ?? "" },
+      });
+      if (!day) {
+        return reply
+          .status(404)
+          .send({ error: { code: "NOT_FOUND", message: "Planning day not found." } });
+      }
+      // Closing twice is not a mistake worth blocking the dispatcher for.
+      if (day.status !== "OPEN") {
+        return {
+          id: day.id,
+          date: day.date.toISOString().slice(0, 10),
+          depotCode: day.depotCode,
+          status: day.status,
+          cutoffAt: day.cutoffAt,
+        };
+      }
+      const orderCount = await prisma.order.count({
+        where: {
+          depotCode: day.depotCode,
+          requestedDate: day.date,
+          status: { notIn: ["CANCELLED"] },
+        },
+      });
+      const updated = await prisma.planningDay.update({
+        where: { id: day.id },
+        data: {
+          status: "CLOSED",
+          closedAt: new Date(),
+          closedByUserId: user.id,
+          queueSnapshot: { ordersAtClose: orderCount, closedAt: new Date().toISOString() },
+        },
+      });
+      return {
+        id: updated.id,
+        date: updated.date.toISOString().slice(0, 10),
+        depotCode: updated.depotCode,
+        status: updated.status,
+        cutoffAt: updated.cutoffAt,
+      };
+    },
   );
+
   fastify.get(
     "/plans/:planId/validation",
-    async (_req, reply) => reply.status(501).send(NOT_IMPLEMENTED),
+    {
+      schema: {
+        params: {
+          type: "object",
+          required: ["planId"],
+          properties: { planId: { type: "string", minLength: 1 } },
+        },
+        querystring: {
+          type: "object",
+          additionalProperties: false,
+          properties: { stage: { type: "string", enum: ["draft", "publish"] } },
+        },
+        response: {
+          200: {
+            type: "object",
+            additionalProperties: false,
+            required: ["stage", "violations", "blocking"],
+            properties: {
+              stage: { type: "string", enum: ["draft", "publish"] },
+              blocking: { type: "boolean" },
+              violations: {
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: true,
+                  required: ["code", "severity", "message"],
+                  properties: {
+                    code: { type: "string" },
+                    severity: { type: "string", enum: ["error", "warning"] },
+                    message: { type: "string" },
+                    tripId: { oneOf: [{ type: "string" }, { type: "null" }] },
+                    orderRef: { oneOf: [{ type: "string" }, { type: "null" }] },
+                    overridable: { type: "boolean" },
+                  },
+                },
+              },
+            },
+          },
+          404: ERROR_RESPONSE,
+        },
+      },
+    },
+    async (request, reply) => {
+      const user = request.requireRole("DISPATCHER");
+      const { planId } = request.params as { planId: string };
+      const query = request.query as { stage?: "draft" | "publish" };
+      const stage = query.stage ?? "draft";
+
+      const plan = await loadPlan(planId);
+      if (!plan || plan.planningDay.depotCode !== user.depotCode) {
+        return reply
+          .status(404)
+          .send({ error: { code: "NOT_FOUND", message: "Plan not found." } });
+      }
+      const ctx = await loadDayContext(plan.planningDay.date, plan.planningDay.depotCode as DepotCode);
+      if (!ctx) {
+        return reply
+          .status(404)
+          .send({ error: { code: "NO_PLANNING_DAY", message: "Planning day no longer exists." } });
+      }
+      const snapshot = await snapshotFromPlan(plan, ctx);
+      const violations = validatePlan(snapshot, { stage });
+      const blocking = violations.some((v) => v.severity === "error");
+      return { stage, violations, blocking };
+    },
   );
+
   fastify.put(
     "/plans/:planId/deferrals",
-    async (_req, reply) => reply.status(501).send(NOT_IMPLEMENTED),
+    {
+      schema: {
+        params: {
+          type: "object",
+          required: ["planId"],
+          properties: { planId: { type: "string", minLength: 1 } },
+        },
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["decisions"],
+          properties: {
+            decisions: {
+              type: "array",
+              minItems: 1,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["assignmentId", "reasonCode"],
+                properties: {
+                  assignmentId: { type: "string", minLength: 1 },
+                  reasonCode: { type: "string", minLength: 1 },
+                  note: { oneOf: [{ type: "string" }, { type: "null" }] },
+                },
+              },
+            },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            additionalProperties: false,
+            required: ["confirmed"],
+            properties: { confirmed: { type: "integer" } },
+          },
+          403: ERROR_RESPONSE,
+          404: ERROR_RESPONSE,
+          422: ERROR_RESPONSE,
+        },
+      },
+    },
+    async (request, reply) => {
+      const user = request.requireRole("DISPATCHER");
+      const { planId } = request.params as { planId: string };
+      const body = request.body as {
+        decisions: Array<{ assignmentId: string; reasonCode: string; note?: string | null }>;
+      };
+
+      const plan = await prisma.plan.findFirst({
+        where: { id: planId, planningDay: { depotCode: user.depotCode ?? "" } },
+        select: { id: true, status: true },
+      });
+      if (!plan) {
+        return reply
+          .status(404)
+          .send({ error: { code: "NOT_FOUND", message: "Plan not found." } });
+      }
+      if (plan.status !== "DRAFT") {
+        return reply.status(422).send({
+          error: {
+            code: "NOT_DRAFT",
+            message: "Deferral reasons can only be confirmed on a DRAFT plan.",
+          },
+        });
+      }
+
+      let confirmed = 0;
+      for (const decision of body.decisions) {
+        const result = await prisma.assignment.updateMany({
+          where: {
+            id: decision.assignmentId,
+            planId: plan.id,
+            decision: "DEFERRED",
+          },
+          data: { reasonCode: decision.reasonCode },
+        });
+        confirmed += result.count;
+      }
+      return { confirmed };
+    },
   );
+
   fastify.post(
     "/plans/:planId/publication",
-    async (_req, reply) => reply.status(501).send(NOT_IMPLEMENTED),
+    {
+      schema: {
+        params: {
+          type: "object",
+          required: ["planId"],
+          properties: { planId: { type: "string", minLength: 1 } },
+        },
+        response: {
+          201: PLAN_SUMMARY,
+          403: ERROR_RESPONSE,
+          409: ERROR_RESPONSE,
+          422: ERROR_RESPONSE,
+        },
+      },
+    },
+    async (request, reply) => {
+      const user = request.requireRole("DISPATCHER");
+      const { planId } = request.params as { planId: string };
+
+      const plan = await prisma.plan.findFirst({
+        where: { id: planId, planningDay: { depotCode: user.depotCode ?? "" } },
+        include: {
+          planningDay: true,
+          assignments: {
+            select: { id: true, orderId: true, decision: true, reasonCode: true },
+          },
+        },
+      });
+      if (!plan) {
+        return reply
+          .status(409)
+          .send({ error: { code: "PLAN_MISSING", message: "Plan not found at this depot." } });
+      }
+      if (plan.status !== "DRAFT") {
+        return reply.status(409).send({
+          error: {
+            code: "ALREADY_PUBLISHED",
+            message: `Plan is already ${plan.status.toLowerCase()} — publishing it again is not allowed.`,
+          },
+        });
+      }
+      const unreasoned = plan.assignments.filter(
+        (a) => a.decision === "DEFERRED" && !a.reasonCode,
+      );
+      if (unreasoned.length > 0) {
+        return reply.status(422).send({
+          error: {
+            code: "DEFERRALS_UNCONFIRMED",
+            message: `${unreasoned.length} deferral${unreasoned.length === 1 ? "" : "s"} still ${unreasoned.length === 1 ? "lacks" : "lack"} a reason code.`,
+          },
+        });
+      }
+
+      // Atomic one-time claim: the DRAFT -> PUBLISHED update is gated on
+      // status matching DRAFT, so a second attempt updates zero rows and we
+      // return 409 instead of silently publishing twice.
+      const claimed = await prisma.plan.updateMany({
+        where: { id: plan.id, status: "DRAFT" as PlanStatus },
+        data: {
+          status: "PUBLISHED",
+          publishedAt: new Date(),
+          publishedByUserId: user.id,
+        },
+      });
+      if (claimed.count === 0) {
+        return reply
+          .status(409)
+          .send({ error: { code: "RACE_LOST", message: "Someone else published this plan." } });
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.planningDay.update({
+          where: { id: plan.planningDayId },
+          data: { status: "PUBLISHED" },
+        });
+        // Flip the orders the plan either served or deferred.
+        const servedOrderIds = plan.assignments
+          .filter((a) => a.decision === "SERVED")
+          .map((a) => a.orderId);
+        const deferredAssignments = plan.assignments.filter((a) => a.decision === "DEFERRED");
+        if (servedOrderIds.length > 0) {
+          await tx.order.updateMany({
+            where: { id: { in: servedOrderIds } },
+            data: { status: "PLANNED" },
+          });
+        }
+        if (deferredAssignments.length > 0) {
+          await tx.order.updateMany({
+            where: { id: { in: deferredAssignments.map((a) => a.orderId) } },
+            data: { status: "DEFERRED" },
+          });
+          // Audit-trail row per deferral so the store can see why.
+          for (const assignment of deferredAssignments) {
+            await tx.deferral.upsert({
+              where: { planId_orderId: { planId: plan.id, orderId: assignment.orderId } },
+              create: {
+                planId: plan.id,
+                orderId: assignment.orderId,
+                reasonCode: assignment.reasonCode ?? "UNCONFIRMED",
+                decidedByUserId: user.id,
+              },
+              update: {
+                reasonCode: assignment.reasonCode ?? "UNCONFIRMED",
+                decidedByUserId: user.id,
+                decidedAt: new Date(),
+              },
+            });
+          }
+        }
+      });
+
+      const summary = await prisma.plan.findUnique({
+        where: { id: plan.id },
+        include: {
+          trips: { select: { id: true } },
+          assignments: {
+            select: { decision: true, plan: { select: { status: true } } },
+          },
+        },
+      });
+      if (!summary) {
+        return reply
+          .status(409)
+          .send({ error: { code: "PLAN_MISSING", message: "Plan vanished after publish." } });
+      }
+      return reply.status(201).send({
+        planId: summary.id,
+        status: summary.status,
+        stats: statsFor(summary),
+      });
+    },
   );
 }
