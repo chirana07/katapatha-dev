@@ -153,6 +153,19 @@ function toOrderResponse(order: OrderWithTripLinkage) {
   };
 }
 
+/**
+ * Prisma's unique-constraint error. Matched on the code rather than with
+ * `instanceof PrismaClientKnownRequestError`, because that class is a runtime
+ * import and this only needs the one discriminator.
+ */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "P2002"
+  );
+}
+
 function parseDate(value: unknown): Date | undefined {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
   return new Date(`${value}T00:00:00.000Z`);
@@ -284,22 +297,42 @@ export default async function (fastify: FastifyInstance) {
       // without creating duplicates. Prisma's clientRequestId is @unique, so a
       // multi-line order can't store the raw requestId on every row — we
       // append the line index and look up by prefix on retry.
+      //
+      // The prefix match is safe because `requestId` is constrained to
+      // `format: uuid` in the schema above: a UUID cannot contain a colon, so
+      // "<uuid>:" cannot be a prefix of a different request's key. That
+      // constraint is load-bearing — loosening it to a free string would make
+      // one request able to recover another's orders.
       const requestKeyPrefix = `${body.requestId}:`;
-      const prior = await prisma.order.findMany({
-        where: {
-          outletId: user.outletId,
-          clientRequestId: { startsWith: requestKeyPrefix },
-        },
-        orderBy: { clientRequestId: "asc" },
-        include: {
-          assignments: {
-            select: {
-              plan: { select: { status: true } },
-              tripStop: { select: { trip: { select: { status: true } } } },
+      // Captured after the guard above, so the closures below keep the narrowing.
+      const outletId = user.outletId;
+
+      // Sorted on the numeric line index, NOT on clientRequestId. Lexicographic
+      // order over "<uuid>:0" … "<uuid>:10" gives :0, :1, :10, :11, :2 … so a
+      // ten-line order came back from a retry in a different order than the
+      // original POST returned it. `lines` has no maxItems, so that is reachable.
+      const lineIndexOf = (clientRequestId: string | null) =>
+        Number(clientRequestId?.slice(requestKeyPrefix.length) ?? 0);
+
+      async function findPrior() {
+        const rows = await prisma.order.findMany({
+          where: {
+            outletId,
+            clientRequestId: { startsWith: requestKeyPrefix },
+          },
+          include: {
+            assignments: {
+              select: {
+                plan: { select: { status: true } },
+                tripStop: { select: { trip: { select: { status: true } } } },
+              },
             },
           },
-        },
-      });
+        });
+        return rows.sort((a, b) => lineIndexOf(a.clientRequestId) - lineIndexOf(b.clientRequestId));
+      }
+
+      const prior = await findPrior();
       if (prior.length > 0) {
         return reply.status(200).send(prior.map(toOrderResponse));
       }
@@ -332,47 +365,65 @@ export default async function (fastify: FastifyInstance) {
         sizeByTemp.set(temp as TempRequirement, await unitSizeFor(user.outletId, temp));
       }
 
-      const created = await prisma.$transaction(async (tx) => {
-        // Allocate per-line sequential refs under the same requestedDate to
-        // keep the (ref, requestedDate) unique index happy, and to leave an
-        // operations-readable number on the dock card.
-        const latest = await tx.order.findFirst({
-          where: { ref: { startsWith: "ORD-" } },
-          orderBy: { ref: "desc" },
-          select: { ref: true },
-        });
-        const start = latest ? Number.parseInt(latest.ref.slice(4), 10) : 4000;
-        const first = Number.isFinite(start) ? start + 1 : 4001;
-
-        const rows = [];
-        for (let index = 0; index < body.lines.length; index++) {
-          const line = body.lines[index]!;
-          const size = sizeByTemp.get(line.tempRequirement as TempRequirement)!;
-          const ref = `ORD-${String(first + index).padStart(6, "0")}`;
-          const row = await tx.order.create({
-            data: {
-              ref,
-              outletId: outlet.id,
-              brand: outlet.brand as Brand,
-              districtName: outlet.districtName,
-              depotCode: outlet.depotCode,
-              tempRequirement: line.tempRequirement as TempRequirement,
-              units: line.units,
-              weightKg: Number((size.kgPerUnit * line.units).toFixed(1)),
-              volumeM3: Number((size.m3PerUnit * line.units).toFixed(2)),
-              windowOpen: outlet.windowOpen,
-              windowClose: outlet.windowClose,
-              requestedDate,
-              placedByUserId: user.id,
-              status: "QUEUED",
-              // Index-tagged so a multi-line retry recovers every row.
-              clientRequestId: `${requestKeyPrefix}${index}`,
-            },
+      // Wrapped so the double-submit this idempotency key exists for cannot
+      // surface as a 500. The prior-lookup above and this create are not one
+      // transaction, so two simultaneous identical POSTs can both see no prior
+      // rows and both try to create; the loser hits the clientRequestId @unique
+      // index (P2002). That is the index doing its job, but the caller should get
+      // the first result, not a server error -- so on P2002 we re-read and return
+      // 200, which is the same answer a sequential retry would have received.
+      let created;
+      try {
+        created = await prisma.$transaction(async (tx) => {
+          // Allocate per-line sequential refs under the same requestedDate to
+          // keep the (ref, requestedDate) unique index happy, and to leave an
+          // operations-readable number on the dock card.
+          const latest = await tx.order.findFirst({
+            where: { ref: { startsWith: "ORD-" } },
+            orderBy: { ref: "desc" },
+            select: { ref: true },
           });
-          rows.push(row);
+          const start = latest ? Number.parseInt(latest.ref.slice(4), 10) : 4000;
+          const first = Number.isFinite(start) ? start + 1 : 4001;
+
+          const rows = [];
+          for (let index = 0; index < body.lines.length; index++) {
+            const line = body.lines[index]!;
+            const size = sizeByTemp.get(line.tempRequirement as TempRequirement)!;
+            const ref = `ORD-${String(first + index).padStart(6, "0")}`;
+            const row = await tx.order.create({
+              data: {
+                ref,
+                outletId: outlet.id,
+                brand: outlet.brand as Brand,
+                districtName: outlet.districtName,
+                depotCode: outlet.depotCode,
+                tempRequirement: line.tempRequirement as TempRequirement,
+                units: line.units,
+                weightKg: Number((size.kgPerUnit * line.units).toFixed(1)),
+                volumeM3: Number((size.m3PerUnit * line.units).toFixed(2)),
+                windowOpen: outlet.windowOpen,
+                windowClose: outlet.windowClose,
+                requestedDate,
+                placedByUserId: user.id,
+                status: "QUEUED",
+                // Index-tagged so a multi-line retry recovers every row.
+                clientRequestId: `${requestKeyPrefix}${index}`,
+              },
+            });
+            rows.push(row);
+          }
+          return rows;
+        });
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const raced = await findPrior();
+          if (raced.length > 0) {
+            return reply.status(200).send(raced.map(toOrderResponse));
+          }
         }
-        return rows;
-      });
+        throw error;
+      }
 
       const withLinkage = await prisma.order.findMany({
         where: { id: { in: created.map((o) => o.id) } },

@@ -17,6 +17,19 @@ import type { DepotCode } from "@katapatha/core/domain/types";
  * guarantee publication offers.
  */
 
+/**
+ * Thrown inside the publication transaction when the DRAFT -> PUBLISHED claim
+ * matches zero rows, so the whole transaction rolls back rather than leaving a
+ * plan published with its orders unflipped. Caught at the handler boundary and
+ * turned into a 409.
+ */
+class RaceLost extends Error {
+  constructor() {
+    super("Plan was already claimed by another publish.");
+    this.name = "RaceLost";
+  }
+}
+
 const ERROR_RESPONSE = {
   type: "object",
   required: ["error"],
@@ -618,63 +631,83 @@ export default async function (fastify: FastifyInstance) {
         });
       }
 
-      // Atomic one-time claim: the DRAFT -> PUBLISHED update is gated on
-      // status matching DRAFT, so a second attempt updates zero rows and we
-      // return 409 instead of silently publishing twice.
-      const claimed = await prisma.plan.updateMany({
-        where: { id: plan.id, status: "DRAFT" as PlanStatus },
-        data: {
-          status: "PUBLISHED",
-          publishedAt: new Date(),
-          publishedByUserId: user.id,
-        },
-      });
-      if (claimed.count === 0) {
-        return reply
-          .status(409)
-          .send({ error: { code: "RACE_LOST", message: "Someone else published this plan." } });
-      }
+      // Atomic one-time claim, INSIDE the transaction that does the rest of the
+      // work. The DRAFT -> PUBLISHED update is gated on status matching DRAFT,
+      // so a concurrent second attempt updates zero rows and loses the race.
+      //
+      // The claim has to be in here rather than before it. A top-level Prisma
+      // call autocommits, so claiming first and then opening a transaction left
+      // a window where the plan was PUBLISHED but its orders were still QUEUED
+      // and the planning day was still PLANNING -- and because the claim is
+      // one-time, a retry got 409 RACE_LOST forever and the only repair was
+      // manual SQL. That state is also silently wrong rather than loudly broken:
+      // loadRun() and requireDriverStop() both filter on plan.status ===
+      // "PUBLISHED", so a driver would get a run for orders the store still saw
+      // as QUEUED. Publication is the spine of the demo, so it is the one
+      // operation that must not have an unrecoverable half-state.
+      try {
+        await prisma.$transaction(async (tx) => {
+          const claimed = await tx.plan.updateMany({
+            where: { id: plan.id, status: "DRAFT" as PlanStatus },
+            data: {
+              status: "PUBLISHED",
+              publishedAt: new Date(),
+              publishedByUserId: user.id,
+            },
+          });
+          if (claimed.count === 0) throw new RaceLost();
 
-      await prisma.$transaction(async (tx) => {
-        await tx.planningDay.update({
-          where: { id: plan.planningDayId },
-          data: { status: "PUBLISHED" },
-        });
-        // Flip the orders the plan either served or deferred.
-        const servedOrderIds = plan.assignments
-          .filter((a) => a.decision === "SERVED")
-          .map((a) => a.orderId);
-        const deferredAssignments = plan.assignments.filter((a) => a.decision === "DEFERRED");
-        if (servedOrderIds.length > 0) {
-          await tx.order.updateMany({
-            where: { id: { in: servedOrderIds } },
-            data: { status: "PLANNED" },
+          await tx.planningDay.update({
+            where: { id: plan.planningDayId },
+            data: { status: "PUBLISHED" },
           });
-        }
-        if (deferredAssignments.length > 0) {
-          await tx.order.updateMany({
-            where: { id: { in: deferredAssignments.map((a) => a.orderId) } },
-            data: { status: "DEFERRED" },
-          });
-          // Audit-trail row per deferral so the store can see why.
-          for (const assignment of deferredAssignments) {
-            await tx.deferral.upsert({
-              where: { planId_orderId: { planId: plan.id, orderId: assignment.orderId } },
-              create: {
-                planId: plan.id,
-                orderId: assignment.orderId,
-                reasonCode: assignment.reasonCode ?? "UNCONFIRMED",
-                decidedByUserId: user.id,
-              },
-              update: {
-                reasonCode: assignment.reasonCode ?? "UNCONFIRMED",
-                decidedByUserId: user.id,
-                decidedAt: new Date(),
-              },
+          // Flip the orders the plan either served or deferred.
+          const servedOrderIds = plan.assignments
+            .filter((a) => a.decision === "SERVED")
+            .map((a) => a.orderId);
+          const deferredAssignments = plan.assignments.filter((a) => a.decision === "DEFERRED");
+          if (servedOrderIds.length > 0) {
+            await tx.order.updateMany({
+              where: { id: { in: servedOrderIds } },
+              data: { status: "PLANNED" },
             });
           }
+          if (deferredAssignments.length > 0) {
+            await tx.order.updateMany({
+              where: { id: { in: deferredAssignments.map((a) => a.orderId) } },
+              data: { status: "DEFERRED" },
+            });
+            // Audit-trail row per deferral so the store can see why.
+            for (const assignment of deferredAssignments) {
+              await tx.deferral.upsert({
+                where: { planId_orderId: { planId: plan.id, orderId: assignment.orderId } },
+                create: {
+                  planId: plan.id,
+                  orderId: assignment.orderId,
+                  reasonCode: assignment.reasonCode ?? "UNCONFIRMED",
+                  decidedByUserId: user.id,
+                },
+                update: {
+                  reasonCode: assignment.reasonCode ?? "UNCONFIRMED",
+                  decidedByUserId: user.id,
+                  decidedAt: new Date(),
+                },
+              });
+            }
+          }
+        });
+      } catch (error) {
+        // RaceLost is the only expected throw: a concurrent publish won the
+        // claim, so this transaction rolled back and changed nothing. Any other
+        // error also rolled back, which is the point -- the plan is still DRAFT
+        // and the dispatcher can retry.
+        if (error instanceof RaceLost) {
+          return reply
+            .status(409)
+            .send({ error: { code: "RACE_LOST", message: "Someone else published this plan." } });
         }
-      });
+        throw error;
+      }
 
       const summary = await prisma.plan.findUnique({
         where: { id: plan.id },
