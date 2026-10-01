@@ -10,18 +10,42 @@ import { requireDriverStop } from "../lib/authorization";
 /**
  * What a driver does on the road.
  *
- * Every action writes a `StopEvent` whose primary key is a ULID generated at
- * the point of action. Online that is generated here; offline it will be
- * generated on the phone and replayed. Either way the write is idempotent, so
- * the same event can be sent twice without creating two records — which is the
- * whole foundation the offline outbox will stand on.
+ * Every action writes a `StopEvent` whose primary key is a ULID generated at the
+ * point of action. When the caller supplies that id — which the route does, from
+ * the client's own event — it becomes the row's primary key, so replaying the
+ * same event cannot create a second record. That is the foundation the offline
+ * outbox stands on, and it only holds if the CLIENT's id is the one stored: a
+ * server-generated id would make the dedup check on POST /stops/:stopId/events
+ * look for ids that are never in the table, so every replay would report
+ * `accepted` and the contract's "`duplicate` is a success" signal would never
+ * appear.
+ *
+ * `occurredAt` is likewise the caller's to supply. The contract is explicit that
+ * it is the DEVICE clock and that the server records its own receipt time
+ * separately — which `StopEvent.recordedAt` does, via @default(now()). Stamping
+ * server time into `occurredAt` would mean a delivery made offline at 04:12 and
+ * drained at 09:40 was recorded as happening at 09:40.
  */
+
+/**
+ * Identity and timing for one recorded fact, as the client reported them.
+ * Every field is optional so a server-initiated write still works; the route
+ * fills all of them from the request.
+ */
+export type EventMeta = {
+  /** The client-minted ULID. Becomes the StopEvent primary key. */
+  id?: string;
+  /** The device clock, not the server's. */
+  occurredAt?: Date;
+  /** Which handset recorded it. Not a credential. */
+  deviceId?: string;
+};
 
 function clock(at: Date): string {
   return at.toISOString().slice(11, 16);
 }
 
-export async function arriveAtStop(stopId: string, actor: SessionUser) {
+export async function arriveAtStop(stopId: string, actor: SessionUser, meta: EventMeta = {}) {
   await requireDriverStop(actor, stopId);
   const stop = await prisma.tripStop.findUnique({
     where: { id: stopId },
@@ -33,10 +57,11 @@ export async function arriveAtStop(stopId: string, actor: SessionUser) {
   await prisma.$transaction([
     prisma.stopEvent.create({
       data: {
-        id: ulid(),
+        id: meta.id ?? ulid(),
         tripStopId: stopId,
         type: "ARRIVED",
-        occurredAt: at,
+        occurredAt: meta.occurredAt ?? at,
+        deviceId: meta.deviceId,
         actorUserId: actor.id,
       },
     }),
@@ -51,7 +76,7 @@ export async function arriveAtStop(stopId: string, actor: SessionUser) {
   ]);
 }
 
-export async function startUnloading(stopId: string, actor: SessionUser) {
+export async function startUnloading(stopId: string, actor: SessionUser, meta: EventMeta = {}) {
   await requireDriverStop(actor, stopId);
   const stop = await prisma.tripStop.findUnique({ where: { id: stopId } });
   if (!stop || stop.status !== "ARRIVED") return;
@@ -59,10 +84,11 @@ export async function startUnloading(stopId: string, actor: SessionUser) {
   await prisma.$transaction([
     prisma.stopEvent.create({
       data: {
-        id: ulid(),
+        id: meta.id ?? ulid(),
         tripStopId: stopId,
         type: "UNLOAD_START",
-        occurredAt: new Date(),
+        occurredAt: meta.occurredAt ?? new Date(),
+        deviceId: meta.deviceId,
         actorUserId: actor.id,
       },
     }),
@@ -83,10 +109,14 @@ export async function completeStop(
   actor: SessionUser,
   input: {
     recipientName: string;
-    delivered: { orderId: string; units: number; expected: number }[];
+    /** `eventId` is the client's ULID for that line's event, when it sent one. */
+    delivered: { orderId: string; units: number; expected: number; eventId?: string }[];
     signatureData?: string;
     photoData?: string;
+    /** The client's ULID for the stop-level POD_CAPTURED event. */
+    podEventId?: string;
   },
+  meta: EventMeta = {},
 ) {
   await requireDriverStop(actor, stopId);
   const stop = await prisma.tripStop.findUnique({
@@ -102,13 +132,14 @@ export async function completeStop(
       const short = line.units < line.expected;
       await tx.stopEvent.create({
         data: {
-          id: ulid(),
+          id: line.eventId ?? ulid(),
           tripStopId: stopId,
           orderId: line.orderId,
           type: short ? "PART_DELIVERED" : "DELIVERED",
           deliveredUnits: line.units,
           recipientName: input.recipientName,
-          occurredAt: at,
+          occurredAt: meta.occurredAt ?? at,
+          deviceId: meta.deviceId,
           actorUserId: actor.id,
         },
       });
@@ -120,13 +151,14 @@ export async function completeStop(
 
     await tx.stopEvent.create({
       data: {
-        id: ulid(),
+        id: input.podEventId ?? ulid(),
         tripStopId: stopId,
         type: "POD_CAPTURED",
         recipientName: input.recipientName,
         signatureData: input.signatureData,
         photoData: input.photoData,
-        occurredAt: at,
+        occurredAt: meta.occurredAt ?? at,
+        deviceId: meta.deviceId,
         actorUserId: actor.id,
       },
     });
@@ -178,31 +210,61 @@ export async function reportProblem(
     tripId?: string;
     tripStopId?: string;
     orderId?: string;
+    /**
+     * Which outcome the driver reported. SKIPPED and FAILED are distinct
+     * StopStatus values in DOMAIN.md -- a stop passed over is not a stop that
+     * failed -- and this used to force FAILED for both.
+     */
+    outcome?: "FAILED" | "SKIPPED";
   },
+  meta: EventMeta = {},
 ) {
   if (input.tripStopId) await requireDriverStop(actor, input.tripStopId);
   const at = new Date();
   const id = ulid();
+  const outcome = input.outcome ?? "FAILED";
 
-  await prisma.problem.create({
-    data: {
-      id,
-      kind: input.kind,
-      note: input.note,
-      tripId: input.tripId,
-      tripStopId: input.tripStopId,
-      orderId: input.orderId,
-      raisedByUserId: actor.id,
-      occurredAt: at,
-    },
-  });
-
-  if (input.tripStopId) {
-    await prisma.tripStop.update({
-      where: { id: input.tripStopId },
-      data: { status: "FAILED" },
+  await prisma.$transaction(async (tx) => {
+    await tx.problem.create({
+      data: {
+        id,
+        kind: input.kind,
+        note: input.note,
+        tripId: input.tripId,
+        tripStopId: input.tripStopId,
+        orderId: input.orderId,
+        raisedByUserId: actor.id,
+        occurredAt: meta.occurredAt ?? at,
+      },
     });
-  }
+
+    // Also record the driver's fact as a StopEvent, keyed on the client's ULID.
+    // Without this a replayed FAILED or SKIPPED was never recognised as a
+    // duplicate -- nothing carrying that id existed -- so it was applied again
+    // and wrote a SECOND Problem row for one reported problem. The contract also
+    // defines FAILED and SKIPPED as StopEvent types, so they belong in the event
+    // log next to every other thing the driver did.
+    if (input.tripStopId) {
+      await tx.stopEvent.create({
+        data: {
+          id: meta.id ?? ulid(),
+          tripStopId: input.tripStopId,
+          type: outcome,
+          // StopEvent has no reasonCode column (the contract's StopEvent does;
+          // the Prisma model carries `payload` instead), so the reason lives there.
+          payload: { reasonCode: input.kind },
+          occurredAt: meta.occurredAt ?? at,
+          deviceId: meta.deviceId,
+          actorUserId: actor.id,
+        },
+      });
+
+      await tx.tripStop.update({
+        where: { id: input.tripStopId },
+        data: { status: outcome },
+      });
+    }
+  });
 
   await recordDecision({
     actor,

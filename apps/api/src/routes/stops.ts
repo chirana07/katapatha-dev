@@ -206,6 +206,9 @@ export default async function (fastify: FastifyInstance) {
       let completionSignature: string | undefined;
       let completionPhoto: string | undefined;
       let podEventId: string | null = null;
+      // The POD event's device clock stands for the whole completion, since a
+      // delivery is one act even though it produces several events.
+      let completionOccurredAt: Date | undefined;
 
       // Preload expected units per order on this stop for the completion path.
       const stopOrders = await prisma.tripStopOrder.findMany({
@@ -221,11 +224,24 @@ export default async function (fastify: FastifyInstance) {
           continue;
         }
 
+        // The client's own identity and timing for this fact. The id becomes the
+        // StopEvent primary key, which is what makes the dedup check above work at
+        // all: with a server-generated id the table never contains the ids being
+        // looked up, so every replay reports `accepted` and `duplicate` -- which
+        // the contract calls "a success, not an error" -- could never be returned.
+        // occurredAt is the DEVICE clock; the server's receipt time is recorded
+        // separately by StopEvent.recordedAt.
+        const meta = {
+          id: event.id,
+          occurredAt: new Date(event.occurredAt),
+          deviceId: body.deviceId,
+        };
+
         try {
           if (event.type === "ARRIVED") {
-            await arriveAtStop(stopId, user);
+            await arriveAtStop(stopId, user, meta);
           } else if (event.type === "UNLOAD_START") {
-            await startUnloading(stopId, user);
+            await startUnloading(stopId, user, meta);
           } else if (event.type === "DELIVERED" || event.type === "PART_DELIVERED") {
             if (!event.orderId || event.deliveredUnits == null) {
               return reply.status(422).send({
@@ -256,21 +272,33 @@ export default async function (fastify: FastifyInstance) {
             if (event.signatureData) completionSignature = event.signatureData;
             if (event.photoData) completionPhoto = event.photoData;
             podEventId = event.id;
+            completionOccurredAt = meta.occurredAt;
           } else if (event.type === "FAILED") {
-            await reportProblem(user, {
-              kind: toProblemKind(event.reasonCode),
-              note: event.reasonCode ?? "Driver reported a problem.",
-              tripStopId: stopId,
-            });
+            await reportProblem(
+              user,
+              {
+                kind: toProblemKind(event.reasonCode),
+                note: event.reasonCode ?? "Driver reported a problem.",
+                tripStopId: stopId,
+                outcome: "FAILED",
+              },
+              meta,
+            );
           } else if (event.type === "SKIPPED") {
-            // Treat as a problem with a reason — the driver's phone can hoist
-            // SKIPPED here if an outlet was closed but the driver chose to
-            // move on without a formal failure.
-            await reportProblem(user, {
-              kind: toProblemKind(event.reasonCode),
-              note: event.reasonCode ?? "Stop skipped.",
-              tripStopId: stopId,
-            });
+            // A problem with a reason, but NOT a failure: the outlet may have been
+            // closed and the driver moved on. DOMAIN.md keeps SKIPPED and FAILED
+            // as separate stop statuses, so the outcome is passed through rather
+            // than flattened to FAILED.
+            await reportProblem(
+              user,
+              {
+                kind: toProblemKind(event.reasonCode),
+                note: event.reasonCode ?? "Stop skipped.",
+                tripStopId: stopId,
+                outcome: "SKIPPED",
+              },
+              meta,
+            );
           }
 
           accepted += 1;
@@ -285,10 +313,11 @@ export default async function (fastify: FastifyInstance) {
         }
       }
 
-      // Flush any grouped completion in one service call. completeStop writes
-      // its own StopEvent rows (with server-generated ULIDs) and no-ops if
-      // the stop is already DONE, so a replay from a flaky driver phone is
-      // safe without having to echo the client ULID into the DB.
+      // Flush any grouped completion in one service call. The client's ULIDs are
+      // passed through -- one per delivered line plus the POD's -- so they become
+      // the StopEvent primary keys and the dedup check above can recognise a
+      // replay. completeStop also no-ops when the stop is already DONE, so the
+      // state machine is a second line of defence rather than the only one.
       if (completionLines.length > 0) {
         if (!completionRecipient) {
           return reply.status(422).send({
@@ -298,17 +327,26 @@ export default async function (fastify: FastifyInstance) {
             },
           });
         }
-        void podEventId;
-        await completeStop(stopId, user, {
-          recipientName: completionRecipient,
-          delivered: completionLines.map((l) => ({
-            orderId: l.orderId,
-            units: l.units,
-            expected: l.expected,
-          })),
-          signatureData: completionSignature,
-          photoData: completionPhoto,
-        });
+        await completeStop(
+          stopId,
+          user,
+          {
+            recipientName: completionRecipient,
+            delivered: completionLines.map((l) => ({
+              orderId: l.orderId,
+              units: l.units,
+              expected: l.expected,
+              eventId: l.eventId,
+            })),
+            signatureData: completionSignature,
+            photoData: completionPhoto,
+            podEventId: podEventId ?? undefined,
+          },
+          {
+            occurredAt: completionOccurredAt,
+            deviceId: body.deviceId,
+          },
+        );
       }
 
       return reply.status(200).send({
