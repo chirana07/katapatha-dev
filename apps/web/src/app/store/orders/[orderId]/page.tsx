@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { OrderProgress } from "./order-progress";
 import { ReceiptForm } from "./receipt-form";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +31,7 @@ export default async function StoreOrderPage({
 
   const order = result.data;
   const canConfirm = order.status === "DELIVERED" || order.status === "PART_DELIVERED";
-  const state = order.storeState ?? order.status.toLowerCase();
+  const state = order.storeState ?? storeStateFromStatus(order.status);
   const statusStyle =
     state === "delivered"
       ? "bg-emerald-50 text-emerald-800"
@@ -69,6 +70,8 @@ export default async function StoreOrderPage({
         <OrderFact label="Receiving window" value={order.windowOpen && order.windowClose ? `${order.windowOpen}–${order.windowClose}` : "Not assigned"} />
       </dl>
 
+      <OrderProgress state={state} />
+
       <section className="mt-6 rounded-[var(--radius-card)] bg-surface p-5 sm:p-6">
         <h2 className="text-xl font-semibold">Delivery outcome</h2>
         <p className="mt-1 max-w-2xl text-sm text-muted">
@@ -97,4 +100,12 @@ function OrderFact({ label, value }: { label: string; value: string }) {
       <dd className="tabular mt-1 font-semibold">{value}</dd>
     </div>
   );
+}
+
+function storeStateFromStatus(status: string): string {
+  if (["DRAFT", "PLACED", "QUEUED"].includes(status)) return "queued";
+  if (["PLANNED", "LOADED"].includes(status)) return "planned";
+  if (status === "IN_TRANSIT") return "on_the_way";
+  if (["DELIVERED", "PART_DELIVERED"].includes(status)) return "delivered";
+  return status.toLowerCase();
 }

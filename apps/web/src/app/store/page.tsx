@@ -34,7 +34,12 @@ const STATUS_STYLE: Record<string, string> = {
 type Order = components["schemas"]["Order"];
 
 function storeState(order: Order): string {
-  return order.storeState ?? order.status.toLowerCase();
+  if (order.storeState) return order.storeState;
+  if (["DRAFT", "PLACED", "QUEUED"].includes(order.status)) return "queued";
+  if (["PLANNED", "LOADED"].includes(order.status)) return "planned";
+  if (order.status === "IN_TRANSIT") return "on_the_way";
+  if (["DELIVERED", "PART_DELIVERED"].includes(order.status)) return "delivered";
+  return order.status.toLowerCase();
 }
 
 function SummaryCard({
