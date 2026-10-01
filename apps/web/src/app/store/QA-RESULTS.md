@@ -8,7 +8,7 @@ Verified on 2026-10-01 from `web2/store-final-qa`. Contract-level browser checks
 | --- | --- |
 | Store ESLint | Pass, no warnings |
 | Web TypeScript | Pass |
-| Store workflow rules | 25 tests passed |
+| Store workflow rules | 26 tests passed |
 | Next.js production build | Pass with Webpack; all Store routes compiled |
 | Impeccable detector | Pass, no findings |
 | axe WCAG A/AA scan | No violations at 390 px and 1280 px on all three Store routes |
@@ -67,5 +67,7 @@ Final end-to-end acceptance requires the upstream repository to merge the stacke
 3. BE2 order creation, outlet-scoped reads, idempotency, and receipt persistence.
 4. Dispatcher, Loader, and Driver transitions for the same order.
 5. A deployment environment for production performance, persistence evidence, and the demo video.
+
+The current Order response does not expose whether a receipt has already been confirmed. The short-lived success message proves the mutation completed, while durable receipt state must be verified through BE2 or added to the frozen contract by the repository lead.
 
 Use [TESTING.md](./TESTING.md) for the final multi-role manual run after those gates are available.

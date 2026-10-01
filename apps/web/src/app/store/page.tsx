@@ -2,7 +2,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { api } from "@/lib/api";
 import { readError } from "./api-errors";
-import { needsAttention, storeState } from "./order-state";
+import { needsAttention, storeState, storeStateLabel } from "./order-state";
 
 export const dynamic = "force-dynamic";
 
@@ -15,16 +15,6 @@ const FILTERS = [
   { value: "deferred", label: "Deferred" },
   { value: "failed", label: "Failed" },
 ] as const;
-
-const STATUS_LABEL: Record<string, string> = {
-  queued: "Queued",
-  planned: "Planned",
-  on_the_way: "On the way",
-  delivered: "Delivered",
-  deferred: "Deferred",
-  failed: "Failed",
-  cancelled: "Cancelled",
-};
 
 const STATUS_STYLE: Record<string, string> = {
   queued: "bg-raised text-muted",
@@ -70,7 +60,7 @@ function StatusPill({ state }: { state: string }) {
       className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold ${STATUS_STYLE[state] ?? STATUS_STYLE.queued}`}
     >
       <span aria-hidden className="size-1.5 rounded-full bg-current" />
-      {STATUS_LABEL[state] ?? state}
+      {storeStateLabel(state)}
     </span>
   );
 }
@@ -98,6 +88,8 @@ export default async function StoreOrdersPage({
   const client = await api();
   const result = await client.GET("/orders");
   const placed = (await cookies()).get("katapatha_order_placed")?.value;
+  const placedReferences =
+    placed && placed !== "confirmed" ? placed.split(",").filter(Boolean) : [];
 
   if (result.error || !result.data) {
     const message = readError(result.response.status, "orders");
@@ -149,7 +141,9 @@ export default async function StoreOrdersPage({
           <p className="mt-1 text-sm">
             {placed === "confirmed"
               ? "Your earlier order request was accepted. Check the order list for its current status."
-              : `Reference ${placed} was accepted and is now in the order list.`}
+              : placedReferences.length > 1
+                ? `References ${placedReferences.join(", ")} were accepted and are now in the order list.`
+                : `Reference ${placedReferences[0]} was accepted and is now in the order list.`}
           </p>
         </section>
       ) : null}

@@ -14,3 +14,8 @@ export function storeState(order: Pick<Order, "status" | "storeState">): string 
 export function needsAttention(state: string): boolean {
   return ["deferred", "failed", "cancelled"].includes(state);
 }
+
+export function storeStateLabel(state: string): string {
+  const words = state.replaceAll("_", " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}

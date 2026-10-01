@@ -2,7 +2,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { api } from "@/lib/api";
 import { readError } from "../../api-errors";
-import { storeState } from "../../order-state";
+import { storeState, storeStateLabel } from "../../order-state";
 import { OrderProgress } from "./order-progress";
 import { ReceiptForm } from "./receipt-form";
 
@@ -55,7 +55,7 @@ export default async function StoreOrderPage({
           <p className="mt-2 text-muted">Requested for {order.requestedDate}</p>
         </div>
         <span className={`rounded-md px-3 py-2 text-sm font-semibold ${statusStyle}`}>
-          {order.storeState === "delivered" ? "Delivered" : order.status.replaceAll("_", " ")}
+          {storeStateLabel(state)}
         </span>
       </header>
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mutationError, readError } from "./api-errors";
-import { needsAttention, storeState } from "./order-state";
+import { needsAttention, storeState, storeStateLabel } from "./order-state";
 import { validateOrderQuantities, validateReceipt } from "./validation";
 
 describe("Store order status", () => {
@@ -32,6 +32,11 @@ describe("Store order status", () => {
   for (const state of ["failed", "deferred", "cancelled"]) {
     it(`marks ${state} for attention`, () => assert.equal(needsAttention(state), true));
   }
+
+  it("formats projected states for people", () => {
+    assert.equal(storeStateLabel("on_the_way"), "On the way");
+    assert.equal(storeStateLabel("queued"), "Queued");
+  });
 });
 
 describe("Place Order validation", () => {
