@@ -88,9 +88,10 @@ function BrandPill({ brand }: { brand: string }) {
 export default async function StoreOrdersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; placed?: string }>;
 }) {
-  const requestedStatus = (await searchParams).status ?? "all";
+  const query = await searchParams;
+  const requestedStatus = query.status ?? "all";
   const selected = FILTERS.some((filter) => filter.value === requestedStatus)
     ? requestedStatus
     : "all";
@@ -137,7 +138,24 @@ export default async function StoreOrdersPage({
           <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">My orders</h1>
           <p className="mt-1 text-muted">Status and expected outcome for this outlet.</p>
         </div>
+        <Link
+          href="/store/new"
+          className="inline-flex min-h-11 items-center rounded-[var(--radius-control)] bg-action px-4 font-semibold text-ink transition-[filter] hover:brightness-95"
+        >
+          Place order
+        </Link>
       </header>
+
+      {query.placed ? (
+        <section aria-live="polite" className="mt-6 rounded-[var(--radius-card)] bg-emerald-50 p-4 text-emerald-800">
+          <p className="font-semibold">Order placed</p>
+          <p className="mt-1 text-sm">
+            {query.placed === "confirmed"
+              ? "Your confirmed order is now visible in the order list."
+              : `Reference ${query.placed} is now visible in your order list.`}
+          </p>
+        </section>
+      ) : null}
 
       <section aria-label="Order summary" className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryCard label="Total orders" value={orders.length} detail="Visible to this outlet" />
