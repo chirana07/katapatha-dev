@@ -4,6 +4,12 @@ import { readError } from "../../api-errors";
 import { CONDITION_HINT, CONDITION_LABEL } from "../../reasons";
 import { fetchShortfallReasons } from "../../reasons.server";
 import { TRIP_STATUS_LABEL, type TripStatus } from "../../wave";
+import {
+  canMarkReady,
+  lineState,
+  readinessDisabledReason,
+  type LineState,
+} from "../../line-state";
 import { LineForm } from "./line-form";
 import { ReadinessForm } from "./readiness-form";
 
@@ -48,7 +54,8 @@ export default async function TripLoadListPage({ params }: { params: Params }) {
     (line) => line.condition != null && line.condition !== "OK",
   ).length;
   const everyLineChecked = total > 0 && checked === total;
-  const canMarkReady = everyLineChecked && openDiscrepancies === 0 && status === "PLANNED";
+  const readinessContext = { total, checked, openDiscrepancies, status };
+  const ready = canMarkReady(readinessContext);
 
   const { reasons, fallback: reasonsFromFallback } = await fetchShortfallReasons();
 
@@ -100,9 +107,9 @@ export default async function TripLoadListPage({ params }: { params: Params }) {
         />
         <ProgressCard
           label="Ready?"
-          value={canMarkReady ? "Can release" : "Not yet"}
+          value={ready ? "Can release" : "Not yet"}
           detail={
-            canMarkReady
+            ready
               ? "All lines OK. The vehicle is ready to depart."
               : status !== "PLANNED"
                 ? "This trip has already moved past loading."
@@ -138,44 +145,14 @@ export default async function TripLoadListPage({ params }: { params: Params }) {
 
           <ReadinessForm
             tripId={tripId}
-            canMarkReady={canMarkReady}
-            disabledReason={readinessDisabledReason({
-              total,
-              checked,
-              openDiscrepancies,
-              status,
-            })}
+            canMarkReady={ready}
+            disabledReason={readinessDisabledReason(readinessContext)}
             initial={{ tripId }}
           />
         </>
       )}
     </main>
   );
-}
-
-function readinessDisabledReason(args: {
-  total: number;
-  checked: number;
-  openDiscrepancies: number;
-  status: TripStatus;
-}): string {
-  if (args.status !== "PLANNED") {
-    return `Trip is already ${TRIP_STATUS_LABEL[args.status].toLowerCase()} — readiness is not the loader's gate right now.`;
-  }
-  if (args.total === 0) return "No lines on this trip to check.";
-  const unchecked = args.total - args.checked;
-  if (unchecked > 0 && args.openDiscrepancies > 0) {
-    return `${unchecked} of ${args.total} lines are still unchecked and ${args.openDiscrepancies} discrepancy ${
-      args.openDiscrepancies === 1 ? "is" : "are"
-    } open.`;
-  }
-  if (unchecked > 0) return `${unchecked} of ${args.total} lines are still unchecked.`;
-  if (args.openDiscrepancies > 0) {
-    return `${args.openDiscrepancies} discrepancy ${
-      args.openDiscrepancies === 1 ? "is" : "are"
-    } open — resolve or send short before releasing the vehicle.`;
-  }
-  return "";
 }
 
 function ProgressCard({ label, value, detail }: { label: string; value: string; detail: string }) {
@@ -231,15 +208,6 @@ function LineRow({ tripId, line, reasons }: { tripId: string; line: Line; reason
       <LineForm tripId={tripId} line={line} reasons={reasons} />
     </li>
   );
-}
-
-type LineState = "unchecked" | "ok" | "discrepancy" | "blocked";
-
-function lineState(line: Line): LineState {
-  if (line.condition == null) return "unchecked";
-  if (line.condition === "OK") return "ok";
-  if (line.condition === "MISSING") return "blocked";
-  return "discrepancy";
 }
 
 const LINE_STYLE: Record<LineState, { border: string; pill: string; dot: string; label: string }> = {
