@@ -10,6 +10,7 @@ allowBuilds:
   '@scarf/scarf': false  # telemetry phone-home from Redocly; denied on purpose
   esbuild: true
   prisma: true
+  unrs-resolver: true
 
 minimumReleaseAgeExclude:
   - '@redocly/cli@2.57.0'
