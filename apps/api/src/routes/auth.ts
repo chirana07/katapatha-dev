@@ -9,6 +9,38 @@ import {
 } from "../lib/auth.js";
 import { assertSignInAllowed, recordSignInFailure, clearSignInFailures } from "../lib/loginThrottle.js";
 
+const nullableString = { oneOf: [{ type: "string" }, { type: "null" }] } as const;
+const sessionUserSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "email", "name", "role", "depotCode", "outletId", "defaultVehicleId"],
+  properties: {
+    id: { type: "string" },
+    email: { type: "string", format: "email" },
+    name: { type: "string" },
+    role: { type: "string", enum: ["DISPATCHER", "LOADER", "DRIVER", "STORE_MANAGER"] },
+    depotCode: nullableString,
+    outletId: nullableString,
+    defaultVehicleId: nullableString,
+  },
+} as const;
+const errorSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["error"],
+  properties: {
+    error: {
+      type: "object",
+      additionalProperties: false,
+      required: ["code", "message"],
+      properties: {
+        code: { type: "string" },
+        message: { type: "string" },
+      },
+    },
+  },
+} as const;
+
 /** Owner: BE1 */
 export default async function (fastify: FastifyInstance) {
   fastify.post("/auth/session", {
@@ -22,6 +54,20 @@ export default async function (fastify: FastifyInstance) {
           email: { type: "string", format: "email" },
           password: { type: "string", minLength: 1 },
         },
+      },
+      response: {
+        201: {
+          type: "object",
+          additionalProperties: false,
+          required: ["token", "home", "user"],
+          properties: {
+            token: { type: "string" },
+            home: { type: "string" },
+            user: sessionUserSchema,
+          },
+        },
+        401: errorSchema,
+        429: errorSchema,
       },
     },
   }, async (request, reply) => {
@@ -56,7 +102,13 @@ export default async function (fastify: FastifyInstance) {
     });
   });
 
-  fastify.delete("/auth/session", async (request, reply) => {
+  fastify.delete("/auth/session", {
+    schema: {
+      response: {
+        204: { type: "null" },
+      },
+    },
+  }, async (request, reply) => {
     const bearer = request.headers.authorization?.startsWith("Bearer ")
       ? request.headers.authorization.slice(7)
       : undefined;
@@ -65,5 +117,12 @@ export default async function (fastify: FastifyInstance) {
     return reply.status(204).send();
   });
 
-  fastify.get("/auth/me", async (request) => request.requireRole());
+  fastify.get("/auth/me", {
+    schema: {
+      response: {
+        200: sessionUserSchema,
+        401: errorSchema,
+      },
+    },
+  }, async (request) => request.requireRole());
 }

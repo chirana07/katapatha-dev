@@ -8,8 +8,12 @@ export default async function (fastify: FastifyInstance) {
       response: {
         200: {
           type: "object",
+          additionalProperties: false,
           required: ["ok", "at"],
-          properties: { ok: { type: "boolean" }, at: { type: "string" } },
+          properties: {
+            ok: { type: "boolean" },
+            at: { type: "string", format: "date-time" },
+          },
         },
       },
     },

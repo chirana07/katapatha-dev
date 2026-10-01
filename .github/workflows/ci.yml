@@ -43,6 +43,12 @@ jobs:
       # different Prisma than it had pinned.
       - run: pnpm install --frozen-lockfile
 
+      # @prisma/client's install hook only searches the default schema paths.
+      # This repository uses a multi-file schema under apps/api/prisma/schema,
+      # so a clean CI checkout must generate the client explicitly.
+      - name: Generate Prisma Client
+        run: pnpm --filter @katapatha/api db:generate
+
       - name: Contract lints
         run: pnpm contract:lint
 

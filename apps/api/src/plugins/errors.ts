@@ -1,6 +1,7 @@
 import fp from "fastify-plugin";
 import type { FastifyError } from "fastify";
 import { AuthError } from "../lib/auth.js";
+import { LoginRateLimitError } from "../lib/loginThrottle.js";
 
 /**
  * One error envelope for the whole API: { error: { code, message, details? } }.
@@ -19,6 +20,18 @@ export default fp(async (fastify) => {
           message: err.message,
         },
       });
+    }
+
+    if (err instanceof LoginRateLimitError) {
+      return reply
+        .header("Retry-After", String(err.retryAfterSeconds))
+        .status(429)
+        .send({
+          error: {
+            code: "TOO_MANY_ATTEMPTS",
+            message: err.message,
+          },
+        });
     }
 
     // Fastify's schema validation failures carry a `validation` array. These are

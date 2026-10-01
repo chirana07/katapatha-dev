@@ -9,7 +9,7 @@ const MAX_FAILURES = 5;
 
 export class LoginRateLimitError extends Error {
   constructor(readonly retryAfterSeconds: number) {
-    super("Too many sign-in attempts");
+    super("Too many sign-in attempts.");
     this.name = "LoginRateLimitError";
   }
 }
