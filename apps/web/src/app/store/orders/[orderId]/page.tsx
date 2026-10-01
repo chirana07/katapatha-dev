@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { api } from "@/lib/api";
+import { readError } from "../../api-errors";
+import { receivingWindowLabel, storeState, storeStateLabel } from "../../order-state";
 import { OrderProgress } from "./order-progress";
 import { ReceiptForm } from "./receipt-form";
 
@@ -18,12 +20,13 @@ export default async function StoreOrderPage({
   const result = await client.GET("/orders/{orderId}", { params: { path: { orderId } } });
 
   if (result.error || !result.data) {
+    const message = readError(result.response.status, "order");
     return (
       <main className="mx-auto max-w-3xl p-4 sm:p-6">
-        <Link href="/store" className="text-sm font-semibold text-link underline-offset-4 hover:underline">Back to orders</Link>
+        <Link href="/store" className="inline-flex min-h-11 items-center text-sm font-semibold text-link underline-offset-4 hover:underline">Back to orders</Link>
         <section className="mt-6 rounded-[var(--radius-card)] bg-red-50 p-5">
-          <h1 className="text-xl font-semibold text-critical">Order unavailable</h1>
-          <p className="mt-2 text-sm text-muted">This order could not be loaded. Return to the order list and try again.</p>
+          <h1 className="text-xl font-semibold text-critical">{message.title}</h1>
+          <p className="mt-2 text-sm text-muted">{message.detail}</p>
         </section>
       </main>
     );
@@ -31,7 +34,7 @@ export default async function StoreOrderPage({
 
   const order = result.data;
   const canConfirm = order.status === "DELIVERED" || order.status === "PART_DELIVERED";
-  const state = order.storeState ?? storeStateFromStatus(order.status);
+  const state = storeState(order);
   const statusStyle =
     state === "delivered"
       ? "bg-emerald-50 text-emerald-800"
@@ -45,14 +48,14 @@ export default async function StoreOrderPage({
 
   return (
     <main className="mx-auto w-full max-w-5xl p-4 sm:p-6">
-      <Link href="/store" className="text-sm font-semibold text-link underline-offset-4 hover:underline">Back to orders</Link>
+      <Link href="/store" className="inline-flex min-h-11 items-center text-sm font-semibold text-link underline-offset-4 hover:underline">Back to orders</Link>
       <header className="mt-5 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="font-mono text-2xl font-semibold tracking-tight sm:text-3xl">{order.ref}</h1>
           <p className="mt-2 text-muted">Requested for {order.requestedDate}</p>
         </div>
         <span className={`rounded-md px-3 py-2 text-sm font-semibold ${statusStyle}`}>
-          {order.storeState === "delivered" ? "Delivered" : order.status.replaceAll("_", " ")}
+          {storeStateLabel(state)}
         </span>
       </header>
 
@@ -67,7 +70,7 @@ export default async function StoreOrderPage({
         <OrderFact label="Brand" value={order.brand} />
         <OrderFact label="Goods" value={order.tempRequirement === "chilled" ? "Chilled" : "Ambient"} />
         <OrderFact label="Expected units" value={`${order.units} units`} />
-        <OrderFact label="Receiving window" value={order.windowOpen && order.windowClose ? `${order.windowOpen}–${order.windowClose}` : "Not assigned"} />
+        <OrderFact label="Receiving window" value={receivingWindowLabel(order)} />
       </dl>
 
       <OrderProgress state={state} />
@@ -100,12 +103,4 @@ function OrderFact({ label, value }: { label: string; value: string }) {
       <dd className="tabular mt-1 font-semibold">{value}</dd>
     </div>
   );
-}
-
-function storeStateFromStatus(status: string): string {
-  if (["DRAFT", "PLACED", "QUEUED"].includes(status)) return "queued";
-  if (["PLANNED", "LOADED"].includes(status)) return "planned";
-  if (status === "IN_TRANSIT") return "on_the_way";
-  if (["DELIVERED", "PART_DELIVERED"].includes(status)) return "delivered";
-  return status.toLowerCase();
 }

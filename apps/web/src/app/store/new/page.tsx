@@ -12,7 +12,7 @@ export default async function NewStoreOrderPage() {
   if (result.error || !result.data) {
     return (
       <main className="mx-auto max-w-3xl p-4 sm:p-6">
-        <Link href="/store" className="text-sm font-semibold text-link underline-offset-4 hover:underline">
+        <Link href="/store" className="inline-flex min-h-11 items-center text-sm font-semibold text-link underline-offset-4 hover:underline">
           Back to orders
         </Link>
         <section className="mt-6 rounded-[var(--radius-card)] bg-red-50 p-5">
@@ -33,7 +33,7 @@ export default async function NewStoreOrderPage() {
 
   return (
     <main className="mx-auto w-full max-w-6xl p-4 sm:p-6">
-      <Link href="/store" className="text-sm font-semibold text-link underline-offset-4 hover:underline">
+      <Link href="/store" className="inline-flex min-h-11 items-center text-sm font-semibold text-link underline-offset-4 hover:underline">
         Back to orders
       </Link>
       <header className="mt-5 max-w-2xl">

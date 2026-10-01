@@ -37,13 +37,13 @@ Use the Store Manager account supplied by the development-only access page. Do n
 - Attempt receipt before delivery: the confirmation form must remain unavailable.
 - Record fewer received units and choose each issue type: missing, damaged, warm, and wrong items.
 - Disconnect the API: the page must explain recovery without claiming the mutation failed if its outcome is unknown.
-- Expire the session: the app must return to sign-in without exposing another outlet's data.
+- Expire the session: the Store must show an unauthenticated state or return to sign-in without exposing another outlet's data.
 - Add `?placed=fake` or `?received=1` to a Store URL: it must not display a false success confirmation.
 - Load an order with raw status `FAILED`: it must appear as failed and count as needing attention.
 
 ## Viewports
 
-Repeat the Store screens at widths `390`, `768`, `1024`, `1280`, and `1440`. At every width:
+Repeat the Store screens at widths `320`, `390`, `768`, `1024`, `1280`, and `1440`. At every width:
 
 - The document has no horizontal overflow.
 - The dominant action remains reachable.
