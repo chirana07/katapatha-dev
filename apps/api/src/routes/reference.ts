@@ -1,4 +1,9 @@
 import type { FastifyInstance } from "fastify";
+import {
+  DEFERRAL_REASONS,
+  PROBLEM_REASONS,
+  SHORTFALL_REASONS,
+} from "@katapatha/core/domain/reasons";
 
 /**
  * Owner: BE1
@@ -19,7 +24,32 @@ const NOT_IMPLEMENTED = {
 } as const;
 
 export default async function (fastify: FastifyInstance) {
-  for (const route of ["/reference/outlets", "/reference/vehicles", "/reference/vocabularies", "/reference/calendar/next-operating-day"]) {
+  fastify.get("/reference/vocabularies", {
+    schema: {
+      response: {
+        200: {
+          type: "object",
+          additionalProperties: false,
+          required: ["deferralReasons", "shortfallReasons", "problemReasons"],
+          properties: {
+            deferralReasons: { type: "array", items: { type: "string" } },
+            shortfallReasons: { type: "array", items: { type: "string" } },
+            problemReasons: { type: "array", items: { type: "string" } },
+          },
+        },
+      },
+    },
+  }, async (request) => {
+    request.requireRole();
+
+    return {
+      deferralReasons: DEFERRAL_REASONS.map(({ code }) => code),
+      shortfallReasons: SHORTFALL_REASONS.map(({ code }) => code),
+      problemReasons: PROBLEM_REASONS.map(({ code }) => code),
+    };
+  });
+
+  for (const route of ["/reference/outlets", "/reference/vehicles", "/reference/calendar/next-operating-day"]) {
     fastify.get(route, async (_req, reply) => reply.status(501).send(NOT_IMPLEMENTED));
   }
 }
