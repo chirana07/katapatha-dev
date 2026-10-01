@@ -1,12 +1,19 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 
 const developmentScriptPolicy =
   process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
+const workspaceRoot = path.resolve(__dirname, "../..");
 
 // Deliberately NOT `output: "export"`. The previous prototype was a static
 // export, which is precisely why it could not have a backend.
 const nextConfig: NextConfig = {
-  outputFileTracingRoot: __dirname,
+  outputFileTracingRoot: workspaceRoot,
+  turbopack: {
+    // pnpm keeps Next in the monorepo's virtual store. Without an explicit
+    // workspace root, Turbopack stops at apps/web and cannot resolve it.
+    root: workspaceRoot,
+  },
   async headers() {
     return [
       {
