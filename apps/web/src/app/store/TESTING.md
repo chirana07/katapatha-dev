@@ -38,6 +38,8 @@ Use the Store Manager account supplied by the development-only access page. Do n
 - Record fewer received units and choose each issue type: missing, damaged, warm, and wrong items.
 - Disconnect the API: the page must explain recovery without claiming the mutation failed if its outcome is unknown.
 - Expire the session: the app must return to sign-in without exposing another outlet's data.
+- Add `?placed=fake` or `?received=1` to a Store URL: it must not display a false success confirmation.
+- Load an order with raw status `FAILED`: it must appear as failed and count as needing attention.
 
 ## Viewports
 

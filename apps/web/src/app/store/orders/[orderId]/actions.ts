@@ -2,6 +2,7 @@
 
 import type { components } from "@katapatha/contracts/types";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { api } from "@/lib/api";
 
@@ -51,5 +52,13 @@ export async function confirmReceipt(
   }
 
   revalidatePath(`/store/orders/${orderId}`);
-  redirect(`/store/orders/${orderId}?received=1`);
+  const jar = await cookies();
+  jar.set("katapatha_receipt_confirmed", orderId, {
+    httpOnly: true,
+    maxAge: 30,
+    path: "/store/orders",
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  });
+  redirect(`/store/orders/${orderId}`);
 }

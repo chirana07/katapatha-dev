@@ -2,6 +2,7 @@
 
 import type { components } from "@katapatha/contracts/types";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { api } from "@/lib/api";
 
@@ -55,5 +56,13 @@ export async function placeOrder(
 
   revalidatePath("/store");
   const references = result.data.map((order) => order.ref).join(",");
-  redirect(`/store?placed=${encodeURIComponent(references || "confirmed")}`);
+  const jar = await cookies();
+  jar.set("katapatha_order_placed", references || "confirmed", {
+    httpOnly: true,
+    maxAge: 30,
+    path: "/store",
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  });
+  redirect("/store");
 }

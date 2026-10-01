@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { components } from "@katapatha/contracts/types";
+import { cookies } from "next/headers";
 import { api } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,7 @@ const FILTERS = [
   { value: "on_the_way", label: "On the way" },
   { value: "delivered", label: "Delivered" },
   { value: "deferred", label: "Deferred" },
+  { value: "failed", label: "Failed" },
 ] as const;
 
 const STATUS_LABEL: Record<string, string> = {
@@ -19,6 +21,7 @@ const STATUS_LABEL: Record<string, string> = {
   on_the_way: "On the way",
   delivered: "Delivered",
   deferred: "Deferred",
+  failed: "Failed",
   cancelled: "Cancelled",
 };
 
@@ -28,6 +31,7 @@ const STATUS_STYLE: Record<string, string> = {
   on_the_way: "bg-amber-50 text-amber-800",
   delivered: "bg-emerald-50 text-emerald-700",
   deferred: "bg-red-50 text-critical",
+  failed: "bg-red-50 text-critical",
   cancelled: "bg-red-50 text-critical",
 };
 
@@ -93,7 +97,7 @@ function BrandPill({ brand }: { brand: string }) {
 export default async function StoreOrdersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; placed?: string }>;
+  searchParams: Promise<{ status?: string }>;
 }) {
   const query = await searchParams;
   const requestedStatus = query.status ?? "all";
@@ -102,6 +106,7 @@ export default async function StoreOrdersPage({
     : "all";
   const client = await api();
   const result = await client.GET("/orders");
+  const placed = (await cookies()).get("katapatha_order_placed")?.value;
 
   if (result.error || !result.data) {
     return (
@@ -130,7 +135,7 @@ export default async function StoreOrdersPage({
   ).length;
   const delivered = orders.filter((order) => storeState(order) === "delivered").length;
   const attention = orders.filter((order) =>
-    ["deferred", "cancelled"].includes(storeState(order)),
+    ["deferred", "failed", "cancelled"].includes(storeState(order)),
   ).length;
 
   return (
@@ -151,13 +156,13 @@ export default async function StoreOrdersPage({
         </Link>
       </header>
 
-      {query.placed ? (
+      {placed ? (
         <section aria-live="polite" className="mt-6 rounded-[var(--radius-card)] bg-emerald-50 p-4 text-emerald-800">
           <p className="font-semibold">Order placed</p>
           <p className="mt-1 text-sm">
-            {query.placed === "confirmed"
-              ? "Your confirmed order is now visible in the order list."
-              : `Reference ${query.placed} is now visible in your order list.`}
+            {placed === "confirmed"
+              ? "Your earlier order request was accepted. Check the order list for its current status."
+              : `Reference ${placed} was accepted and is now in the order list.`}
           </p>
         </section>
       ) : null}
