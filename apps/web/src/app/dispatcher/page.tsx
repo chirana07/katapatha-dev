@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { HOME_FOR_ROLE } from "@katapatha/core/domain/authPaths";
 import { api } from "@/lib/api";
@@ -82,7 +83,9 @@ export default async function DispatcherPage({
   const query = await searchParams;
   const planRequestId = validUuid(query.retry) ? query.retry! : crypto.randomUUID();
   const day = days.data[0];
-  const plan = plans.data.find((item) => item.status === "DRAFT") ?? plans.data[0];
+  const plan = day?.status === "PUBLISHED"
+    ? plans.data.find((item) => item.status === "PUBLISHED") ?? plans.data[0]
+    : plans.data.find((item) => item.status === "DRAFT") ?? plans.data[0];
   const chilled = orders.data.filter((order) => order.tempRequirement === "chilled").length;
   const waiting = orders.data.filter((order) => order.status === "QUEUED" || order.status === "PLACED").length;
   const volume = orders.data.reduce((sum, order) => sum + (order.volumeM3 ?? 0), 0);
@@ -148,18 +151,24 @@ export default async function DispatcherPage({
               <p className="mt-2 max-w-2xl text-muted">{plan ? `${plan.stats.tripsBuilt} trips serve ${plan.stats.served} of ${plan.stats.orders} orders; ${plan.stats.deferred} require deferral decisions.` : "The draft is still being prepared."}</p>
               <p className="mt-2 text-sm text-muted">Running auto-plan again replaces the current draft.</p>
             </div>
-            <form action={createPlan}>
-              <input type="hidden" name="date" value={day.date} />
-              <input type="hidden" name="depotCode" value={day.depotCode} />
-              <input type="hidden" name="requestId" value={planRequestId} />
-              <button type="submit" className="min-h-12 rounded-[var(--radius-control)] border border-line bg-surface px-5 font-semibold text-ink hover:bg-raised">Re-run auto-plan</button>
-            </form>
+            <div className="flex flex-wrap gap-3">
+              {plan ? <Link href={`/dispatcher/plans/${encodeURIComponent(plan.planId)}`} className="inline-flex min-h-12 items-center rounded-[var(--radius-control)] bg-action px-5 font-semibold text-ink hover:brightness-95">Review draft plan</Link> : null}
+              <form action={createPlan}>
+                <input type="hidden" name="date" value={day.date} />
+                <input type="hidden" name="depotCode" value={day.depotCode} />
+                <input type="hidden" name="requestId" value={planRequestId} />
+                <button type="submit" className="min-h-12 rounded-[var(--radius-control)] border border-line bg-surface px-5 font-semibold text-ink hover:bg-raised">Re-run auto-plan</button>
+              </form>
+            </div>
           </div>
         ) : (
-          <div>
-            <p className="text-sm font-semibold text-muted">Current plan</p>
-            <h2 className="mt-1 text-xl font-semibold">{day.status === "PUBLISHED" ? "Plan published to the dock" : "Draft plan ready for review"}</h2>
-            <p className="mt-2 text-muted">{plan ? `${plan.stats.tripsBuilt} trips serve ${plan.stats.served} of ${plan.stats.orders} orders; ${plan.stats.deferred} require deferral decisions.` : "Refresh when the plan has finished building."}</p>
+          <div className="flex flex-wrap items-center justify-between gap-5">
+            <div>
+              <p className="text-sm font-semibold text-muted">Current plan</p>
+              <h2 className="mt-1 text-xl font-semibold">{day.status === "PUBLISHED" ? "Plan published to the dock" : "Draft plan ready for review"}</h2>
+              <p className="mt-2 text-muted">{plan ? `${plan.stats.tripsBuilt} trips serve ${plan.stats.served} of ${plan.stats.orders} orders; ${plan.stats.deferred} require deferral decisions.` : "Refresh when the plan has finished building."}</p>
+            </div>
+            {plan ? <Link href={`/dispatcher/plans/${encodeURIComponent(plan.planId)}`} className="inline-flex min-h-12 items-center rounded-[var(--radius-control)] border border-line bg-surface px-5 font-semibold text-ink hover:bg-raised">Open published plan</Link> : null}
           </div>
         )}
       </section>
