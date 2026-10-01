@@ -309,4 +309,25 @@ describe("GET /v1/reference/calendar/next-operating-day", () => {
     });
     expect(nextOperatingDateMock).not.toHaveBeenCalled();
   });
+
+  it("does not expose internals when the calendar has no future operating day", async () => {
+    const server = Fastify({ logger: false });
+    servers.push(server);
+    nextOperatingDateMock.mockResolvedValue(null);
+    server.decorateRequest("requireRole", function () {
+      return signedInUser;
+    });
+    await server.register(errorsPlugin);
+    await server.register(referenceRoutes, { prefix: "/v1" });
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/v1/reference/calendar/next-operating-day?after=2099-12-31",
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({
+      error: { code: "INTERNAL", message: "Something went wrong." },
+    });
+  });
 });
