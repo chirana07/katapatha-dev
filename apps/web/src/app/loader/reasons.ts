@@ -1,5 +1,4 @@
 import type { components } from "@katapatha/contracts/types";
-import { api } from "@/lib/api";
 
 export type ShortfallReason = string;
 
@@ -44,13 +43,4 @@ export const SHORTFALL_REASON_LABEL: Record<string, string> = {
 
 export function labelFor(reason: string): string {
   return SHORTFALL_REASON_LABEL[reason] ?? reason;
-}
-
-export async function fetchShortfallReasons(): Promise<{ reasons: ShortfallReason[]; fallback: boolean }> {
-  const client = await api();
-  const result = await client.GET("/reference/vocabularies", {});
-  if (result.error || !result.data || !Array.isArray(result.data.shortfallReasons)) {
-    return { reasons: FALLBACK_SHORTFALL_REASONS, fallback: true };
-  }
-  return { reasons: result.data.shortfallReasons, fallback: false };
 }

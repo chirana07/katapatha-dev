@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { readError } from "../../api-errors";
-import { CONDITION_HINT, CONDITION_LABEL, fetchShortfallReasons, labelFor } from "../../reasons";
+import { CONDITION_HINT, CONDITION_LABEL } from "../../reasons";
+import { fetchShortfallReasons } from "../../reasons.server";
 import { TRIP_STATUS_LABEL, type TripStatus } from "../../wave";
+import { LineForm } from "./line-form";
+import { ReadinessForm } from "./readiness-form";
 
 export const dynamic = "force-dynamic";
 
@@ -121,19 +124,58 @@ export default async function TripLoadListPage({ params }: { params: Params }) {
       {total === 0 ? (
         <EmptyList />
       ) : (
-        <section aria-labelledby="line-heading" className="mt-6">
-          <h2 id="line-heading" className="sr-only">
-            Load lines in reverse delivery order
-          </h2>
-          <ol className="flex flex-col gap-3">
-            {lines.map((line) => (
-              <LineRow key={line.orderId} line={line} reasons={reasons} />
-            ))}
-          </ol>
-        </section>
+        <>
+          <section aria-labelledby="line-heading" className="mt-6">
+            <h2 id="line-heading" className="sr-only">
+              Load lines in reverse delivery order
+            </h2>
+            <ol className="flex flex-col gap-3">
+              {lines.map((line) => (
+                <LineRow key={line.orderId} tripId={tripId} line={line} reasons={reasons} />
+              ))}
+            </ol>
+          </section>
+
+          <ReadinessForm
+            tripId={tripId}
+            canMarkReady={canMarkReady}
+            disabledReason={readinessDisabledReason({
+              total,
+              checked,
+              openDiscrepancies,
+              status,
+            })}
+            initial={{ tripId }}
+          />
+        </>
       )}
     </main>
   );
+}
+
+function readinessDisabledReason(args: {
+  total: number;
+  checked: number;
+  openDiscrepancies: number;
+  status: TripStatus;
+}): string {
+  if (args.status !== "PLANNED") {
+    return `Trip is already ${TRIP_STATUS_LABEL[args.status].toLowerCase()} — readiness is not the loader's gate right now.`;
+  }
+  if (args.total === 0) return "No lines on this trip to check.";
+  const unchecked = args.total - args.checked;
+  if (unchecked > 0 && args.openDiscrepancies > 0) {
+    return `${unchecked} of ${args.total} lines are still unchecked and ${args.openDiscrepancies} discrepancy ${
+      args.openDiscrepancies === 1 ? "is" : "are"
+    } open.`;
+  }
+  if (unchecked > 0) return `${unchecked} of ${args.total} lines are still unchecked.`;
+  if (args.openDiscrepancies > 0) {
+    return `${args.openDiscrepancies} discrepancy ${
+      args.openDiscrepancies === 1 ? "is" : "are"
+    } open — resolve or send short before releasing the vehicle.`;
+  }
+  return "";
 }
 
 function ProgressCard({ label, value, detail }: { label: string; value: string; detail: string }) {
@@ -146,7 +188,7 @@ function ProgressCard({ label, value, detail }: { label: string; value: string; 
   );
 }
 
-function LineRow({ line, reasons }: { line: Line; reasons: string[] }) {
+function LineRow({ tripId, line, reasons }: { tripId: string; line: Line; reasons: string[] }) {
   const state = lineState(line);
   const style = LINE_STYLE[state];
 
@@ -180,15 +222,13 @@ function LineRow({ line, reasons }: { line: Line; reasons: string[] }) {
         </p>
       ) : (
         <p className="mt-3 text-sm text-muted">
-          Not yet checked. Record the loaded units and condition at the dock terminal.
+          Not yet checked. Record the loaded units and condition below.
         </p>
       )}
 
-      <p className="sr-only">
-        {CONDITION_HINT[line.condition ?? "OK"]}
-        {" Reasons available: "}
-        {reasons.map((reason) => labelFor(reason)).join(", ")}.
-      </p>
+      <p className="sr-only">{CONDITION_HINT[line.condition ?? "OK"]}</p>
+
+      <LineForm tripId={tripId} line={line} reasons={reasons} />
     </li>
   );
 }
