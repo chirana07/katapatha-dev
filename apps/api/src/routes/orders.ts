@@ -281,9 +281,16 @@ export default async function (fastify: FastifyInstance) {
       };
 
       // Idempotency: a retry with the same requestId returns the first result
-      // without creating duplicates.
+      // without creating duplicates. Prisma's clientRequestId is @unique, so a
+      // multi-line order can't store the raw requestId on every row — we
+      // append the line index and look up by prefix on retry.
+      const requestKeyPrefix = `${body.requestId}:`;
       const prior = await prisma.order.findMany({
-        where: { clientRequestId: body.requestId, outletId: user.outletId },
+        where: {
+          outletId: user.outletId,
+          clientRequestId: { startsWith: requestKeyPrefix },
+        },
+        orderBy: { clientRequestId: "asc" },
         include: {
           assignments: {
             select: {
@@ -358,9 +365,8 @@ export default async function (fastify: FastifyInstance) {
               requestedDate,
               placedByUserId: user.id,
               status: "QUEUED",
-              // Only the first row carries the idempotency key — the index is
-              // unique, so a retry hits it and short-circuits before any writes.
-              clientRequestId: index === 0 ? body.requestId : null,
+              // Index-tagged so a multi-line retry recovers every row.
+              clientRequestId: `${requestKeyPrefix}${index}`,
             },
           });
           rows.push(row);
