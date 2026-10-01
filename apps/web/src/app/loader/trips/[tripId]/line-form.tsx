@@ -185,7 +185,7 @@ export function LineForm({
         )}
         {state.savedAt && !state.error && (
           <p className="rounded-[var(--radius-control)] border border-emerald-200 bg-emerald-50 p-2 text-sm text-emerald-800">
-            Saved. The line now shows its recorded state above.
+            Saved to the dock terminal. Re-saving the same values will not duplicate the line.
           </p>
         )}
       </div>

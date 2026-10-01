@@ -66,19 +66,20 @@ export default async function TripLoadListPage({ params }: { params: Params }) {
           Dock board
         </Link>
         <span aria-hidden> › </span>
-        <span className="text-ink">Trip {tripId.slice(-6)}</span>
+        <span className="text-ink">Trip load list</span>
       </nav>
 
       <header className="mt-3 flex flex-col gap-3 border-b border-line pb-5 md:flex-row md:items-end md:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted">Load list</p>
-          <h1 className="mt-1 text-2xl font-semibold text-ink sm:text-3xl">
-            Trip load checklist
+          <h1 className="text-2xl font-semibold text-ink sm:text-3xl">
+            Load last delivery first
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-muted">
-            Lines are shown in <strong className="font-semibold text-ink">reverse delivery order</strong> so the loader
-            can <strong className="font-semibold text-ink">load the last delivery first</strong>. Work top to bottom —
-            the first row is the last stop of the trip, which the driver will reach only after everything else is unloaded.
+            Lines appear in <strong className="font-semibold text-ink">reverse delivery order</strong>. The row marked
+            <span className="mx-1 inline-flex items-center rounded-md border border-[color:var(--c-navy)] bg-[color:var(--c-navy)] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-white">
+              Last stop
+            </span>
+            is where the driver will finish, so it has to go in first. Work top to bottom.
           </p>
         </div>
         <StatusBadge status={status} />
@@ -137,8 +138,14 @@ export default async function TripLoadListPage({ params }: { params: Params }) {
               Load lines in reverse delivery order
             </h2>
             <ol className="flex flex-col gap-3">
-              {lines.map((line) => (
-                <LineRow key={line.orderId} tripId={tripId} line={line} reasons={reasons} />
+              {lines.map((line, index) => (
+                <LineRow
+                  key={line.orderId}
+                  tripId={tripId}
+                  line={line}
+                  reasons={reasons}
+                  isLastStop={index === 0}
+                />
               ))}
             </ol>
           </section>
@@ -165,7 +172,17 @@ function ProgressCard({ label, value, detail }: { label: string; value: string; 
   );
 }
 
-function LineRow({ tripId, line, reasons }: { tripId: string; line: Line; reasons: string[] }) {
+function LineRow({
+  tripId,
+  line,
+  reasons,
+  isLastStop,
+}: {
+  tripId: string;
+  line: Line;
+  reasons: string[];
+  isLastStop: boolean;
+}) {
   const state = lineState(line);
   const style = LINE_STYLE[state];
 
@@ -176,8 +193,13 @@ function LineRow({ tripId, line, reasons }: { tripId: string; line: Line; reason
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-            Delivery seq {line.seq} · {line.outletId}
+          <p className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted">
+            {isLastStop && (
+              <span className="inline-flex items-center rounded-md bg-[color:var(--c-navy)] px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                Load first · last stop
+              </span>
+            )}
+            <span>Delivery seq {line.seq} · {line.outletId}</span>
           </p>
           <p className="truncate text-lg font-semibold text-ink">{line.orderRef}</p>
           <p className="tabular text-sm text-muted">
@@ -274,7 +296,6 @@ function EmptyList() {
 }
 
 function TripError({
-  tripId,
   title,
   detail,
   expired,
@@ -291,7 +312,7 @@ function TripError({
           Dock board
         </Link>
         <span aria-hidden> › </span>
-        <span className="text-ink">Trip {tripId.slice(-6)}</span>
+        <span className="text-ink">Trip load list</span>
       </nav>
       <section
         role={expired ? "status" : "alert"}

@@ -54,9 +54,8 @@ export default async function LoaderDockBoard({ searchParams }: { searchParams: 
     <main className="mx-auto w-full max-w-7xl p-4 sm:p-6">
       <header className="flex flex-col gap-3 border-b border-line pb-5 md:flex-row md:items-end md:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted">Dock board</p>
-          <h1 className="mt-1 text-2xl font-semibold text-ink sm:text-3xl">Load trips for {date}</h1>
-          <p className="mt-1 max-w-xl text-sm text-muted">
+          <h1 className="text-2xl font-semibold text-ink sm:text-3xl">Load trips for {date}</h1>
+          <p className="mt-2 max-w-xl text-sm text-muted">
             Group by wave, open a trip, and check every line before marking the vehicle ready.
           </p>
         </div>
