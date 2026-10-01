@@ -2,7 +2,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { api } from "@/lib/api";
 import { readError } from "../../api-errors";
-import { storeState, storeStateLabel } from "../../order-state";
+import { receivingWindowLabel, storeState, storeStateLabel } from "../../order-state";
 import { OrderProgress } from "./order-progress";
 import { ReceiptForm } from "./receipt-form";
 
@@ -70,7 +70,7 @@ export default async function StoreOrderPage({
         <OrderFact label="Brand" value={order.brand} />
         <OrderFact label="Goods" value={order.tempRequirement === "chilled" ? "Chilled" : "Ambient"} />
         <OrderFact label="Expected units" value={`${order.units} units`} />
-        <OrderFact label="Receiving window" value={order.windowOpen && order.windowClose ? `${order.windowOpen}–${order.windowClose}` : "Not assigned"} />
+        <OrderFact label="Receiving window" value={receivingWindowLabel(order)} />
       </dl>
 
       <OrderProgress state={state} />

@@ -19,3 +19,11 @@ export function storeStateLabel(state: string): string {
   const words = state.replaceAll("_", " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
+
+export function receivingWindowLabel(
+  order: Pick<Order, "windowOpen" | "windowClose">,
+): string {
+  return order.windowOpen && order.windowClose
+    ? `${order.windowOpen}–${order.windowClose}`
+    : "Awaiting plan";
+}

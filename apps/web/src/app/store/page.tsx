@@ -2,7 +2,12 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { api } from "@/lib/api";
 import { readError } from "./api-errors";
-import { needsAttention, storeState, storeStateLabel } from "./order-state";
+import {
+  needsAttention,
+  receivingWindowLabel,
+  storeState,
+  storeStateLabel,
+} from "./order-state";
 
 export const dynamic = "force-dynamic";
 
@@ -213,9 +218,7 @@ export default async function StoreOrdersPage({
                       <div>
                         <dt className="text-muted">Receiving window</dt>
                         <dd className="tabular mt-1 font-semibold">
-                          {order.windowOpen && order.windowClose
-                            ? `${order.windowOpen}–${order.windowClose}`
-                            : "Not assigned"}
+                          {receivingWindowLabel(order)}
                         </dd>
                       </div>
                     </dl>
@@ -252,9 +255,7 @@ export default async function StoreOrdersPage({
                         <td className="tabular px-4 py-3 text-right font-semibold">{order.units}</td>
                         <td className="tabular px-4 py-3 text-muted">{order.requestedDate}</td>
                         <td className="tabular px-4 py-3 text-muted">
-                          {order.windowOpen && order.windowClose
-                            ? `${order.windowOpen}–${order.windowClose}`
-                            : "—"}
+                          {receivingWindowLabel(order)}
                         </td>
                         <td className="px-4 py-3"><StatusPill state={state} /></td>
                       </tr>

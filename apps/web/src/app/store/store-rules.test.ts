@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mutationError, readError } from "./api-errors";
-import { needsAttention, storeState, storeStateLabel } from "./order-state";
+import {
+  needsAttention,
+  receivingWindowLabel,
+  storeState,
+  storeStateLabel,
+} from "./order-state";
 import { validateOrderQuantities, validateReceipt } from "./validation";
 
 describe("Store order status", () => {
@@ -36,6 +41,14 @@ describe("Store order status", () => {
   it("formats projected states for people", () => {
     assert.equal(storeStateLabel("on_the_way"), "On the way");
     assert.equal(storeStateLabel("queued"), "Queued");
+  });
+
+  it("explains when Dispatch has not assigned a window", () => {
+    assert.equal(receivingWindowLabel({ windowOpen: undefined, windowClose: undefined }), "Awaiting plan");
+    assert.equal(
+      receivingWindowLabel({ windowOpen: "06:00", windowClose: "11:00" }),
+      "06:00–11:00",
+    );
   });
 });
 

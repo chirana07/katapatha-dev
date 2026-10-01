@@ -8,7 +8,7 @@ Verified on 2026-10-01 from `web2/store-final-qa`. Contract-level browser checks
 | --- | --- |
 | Store ESLint | Pass, no warnings |
 | Web TypeScript | Pass |
-| Store workflow rules | 26 tests passed |
+| Store workflow rules | 27 tests passed |
 | Next.js production build | Pass with Webpack; all Store routes compiled |
 | Impeccable detector | Pass, no findings |
 | axe WCAG A/AA scan | No violations at 390 px and 1280 px on all three Store routes |
