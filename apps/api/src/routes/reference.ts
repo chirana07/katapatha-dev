@@ -4,25 +4,30 @@ import {
   PROBLEM_REASONS,
   SHORTFALL_REASONS,
 } from "@katapatha/core/domain/reasons";
+import { nextOperatingDate } from "../services/store.js";
 
-/**
- * Owner: BE1
- *
- * Not implemented yet. The contract for these endpoints is already frozen in
- * packages/contracts/openapi/paths/reference.yaml, and the Prism mock on :4010
- * serves them with realistic examples — so the web and mobile teams are not
- * blocked by this file being a stub.
- *
- * Replace each notImplemented() with a real handler. Do not change the paths;
- * they are the contract.
- */
-const NOT_IMPLEMENTED = {
-  error: {
-    code: "NOT_IMPLEMENTED",
-    message: "Not built yet. Use the Prism mock on :4010 for this endpoint.",
-  },
-} as const;
+const DATE_ONLY = "^\\d{4}-\\d{2}-\\d{2}$";
 
+function todayInColombo(): string {
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Colombo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+function fromDateOnly(value: string): Date {
+  return new Date(`${value}T00:00:00.000Z`);
+}
+
+function toDateOnly(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+/** Authenticated reference data. Owner: BE1. */
 export default async function (fastify: FastifyInstance) {
   fastify.get("/reference/outlets", {
     schema: {
@@ -103,6 +108,49 @@ export default async function (fastify: FastifyInstance) {
     }));
   });
 
+  fastify.get("/reference/vehicles", {
+    schema: {
+      response: {
+        200: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "type", "temp", "weightCapKg", "volumeCapM3", "depotCode"],
+            properties: {
+              id: { type: "string" },
+              type: { type: "string", enum: ["truck", "van"] },
+              temp: { type: "string", enum: ["reefer", "ambient"] },
+              weightCapKg: { type: "number" },
+              volumeCapM3: { type: "number" },
+              kmPerL: { type: "number" },
+              weeklyFuelQuotaL: { type: "number" },
+              depotCode: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+  }, async (request) => {
+    const user = request.requireRole();
+    if (!user.depotCode) return [];
+
+    return fastify.prisma.vehicle.findMany({
+      where: { depotCode: user.depotCode },
+      orderBy: { id: "asc" },
+      select: {
+        id: true,
+        type: true,
+        temp: true,
+        weightCapKg: true,
+        volumeCapM3: true,
+        kmPerL: true,
+        weeklyFuelQuotaL: true,
+        depotCode: true,
+      },
+    });
+  });
+
   fastify.get("/reference/vocabularies", {
     schema: {
       response: {
@@ -128,7 +176,35 @@ export default async function (fastify: FastifyInstance) {
     };
   });
 
-  for (const route of ["/reference/vehicles", "/reference/calendar/next-operating-day"]) {
-    fastify.get(route, async (_req, reply) => reply.status(501).send(NOT_IMPLEMENTED));
-  }
+  fastify.get("/reference/calendar/next-operating-day", {
+    schema: {
+      querystring: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          after: { type: "string", format: "date", pattern: DATE_ONLY },
+        },
+      },
+      response: {
+        200: {
+          type: "object",
+          additionalProperties: false,
+          required: ["date"],
+          properties: {
+            date: { type: "string", format: "date", pattern: DATE_ONLY },
+          },
+        },
+      },
+    },
+  }, async (request) => {
+    request.requireRole();
+    const { after } = request.query as { after?: string };
+    const date = await nextOperatingDate(fromDateOnly(after ?? todayInColombo()));
+
+    if (!date) {
+      throw new Error("No future operating day is present in the calendar.");
+    }
+
+    return { date: toDateOnly(date) };
+  });
 }
