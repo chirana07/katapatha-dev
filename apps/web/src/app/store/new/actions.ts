@@ -1,18 +1,13 @@
 "use server";
 
-import type { components } from "@katapatha/contracts/types";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { api } from "@/lib/api";
+import { mutationError } from "../api-errors";
+import { validateOrderQuantities } from "../validation";
 
 export type PlaceOrderState = { error?: string };
-
-function unitsFrom(value: FormDataEntryValue | null): number | null {
-  if (typeof value !== "string" || value.trim() === "") return 0;
-  const units = Number(value);
-  return Number.isInteger(units) && units >= 0 && units <= 10_000 ? units : null;
-}
 
 export async function placeOrder(
   _previous: PlaceOrderState,
@@ -20,8 +15,7 @@ export async function placeOrder(
 ): Promise<PlaceOrderState> {
   const requestId = formData.get("requestId");
   const forDate = formData.get("forDate");
-  const ambient = unitsFrom(formData.get("ambient"));
-  const chilled = unitsFrom(formData.get("chilled"));
+  const quantities = validateOrderQuantities(formData.get("ambient"), formData.get("chilled"));
 
   if (
     typeof requestId !== "string" ||
@@ -31,27 +25,15 @@ export async function placeOrder(
     return { error: "This order session is no longer valid. Refresh the page and try again." };
   }
 
-  if (ambient === null || chilled === null) {
-    return { error: "Enter whole-number quantities between 0 and 10,000 units." };
-  }
-
-  if (ambient + chilled === 0) {
-    return { error: "Enter at least one ambient or chilled unit before placing the order." };
-  }
-
-  const lines: components["schemas"]["PlaceOrdersRequest"]["lines"] = [];
-  if (ambient > 0) lines.push({ tempRequirement: "ambient", units: ambient });
-  if (chilled > 0) lines.push({ tempRequirement: "chilled", units: chilled });
+  if (!quantities.ok) return { error: quantities.error };
 
   const client = await api();
   const result = await client.POST("/orders", {
-    body: { requestId, forDate, lines },
+    body: { requestId, forDate, lines: quantities.data },
   });
 
   if (result.error || !result.data) {
-    return {
-      error: "The order could not be placed. Check the connection and retry; your quantities are still here.",
-    };
+    return { error: mutationError(result.response.status, "place order") };
   }
 
   revalidatePath("/store");

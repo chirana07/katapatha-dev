@@ -110,7 +110,7 @@ function ReceiptChoice({
 }) {
   return (
     <label className={`flex min-h-20 cursor-pointer gap-3 rounded-[var(--radius-control)] border p-4 ${checked ? "border-link bg-blue-50" : "border-line bg-surface"}`}>
-      <input name="matches" type="radio" value={value} checked={checked} onChange={onChange} className="mt-1 size-4 accent-blue-600" />
+      <input name="matches" type="radio" value={value} checked={checked} onChange={onChange} className="mt-0.5 size-6 shrink-0 accent-blue-600" />
       <span>
         <span className="block font-semibold">{label}</span>
         <span className="mt-1 block text-sm text-muted">{description}</span>

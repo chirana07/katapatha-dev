@@ -1,7 +1,8 @@
 import Link from "next/link";
-import type { components } from "@katapatha/contracts/types";
 import { cookies } from "next/headers";
 import { api } from "@/lib/api";
+import { readError } from "./api-errors";
+import { needsAttention, storeState } from "./order-state";
 
 export const dynamic = "force-dynamic";
 
@@ -35,16 +36,6 @@ const STATUS_STYLE: Record<string, string> = {
   cancelled: "bg-red-50 text-critical",
 };
 
-type Order = components["schemas"]["Order"];
-
-function storeState(order: Order): string {
-  if (order.storeState) return order.storeState;
-  if (["DRAFT", "PLACED", "QUEUED"].includes(order.status)) return "queued";
-  if (["PLANNED", "LOADED"].includes(order.status)) return "planned";
-  if (order.status === "IN_TRANSIT") return "on_the_way";
-  if (["DELIVERED", "PART_DELIVERED"].includes(order.status)) return "delivered";
-  return order.status.toLowerCase();
-}
 
 function SummaryCard({
   label,
@@ -109,12 +100,13 @@ export default async function StoreOrdersPage({
   const placed = (await cookies()).get("katapatha_order_placed")?.value;
 
   if (result.error || !result.data) {
+    const message = readError(result.response.status, "orders");
     return (
       <main className="mx-auto max-w-6xl p-4 sm:p-6">
         <section className="rounded-[var(--radius-card)] border border-red-200 bg-red-50 p-5">
-          <h1 className="text-xl font-semibold text-critical">Orders could not be loaded</h1>
+          <h1 className="text-xl font-semibold text-critical">{message.title}</h1>
           <p className="mt-2 max-w-xl text-sm text-muted">
-            Check the connection to the Katapatha API, then try again. No order data was changed.
+            {message.detail} No order data was changed.
           </p>
           <Link
             href="/store"
@@ -134,18 +126,13 @@ export default async function StoreOrdersPage({
     ["queued", "planned", "on_the_way"].includes(storeState(order)),
   ).length;
   const delivered = orders.filter((order) => storeState(order) === "delivered").length;
-  const attention = orders.filter((order) =>
-    ["deferred", "failed", "cancelled"].includes(storeState(order)),
-  ).length;
+  const attention = orders.filter((order) => needsAttention(storeState(order))).length;
 
   return (
     <main className="mx-auto w-full max-w-7xl p-4 sm:p-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.12em] text-critical">
-            Store workspace
-          </p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">My orders</h1>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">My orders</h1>
           <p className="mt-1 text-muted">Status and expected outcome for this outlet.</p>
         </div>
         <Link
@@ -171,7 +158,7 @@ export default async function StoreOrdersPage({
         <SummaryCard label="Total orders" value={orders.length} detail="Visible to this outlet" />
         <SummaryCard label="In progress" value={awaiting} detail="Queued through delivery" tone="warn" />
         <SummaryCard label="Delivered" value={delivered} detail="Completed orders" tone="good" />
-        <SummaryCard label="Needs attention" value={attention} detail="Deferred or cancelled" tone="bad" />
+        <SummaryCard label="Needs attention" value={attention} detail="Deferred, failed, or cancelled" tone="bad" />
       </section>
 
       <nav aria-label="Filter orders" className="mt-6 flex gap-2 overflow-x-auto pb-2">
@@ -264,7 +251,7 @@ export default async function StoreOrdersPage({
                     return (
                       <tr key={order.id} className="hover:bg-raised">
                         <td className="px-4 py-3 font-mono font-semibold">
-                          <Link href={`/store/orders/${order.id}`} className="text-link underline-offset-4 hover:underline">{order.ref}</Link>
+                          <Link href={`/store/orders/${order.id}`} className="inline-flex min-h-6 items-center text-link underline-offset-4 hover:underline">{order.ref}</Link>
                         </td>
                         <td className="px-4 py-3"><BrandPill brand={order.brand} /></td>
                         <td className="px-4 py-3 text-muted">{order.tempRequirement === "chilled" ? "Chilled" : "Ambient"}</td>
