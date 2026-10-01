@@ -1,0 +1,306 @@
+import Link from "next/link";
+import { api } from "@/lib/api";
+import { readError } from "../../api-errors";
+import { CONDITION_HINT, CONDITION_LABEL, fetchShortfallReasons, labelFor } from "../../reasons";
+import { TRIP_STATUS_LABEL, type TripStatus } from "../../wave";
+
+export const dynamic = "force-dynamic";
+
+type Params = Promise<{ tripId: string }>;
+
+type Line = {
+  orderId: string;
+  orderRef: string;
+  outletId: string;
+  seq: number;
+  expectedUnits: number;
+  loadedUnits?: number | null;
+  condition?: "OK" | "SHORT" | "DAMAGED" | "MISSING" | null;
+};
+
+export default async function TripLoadListPage({ params }: { params: Params }) {
+  const { tripId } = await params;
+
+  const client = await api();
+  const result = await client.GET("/trips/{tripId}/load-list", {
+    params: { path: { tripId } },
+  });
+
+  if (result.error || !result.data) {
+    const error = readError(result.response.status, "trip");
+    return (
+      <TripError
+        tripId={tripId}
+        title={error.title}
+        detail={error.detail}
+        expired={error.expired}
+      />
+    );
+  }
+
+  const { lines, status } = result.data;
+  const total = lines.length;
+  const checked = lines.filter((line) => line.loadedUnits != null && line.condition != null).length;
+  const openDiscrepancies = lines.filter(
+    (line) => line.condition != null && line.condition !== "OK",
+  ).length;
+  const everyLineChecked = total > 0 && checked === total;
+  const canMarkReady = everyLineChecked && openDiscrepancies === 0 && status === "PLANNED";
+
+  const { reasons, fallback: reasonsFromFallback } = await fetchShortfallReasons();
+
+  return (
+    <main className="mx-auto w-full max-w-5xl p-4 sm:p-6">
+      <nav aria-label="Breadcrumb" className="text-sm text-muted">
+        <Link href="/loader" className="hover:underline">
+          Dock board
+        </Link>
+        <span aria-hidden> › </span>
+        <span className="text-ink">Trip {tripId.slice(-6)}</span>
+      </nav>
+
+      <header className="mt-3 flex flex-col gap-3 border-b border-line pb-5 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">Load list</p>
+          <h1 className="mt-1 text-2xl font-semibold text-ink sm:text-3xl">
+            Trip load checklist
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm text-muted">
+            Lines are shown in <strong className="font-semibold text-ink">reverse delivery order</strong> so the loader
+            can <strong className="font-semibold text-ink">load the last delivery first</strong>. Work top to bottom —
+            the first row is the last stop of the trip, which the driver will reach only after everything else is unloaded.
+          </p>
+        </div>
+        <StatusBadge status={status} />
+      </header>
+
+      <section
+        aria-label="Checklist progress"
+        className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+      >
+        <ProgressCard label="Lines" value={`${total}`} detail="On this trip." />
+        <ProgressCard
+          label="Checked"
+          value={`${checked} / ${total}`}
+          detail={
+            everyLineChecked ? "Every line has been recorded." : "Record every line before marking ready."
+          }
+        />
+        <ProgressCard
+          label="Discrepancies"
+          value={`${openDiscrepancies}`}
+          detail={
+            openDiscrepancies === 0
+              ? "No shortfalls recorded."
+              : "Shortfalls still block departure until resolved."
+          }
+        />
+        <ProgressCard
+          label="Ready?"
+          value={canMarkReady ? "Can release" : "Not yet"}
+          detail={
+            canMarkReady
+              ? "All lines OK. The vehicle is ready to depart."
+              : status !== "PLANNED"
+                ? "This trip has already moved past loading."
+                : "Resolve open items first."
+          }
+        />
+      </section>
+
+      {reasonsFromFallback && (
+        <p
+          role="status"
+          className="mt-4 rounded-[var(--radius-control)] border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+        >
+          Reason list is temporarily unreachable; the dock terminal is using a local fallback. Reload the page once the
+          network returns to pick up any updates.
+        </p>
+      )}
+
+      {total === 0 ? (
+        <EmptyList />
+      ) : (
+        <section aria-labelledby="line-heading" className="mt-6">
+          <h2 id="line-heading" className="sr-only">
+            Load lines in reverse delivery order
+          </h2>
+          <ol className="flex flex-col gap-3">
+            {lines.map((line) => (
+              <LineRow key={line.orderId} line={line} reasons={reasons} />
+            ))}
+          </ol>
+        </section>
+      )}
+    </main>
+  );
+}
+
+function ProgressCard({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <article className="rounded-[var(--radius-card)] border border-line bg-surface p-4">
+      <p className="text-sm text-muted">{label}</p>
+      <p className="tabular mt-1 text-2xl font-semibold text-ink">{value}</p>
+      <p className="mt-2 text-sm text-muted">{detail}</p>
+    </article>
+  );
+}
+
+function LineRow({ line, reasons }: { line: Line; reasons: string[] }) {
+  const state = lineState(line);
+  const style = LINE_STYLE[state];
+
+  return (
+    <li
+      className={`rounded-[var(--radius-card)] border bg-surface p-4 ${style.border}`}
+      data-state={state}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+            Delivery seq {line.seq} · {line.outletId}
+          </p>
+          <p className="truncate text-lg font-semibold text-ink">{line.orderRef}</p>
+          <p className="tabular text-sm text-muted">
+            Expected <span className="font-semibold text-ink">{line.expectedUnits}</span> units
+          </p>
+        </div>
+        <LineStateBadge state={state} />
+      </div>
+
+      {line.condition && line.loadedUnits != null ? (
+        <p className="mt-3 text-sm text-muted">
+          Last check:{" "}
+          <span className="font-semibold text-ink">
+            {CONDITION_LABEL[line.condition]} · {line.loadedUnits} loaded
+          </span>
+          {line.condition !== "OK" && (
+            <span> — resolve or correct this line before marking the trip ready.</span>
+          )}
+        </p>
+      ) : (
+        <p className="mt-3 text-sm text-muted">
+          Not yet checked. Record the loaded units and condition at the dock terminal.
+        </p>
+      )}
+
+      <p className="sr-only">
+        {CONDITION_HINT[line.condition ?? "OK"]}
+        {" Reasons available: "}
+        {reasons.map((reason) => labelFor(reason)).join(", ")}.
+      </p>
+    </li>
+  );
+}
+
+type LineState = "unchecked" | "ok" | "discrepancy" | "blocked";
+
+function lineState(line: Line): LineState {
+  if (line.condition == null) return "unchecked";
+  if (line.condition === "OK") return "ok";
+  if (line.condition === "MISSING") return "blocked";
+  return "discrepancy";
+}
+
+const LINE_STYLE: Record<LineState, { border: string; pill: string; dot: string; label: string }> = {
+  unchecked: {
+    border: "border-line",
+    pill: "border border-line bg-raised text-ink",
+    dot: "bg-muted",
+    label: "Unchecked",
+  },
+  ok: {
+    border: "border-emerald-200",
+    pill: "border border-emerald-200 bg-emerald-50 text-emerald-800",
+    dot: "bg-emerald-600",
+    label: "Loaded",
+  },
+  discrepancy: {
+    border: "border-amber-300",
+    pill: "border border-amber-300 bg-amber-50 text-amber-900",
+    dot: "bg-action",
+    label: "Discrepancy",
+  },
+  blocked: {
+    border: "border-red-300",
+    pill: "border border-red-300 bg-red-50 text-critical",
+    dot: "bg-critical",
+    label: "Blocked",
+  },
+};
+
+function LineStateBadge({ state }: { state: LineState }) {
+  const style = LINE_STYLE[state];
+  return (
+    <span
+      aria-label={`State: ${style.label}`}
+      className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold ${style.pill}`}
+    >
+      <span aria-hidden className={`size-2 rounded-full ${style.dot}`} />
+      {style.label}
+    </span>
+  );
+}
+
+function StatusBadge({ status }: { status: TripStatus }) {
+  return (
+    <span
+      aria-label={`Trip status: ${TRIP_STATUS_LABEL[status]}`}
+      className="inline-flex min-h-11 items-center gap-2 rounded-[var(--radius-control)] border border-line bg-surface px-3 text-sm font-semibold text-ink"
+    >
+      <span aria-hidden className="size-2 rounded-full bg-[color:var(--c-navy)]" />
+      {TRIP_STATUS_LABEL[status]}
+    </span>
+  );
+}
+
+function EmptyList() {
+  return (
+    <section className="mt-10 rounded-[var(--radius-card)] border border-dashed border-line bg-surface p-8 text-center">
+      <h2 className="text-lg font-semibold text-ink">Nothing to load</h2>
+      <p className="mx-auto mt-2 max-w-xl text-sm text-muted">
+        This trip has no lines. The dispatcher may still be publishing the plan, or every order on it has been deferred.
+      </p>
+    </section>
+  );
+}
+
+function TripError({
+  tripId,
+  title,
+  detail,
+  expired,
+}: {
+  tripId: string;
+  title: string;
+  detail: string;
+  expired: boolean;
+}) {
+  return (
+    <main className="mx-auto max-w-3xl p-4 sm:p-6">
+      <nav aria-label="Breadcrumb" className="text-sm text-muted">
+        <Link href="/loader" className="hover:underline">
+          Dock board
+        </Link>
+        <span aria-hidden> › </span>
+        <span className="text-ink">Trip {tripId.slice(-6)}</span>
+      </nav>
+      <section
+        role={expired ? "status" : "alert"}
+        aria-live="polite"
+        className="mt-4 rounded-[var(--radius-card)] border border-line bg-surface p-5 sm:p-6"
+      >
+        <h1 className="text-2xl font-semibold text-critical">{title}</h1>
+        <p className="mt-2 max-w-xl text-sm text-muted">{detail}</p>
+        <div className="mt-5 flex flex-wrap gap-3">
+          <Link
+            href="/loader"
+            className="inline-flex min-h-11 min-w-28 items-center justify-center rounded-[var(--radius-control)] bg-action px-4 font-semibold text-ink hover:brightness-95"
+          >
+            Dock board
+          </Link>
+        </div>
+      </section>
+    </main>
+  );
+}
