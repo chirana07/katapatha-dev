@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mutationError, readError } from "./api-errors";
+import { buildDeliveryEvents } from "./delivery-events";
 import { formatClock, formatWindow, generateUlid, isIsoDate } from "./format";
 import { FALLBACK_PROBLEM_REASONS, labelFor } from "./reasons";
 import {
@@ -158,5 +159,29 @@ describe("Client-side ULIDs", () => {
     const first = generateUlid();
     const second = generateUlid();
     assert.notEqual(first, second);
+  });
+});
+
+describe("Proof-of-delivery events", () => {
+  it("records every order before the stop-level proof of delivery", () => {
+    const events = buildDeliveryEvents({
+      lines: [
+        { orderId: "ambient", expectedUnits: 12, deliveredUnits: 12, eventId: "line-ambient" },
+        { orderId: "chilled", expectedUnits: 8, deliveredUnits: 6, eventId: "line-chilled" },
+      ],
+      podEventId: "pod",
+      occurredAt: "2026-10-01T04:10:00.000Z",
+      recipientName: "Nimali Perera",
+    });
+
+    assert.deepEqual(
+      events.map(({ type, orderId, deliveredUnits }) => ({ type, orderId, deliveredUnits })),
+      [
+        { type: "DELIVERED", orderId: "ambient", deliveredUnits: 12 },
+        { type: "PART_DELIVERED", orderId: "chilled", deliveredUnits: 6 },
+        { type: "POD_CAPTURED", orderId: null, deliveredUnits: null },
+      ],
+    );
+    assert.ok(events.every((item) => item.recipientName === "Nimali Perera"));
   });
 });

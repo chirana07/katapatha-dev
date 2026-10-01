@@ -10,7 +10,6 @@ allowBuilds:
   '@scarf/scarf': false  # telemetry phone-home from Redocly; denied on purpose
   esbuild: true
   prisma: true
-  unrs-resolver: false  # ESLint resolver's native-binary build; the JS fallback works fine and keeps pnpm 12 from erroring on frozen-lockfile installs
 
 minimumReleaseAgeExclude:
   - '@redocly/cli@2.57.0'

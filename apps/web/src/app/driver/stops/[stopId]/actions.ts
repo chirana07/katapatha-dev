@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { api } from "@/lib/api";
 import { mutationError, type DriverMutation } from "../../api-errors";
+import { buildDeliveryEvents, type DeliveryLine } from "../../delivery-events";
 
 type EventType =
   | "ARRIVED"
@@ -10,6 +11,18 @@ type EventType =
   | "DELIVERED"
   | "PART_DELIVERED"
   | "FAILED";
+
+type StopEventInput = {
+  id: string;
+  type: EventType | "POD_CAPTURED";
+  occurredAt: string;
+  orderId: string | null;
+  deliveredUnits: number | null;
+  recipientName: string | null;
+  signatureData: string | null;
+  photoData: string | null;
+  reasonCode: string | null;
+};
 
 export type EventState = {
   stopId: string;
@@ -45,58 +58,62 @@ function readDeviceId(value: FormDataEntryValue | null): string {
   return "device-unknown";
 }
 
-async function submitEvent(args: {
+async function submitEvents(args: {
   stopId: string;
-  type: EventType;
-  eventId: string;
-  occurredAt: string;
   deviceId: string;
-  extras?: {
-    orderId?: string | null;
-    deliveredUnits?: number | null;
-    recipientName?: string | null;
-    signatureData?: string | null;
-    photoData?: string | null;
-    reasonCode?: string | null;
-  };
+  mutation: DriverMutation;
+  events: StopEventInput[];
 }): Promise<EventState> {
   const client = await api();
   const result = await client.POST("/stops/{stopId}/events", {
     params: { path: { stopId: args.stopId } },
     body: {
       deviceId: args.deviceId,
-      events: [
-        {
-          id: args.eventId,
-          type: args.type,
-          occurredAt: args.occurredAt,
-          orderId: args.extras?.orderId ?? null,
-          deliveredUnits: args.extras?.deliveredUnits ?? null,
-          recipientName: args.extras?.recipientName ?? null,
-          signatureData: args.extras?.signatureData ?? null,
-          photoData: args.extras?.photoData ?? null,
-          reasonCode: args.extras?.reasonCode ?? null,
-        },
-      ],
+      events: args.events,
     },
   });
 
   if (result.error || !result.data) {
     return {
       stopId: args.stopId,
-      error: mutationError(result.response.status, MUTATION_LABEL[args.type]),
+      error: mutationError(result.response.status, args.mutation),
     };
   }
 
-  const first = result.data.results[0];
+  const results = result.data.results;
+  const conflict = results.find((item) => item.status === "conflict");
+  const duplicate = results.find((item) => item.status === "duplicate");
+  const representative = conflict ?? duplicate ?? results[0];
   revalidatePath(`/driver/stops/${args.stopId}`);
   revalidatePath("/driver");
   return {
     stopId: args.stopId,
     savedAt: new Date().toISOString(),
-    savedEventId: args.eventId,
-    savedStatus: (first?.status as EventState["savedStatus"]) ?? "accepted",
-    savedConflictState: first?.conflictState ?? null,
+    savedEventId: representative?.id,
+    savedStatus: (representative?.status as EventState["savedStatus"]) ?? "accepted",
+    savedConflictState: representative?.conflictState ?? null,
+  };
+}
+
+function event(input: {
+  id: string;
+  type: EventType | "POD_CAPTURED";
+  occurredAt: string;
+  orderId?: string | null;
+  deliveredUnits?: number | null;
+  recipientName?: string | null;
+  reasonCode?: string | null;
+}): StopEventInput {
+  return {
+    id: input.id,
+    type: input.type,
+    occurredAt: input.occurredAt,
+    orderId: input.orderId ?? null,
+    deliveredUnits: input.deliveredUnits ?? null,
+    recipientName: input.recipientName ?? null,
+    signatureData: null,
+    photoData: null,
+    reasonCode: input.reasonCode ?? null,
   };
 }
 
@@ -110,12 +127,12 @@ async function handleBasicTransition(
   if (typeof stopId !== "string" || !stopId || !eventId) {
     return { ...previous, error: "This action is no longer valid. Reload the stop and try again." };
   }
-  return submitEvent({
+  const occurredAt = readOccurredAt(formData.get("occurredAt"));
+  return submitEvents({
     stopId,
-    type,
-    eventId,
-    occurredAt: readOccurredAt(formData.get("occurredAt")),
     deviceId: readDeviceId(formData.get("deviceId")),
+    mutation: MUTATION_LABEL[type],
+    events: [event({ id: eventId, type, occurredAt })],
   });
 }
 
@@ -142,37 +159,56 @@ export async function completeDelivery(previous: EventState, formData: FormData)
     };
   }
 
-  const unitsRaw = formData.get("deliveredUnits");
-  const expectedRaw = formData.get("expectedUnits");
-  if (typeof unitsRaw !== "string" || typeof expectedRaw !== "string") {
-    return { stopId, error: "This delivery is missing quantity details. Reload the stop and try again." };
-  }
-  if (!/^\d+$/.test(unitsRaw.trim())) {
-    return { stopId, error: "Delivered units must be a whole number, zero or more." };
-  }
-  const deliveredUnits = Number(unitsRaw);
-  const expectedUnits = Number(expectedRaw);
-  if (!Number.isFinite(deliveredUnits) || deliveredUnits < 0) {
-    return { stopId, error: "Delivered units must be zero or more." };
-  }
-  if (deliveredUnits > expectedUnits + expectedUnits * 0.5 + 50) {
-    return { stopId, error: `${deliveredUnits} is more than this stop ordered (${expectedUnits}). Check the figure before saving.` };
+  const orderIds = formData
+    .getAll("orderId")
+    .filter((value): value is string => typeof value === "string" && value.trim() !== "")
+    .map((value) => value.trim());
+  if (orderIds.length === 0) {
+    return { stopId, error: "This stop has no order lines to deliver. Reload the run and try again." };
   }
 
-  const orderId = formData.get("orderId");
-  const typedOrderId = typeof orderId === "string" && orderId.trim() !== "" ? orderId.trim() : null;
+  const occurredAt = readOccurredAt(formData.get("occurredAt"));
+  const deliveryLines: DeliveryLine[] = [];
+  for (const orderId of orderIds) {
+    const lineEventId = readUlid(formData.get(`eventId:${orderId}`));
+    const unitsRaw = formData.get(`deliveredUnits:${orderId}`);
+    const expectedRaw = formData.get(`expectedUnits:${orderId}`);
+    if (!lineEventId || typeof unitsRaw !== "string" || typeof expectedRaw !== "string") {
+      return { stopId, error: "This delivery is missing order details. Reload the stop and try again." };
+    }
+    if (!/^\d+$/.test(unitsRaw.trim()) || !/^\d+$/.test(expectedRaw.trim())) {
+      return { stopId, error: "Delivered units must be whole numbers, zero or more." };
+    }
+    const deliveredUnits = Number(unitsRaw);
+    const expectedUnits = Number(expectedRaw);
+    if (!Number.isSafeInteger(deliveredUnits) || !Number.isSafeInteger(expectedUnits)) {
+      return { stopId, error: "Delivered quantities are too large to save safely. Check the figures and try again." };
+    }
+    if (deliveredUnits > expectedUnits) {
+      return {
+        stopId,
+        error: `${deliveredUnits} is more than the ${expectedUnits} units on this order. Check the figure before saving.`,
+      };
+    }
+    deliveryLines.push({ orderId, expectedUnits, deliveredUnits, eventId: lineEventId });
+  }
 
-  return submitEvent({
+  const podEventId = readUlid(formData.get("podEventId"));
+  if (!podEventId) {
+    return { stopId, error: "The proof-of-delivery record is no longer valid. Reload the stop and try again." };
+  }
+  const events = buildDeliveryEvents({
+    lines: deliveryLines,
+    podEventId,
+    occurredAt,
+    recipientName: recipient.trim(),
+  });
+
+  return submitEvents({
     stopId,
-    type: deliveredUnits >= expectedUnits ? "DELIVERED" : "PART_DELIVERED",
-    eventId,
-    occurredAt: readOccurredAt(formData.get("occurredAt")),
     deviceId: readDeviceId(formData.get("deviceId")),
-    extras: {
-      orderId: typedOrderId,
-      deliveredUnits,
-      recipientName: recipient.trim(),
-    },
+    mutation: "complete the delivery",
+    events,
   });
 }
 
@@ -188,12 +224,11 @@ export async function reportProblem(previous: EventState, formData: FormData): P
     return { stopId, error: "Pick a reason — the problem report cannot be filed without one." };
   }
 
-  return submitEvent({
+  const occurredAt = readOccurredAt(formData.get("occurredAt"));
+  return submitEvents({
     stopId,
-    type: "FAILED",
-    eventId,
-    occurredAt: readOccurredAt(formData.get("occurredAt")),
     deviceId: readDeviceId(formData.get("deviceId")),
-    extras: { reasonCode: reasonCode.trim() },
+    mutation: "report the problem",
+    events: [event({ id: eventId, type: "FAILED", occurredAt, reasonCode: reasonCode.trim() })],
   });
 }

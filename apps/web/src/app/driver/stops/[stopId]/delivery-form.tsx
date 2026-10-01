@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { generateUlid } from "../../format";
 import { completeDelivery } from "./actions";
 import { EventForm } from "./event-form";
 
@@ -15,9 +16,13 @@ export function DeliveryForm({
   orders: Order[];
   disabled: boolean;
 }) {
-  const first = orders[0];
-  const expected = first?.expectedUnits ?? 0;
-  const [units, setUnits] = useState<string>(String(expected));
+  const [units, setUnits] = useState<Record<string, string>>(() =>
+    Object.fromEntries(orders.map((order) => [order.orderId, String(order.expectedUnits)])),
+  );
+  const [eventIds] = useState<Record<string, string>>(() =>
+    Object.fromEntries(orders.map((order) => [order.orderId, generateUlid()])),
+  );
+  const [podEventId] = useState(() => generateUlid());
   const [recipient, setRecipient] = useState<string>("");
 
   return (
@@ -29,27 +34,37 @@ export function DeliveryForm({
       disabled={disabled}
       savedCopy={() => "Delivery saved. The next stop is ready in the run."}
     >
-      <input type="hidden" name="orderId" value={first?.orderId ?? ""} />
-      <input type="hidden" name="expectedUnits" value={expected} />
-      <label className="flex flex-col gap-1">
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted">Delivered units</span>
-        <input
-          name="deliveredUnits"
-          type="number"
-          inputMode="numeric"
-          min={0}
-          step={1}
-          required
-          value={units}
-          onChange={(event) => setUnits(event.target.value)}
-          className="tabular min-h-12 rounded-[var(--radius-control)] border border-line bg-surface px-3 text-lg text-ink"
-          aria-describedby={`${stopId}-units-hint`}
-        />
-        <span id={`${stopId}-units-hint`} className="text-xs text-muted">
-          Expected {expected}
-          {orders.length > 1 ? " on the first order" : ""}. Lower numbers are recorded as a part delivery.
-        </span>
-      </label>
+      <input type="hidden" name="podEventId" value={podEventId} />
+      <fieldset className="flex flex-col gap-3">
+        <legend className="text-xs font-semibold uppercase tracking-wide text-muted">Units handed over</legend>
+        {orders.map((order) => (
+          <label key={order.orderId} className="flex flex-col gap-1 rounded-[var(--radius-control)] border border-line p-3">
+            <input type="hidden" name="orderId" value={order.orderId} />
+            <input type="hidden" name={`expectedUnits:${order.orderId}`} value={order.expectedUnits} />
+            <input type="hidden" name={`eventId:${order.orderId}`} value={eventIds[order.orderId]} />
+            <span className="flex items-center justify-between gap-3 text-sm">
+              <span className="font-semibold text-ink">{order.orderRef}</span>
+              <span className="tabular text-muted">Expected {order.expectedUnits}</span>
+            </span>
+            <input
+              name={`deliveredUnits:${order.orderId}`}
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={order.expectedUnits}
+              step={1}
+              required
+              value={units[order.orderId] ?? ""}
+              onChange={(event) =>
+                setUnits((current) => ({ ...current, [order.orderId]: event.target.value }))
+              }
+              className="tabular min-h-12 rounded-[var(--radius-control)] border border-line bg-surface px-3 text-lg text-ink"
+              aria-label={`Delivered units for ${order.orderRef}`}
+            />
+            <span className="text-xs text-muted">A lower number records this order as a part delivery.</span>
+          </label>
+        ))}
+      </fieldset>
       <label className="flex flex-col gap-1">
         <span className="text-xs font-semibold uppercase tracking-wide text-muted">Received by</span>
         <input
@@ -64,7 +79,7 @@ export function DeliveryForm({
           className="min-h-12 rounded-[var(--radius-control)] border border-line bg-surface px-3 text-base text-ink"
         />
         <span className="text-xs text-muted">
-          Required. Signature and photo capture ship in the next driver slice.
+          Required. This name is stored with the proof-of-delivery record for every order at this stop.
         </span>
       </label>
     </EventForm>
