@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { api } from "@/lib/api";
 import { OrderProgress } from "./order-progress";
 import { ReceiptForm } from "./receipt-form";
@@ -7,13 +8,12 @@ export const dynamic = "force-dynamic";
 
 export default async function StoreOrderPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ orderId: string }>;
-  searchParams: Promise<{ received?: string }>;
 }) {
   const { orderId } = await params;
-  const { received } = await searchParams;
+  const receiptConfirmed =
+    (await cookies()).get("katapatha_receipt_confirmed")?.value === orderId;
   const client = await api();
   const result = await client.GET("/orders/{orderId}", { params: { path: { orderId } } });
 
@@ -35,7 +35,7 @@ export default async function StoreOrderPage({
   const statusStyle =
     state === "delivered"
       ? "bg-emerald-50 text-emerald-800"
-      : state === "deferred" || state === "cancelled"
+      : state === "deferred" || state === "failed" || state === "cancelled"
         ? "bg-red-50 text-critical"
         : state === "on_the_way"
           ? "bg-amber-50 text-amber-800"
@@ -56,7 +56,7 @@ export default async function StoreOrderPage({
         </span>
       </header>
 
-      {received ? (
+      {receiptConfirmed ? (
         <section aria-live="polite" className="mt-6 rounded-[var(--radius-card)] bg-emerald-50 p-4 text-emerald-800">
           <p className="font-semibold">Receipt confirmed</p>
           <p className="mt-1 text-sm">The delivery outcome has been added to this order.</p>
@@ -77,9 +77,9 @@ export default async function StoreOrderPage({
         <p className="mt-1 max-w-2xl text-sm text-muted">
           Confirm what arrived so dispatch and the outlet share the same final record.
         </p>
-        {canConfirm && !received ? (
+        {canConfirm && !receiptConfirmed ? (
           <ReceiptForm orderId={order.id} expectedUnits={order.units} />
-        ) : received ? (
+        ) : receiptConfirmed ? (
           <div className="mt-5 rounded-lg bg-raised p-4 text-sm text-muted">
             Receipt is recorded. Return to the order list to continue.
           </div>

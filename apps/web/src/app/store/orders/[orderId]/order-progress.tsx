@@ -6,11 +6,15 @@ const STEPS = [
 ] as const;
 
 export function OrderProgress({ state }: { state: string }) {
-  if (state === "deferred" || state === "cancelled") {
+  if (state === "deferred" || state === "failed" || state === "cancelled") {
     return (
       <section aria-labelledby="progress-heading" className="mt-6 rounded-[var(--radius-card)] bg-red-50 p-5">
         <h2 id="progress-heading" className="font-semibold text-critical">
-          {state === "deferred" ? "Delivery deferred" : "Order cancelled"}
+          {state === "deferred"
+            ? "Delivery deferred"
+            : state === "failed"
+              ? "Delivery failed"
+              : "Order cancelled"}
         </h2>
         <p className="mt-1 text-sm text-muted">
           Dispatch must update this order before delivery can continue.
