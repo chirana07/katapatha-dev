@@ -6,23 +6,36 @@
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
-    "typecheck": "tsc --noEmit"
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@expo/metro-runtime": "57.0.16",
     "@katapatha/api-client": "workspace:*",
     "@katapatha/contracts": "workspace:*",
     "@katapatha/core": "workspace:*",
     "@katapatha/tokens": "workspace:*",
     "expo": "57.0.26",
     "expo-constants": "57.0.20",
+    "expo-crypto": "57.0.3",
+    "expo-image-manipulator": "57.0.20",
+    "expo-image-picker": "57.0.20",
     "expo-router": "57.0.24",
     "expo-secure-store": "57.0.4",
     "expo-sqlite": "57.0.3",
     "react": "19.2.8",
-    "react-native": "0.87.1"
+    "react-native": "0.87.1",
+    "react-native-svg": "15.15.4"
   },
   "devDependencies": {
+    "@react-native/js-polyfills": "0.87.1",
+    "@types/node": "24.19.0",
+    "@types/react": "19.2.2",
+    "eslint": "9.39.5",
+    "eslint-plugin-react-hooks": "7.1.1",
     "typescript": "5.9.3",
-    "@types/react": "19.2.2"
+    "typescript-eslint": "8.71.0",
+    "vitest": "5.0.2"
   }
 }

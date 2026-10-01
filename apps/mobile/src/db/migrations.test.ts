@@ -1,0 +1,241 @@
+import { describe, it, expect, afterEach } from "vitest";
+import { openNodeSqlite } from "./node-sqlite";
+import { MIGRATIONS, SCHEMA_VERSION, currentVersion, migrate } from "./migrations";
+import type { SqlDriver } from "./driver";
+
+let sql: SqlDriver | null = null;
+
+async function fresh(): Promise<SqlDriver> {
+  sql = openNodeSqlite();
+  return sql;
+}
+
+afterEach(async () => {
+  await sql?.close();
+  sql = null;
+});
+
+type NameRow = { name: string };
+
+async function tableNames(driver: SqlDriver): Promise<string[]> {
+  const rows = await driver.all<NameRow>(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+  );
+  return rows.map((row) => row.name);
+}
+
+describe("migrate", () => {
+  it("takes a fresh database to the current version", async () => {
+    const driver = await fresh();
+    expect(await currentVersion(driver)).toBe(0);
+
+    await migrate(driver);
+
+    expect(await currentVersion(driver)).toBe(SCHEMA_VERSION);
+    expect(SCHEMA_VERSION).toBe(MIGRATIONS.length);
+  });
+
+  it("creates every table the app reads", async () => {
+    const driver = await fresh();
+    await migrate(driver);
+
+    expect(await tableNames(driver)).toEqual([
+      "meta",
+      "outbox_event",
+      "run",
+      "stop",
+      "stop_order",
+      "sync_log",
+      "trip",
+      "vocabulary",
+    ]);
+  });
+
+  it("is idempotent: migrating twice changes nothing", async () => {
+    const driver = await fresh();
+    await migrate(driver);
+    const before = await tableNames(driver);
+
+    // Would throw "table already exists" if a migration re-ran.
+    await expect(migrate(driver)).resolves.toBe(SCHEMA_VERSION);
+
+    expect(await tableNames(driver)).toEqual(before);
+    expect(await currentVersion(driver)).toBe(SCHEMA_VERSION);
+  });
+
+  it("indexes the three queries that run on every screen", async () => {
+    const driver = await fresh();
+    await migrate(driver);
+
+    const rows = await driver.all<NameRow>(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    );
+    expect(rows.map((row) => row.name)).toEqual([
+      // claim-ready rows for a drain
+      "idx_outbox_batch",
+      "idx_outbox_ready",
+      // pending events for one stop, in ULID order
+      "idx_outbox_stop",
+      // the run list, in delivery order
+      "idx_stop_order",
+    ]);
+  });
+});
+
+describe("the outbox table's guarantees", () => {
+  it("makes a re-queued ULID a no-op, which is what a double-tap is", async () => {
+    // The device's half of the idempotency story: the same key that makes a
+    // replay safe on the server makes a double-submit safe here.
+    const driver = await fresh();
+    await migrate(driver);
+
+    const insert = `
+      INSERT OR IGNORE INTO outbox_event
+        (id, batch_key, stop_id, type, occurred_at, state, created_at)
+      VALUES (?, ?, ?, ?, ?, 'queued', ?)`;
+    const args = [
+      "01JA0000000000000000000000",
+      "batch-1",
+      "stop-1",
+      "ARRIVED",
+      "2026-10-01T04:10:00.000Z",
+      "2026-10-01T04:10:00.000Z",
+    ];
+
+    await driver.run(insert, args);
+    await driver.run(insert, args);
+
+    const row = await driver.first<{ c: number }>("SELECT COUNT(*) AS c FROM outbox_event");
+    expect(row?.c).toBe(1);
+  });
+
+  it("refuses a state outside the lifecycle", async () => {
+    const driver = await fresh();
+    await migrate(driver);
+
+    await expect(
+      driver.run(
+        `INSERT INTO outbox_event (id, batch_key, stop_id, type, occurred_at, state, created_at)
+         VALUES ('01JB', 'b', 's', 'ARRIVED', 'now', 'definitely-not-a-state', 'now')`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("defaults a new row to zero attempts and no blobs", async () => {
+    const driver = await fresh();
+    await migrate(driver);
+    await driver.run(
+      `INSERT INTO outbox_event (id, batch_key, stop_id, type, occurred_at, state, created_at)
+       VALUES ('01JC', 'b', 's', 'ARRIVED', 'now', 'queued', 'now')`,
+    );
+
+    const row = await driver.first<{
+      attempts: number;
+      payload_bytes: number;
+      signature_data: string | null;
+      settled_at: string | null;
+    }>("SELECT attempts, payload_bytes, signature_data, settled_at FROM outbox_event");
+
+    expect(row).toMatchObject({
+      attempts: 0,
+      payload_bytes: 0,
+      signature_data: null,
+      settled_at: null,
+    });
+  });
+});
+
+describe("the cached run", () => {
+  it("cascades a replaced run down to its stops and orders", async () => {
+    // Re-bootstrapping replaces the run wholesale; without the cascade the old
+    // day's stops would linger and the run list would show yesterday's work.
+    const driver = await fresh();
+    await migrate(driver);
+
+    await driver.run("INSERT INTO run VALUES (?, ?, ?)", [
+      "2026-10-01",
+      "VEH043",
+      "2026-10-01T00:00:00.000Z",
+    ]);
+    await driver.run("INSERT INTO trip VALUES (?, ?, ?, ?)", [
+      "trip-1",
+      "2026-10-01",
+      1,
+      "PREDAWN",
+    ]);
+    await driver.run(
+      `INSERT INTO stop VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        "stop-1",
+        "trip-1",
+        "2026-10-01",
+        1,
+        "OUT074",
+        "Fresh Nugegoda",
+        "PENDING",
+        "04:12",
+        "06:00",
+        "11:00",
+        null,
+      ],
+    );
+    await driver.run("INSERT INTO stop_order VALUES (?, ?, ?, ?)", [
+      "stop-1",
+      "order-1",
+      "ORD-004312",
+      120,
+    ]);
+
+    await driver.run("DELETE FROM run WHERE date = ?", ["2026-10-01"]);
+
+    expect((await driver.first<{ c: number }>("SELECT COUNT(*) AS c FROM trip"))?.c).toBe(0);
+    expect((await driver.first<{ c: number }>("SELECT COUNT(*) AS c FROM stop"))?.c).toBe(0);
+    expect(
+      (await driver.first<{ c: number }>("SELECT COUNT(*) AS c FROM stop_order"))?.c,
+    ).toBe(0);
+  });
+
+  it("keeps a window as an HH:MM string, never a timestamp", async () => {
+    // docs/CONVENTIONS.md: wall-clock time is a string. An outlet opens at 06:00
+    // local regardless of what instant that is.
+    const driver = await fresh();
+    await migrate(driver);
+    const row = await driver.first<{ type: string }>(
+      "SELECT type FROM pragma_table_info('stop') WHERE name = 'window_open'",
+    );
+    expect(row?.type).toBe("TEXT");
+  });
+});
+
+describe("transactions", () => {
+  it("rolls back every write when the body throws", async () => {
+    // The drain settles several rows plus the run cache together; a partial
+    // settle would double-count an event.
+    const driver = await fresh();
+    await migrate(driver);
+
+    await expect(
+      driver.tx(async (tx) => {
+        await tx.run("INSERT INTO meta VALUES ('a', '1')");
+        await tx.run("INSERT INTO meta VALUES ('b', '2')");
+        throw new Error("drain failed mid-settle");
+      }),
+    ).rejects.toThrow(/drain failed/);
+
+    expect((await driver.first<{ c: number }>("SELECT COUNT(*) AS c FROM meta"))?.c).toBe(0);
+  });
+
+  it("commits on success", async () => {
+    const driver = await fresh();
+    await migrate(driver);
+
+    await driver.tx(async (tx) => {
+      await tx.run("INSERT INTO meta VALUES ('device_id', 'device-abc')");
+    });
+
+    const row = await driver.first<{ value: string }>(
+      "SELECT value FROM meta WHERE key = 'device_id'",
+    );
+    expect(row?.value).toBe("device-abc");
+  });
+});

@@ -25,3 +25,38 @@ identical batch and assert `duplicates=3`.
 forbids it, and DESIGN.md restricts connectivity labels to `Checking`,
 `Connected` and `Offline` based on verified reachability against `/v1/health`.
 Never imply background sync or live vehicle position; there is no GPS here.
+
+---
+
+## Verified — 2026-10-01
+
+The acceptance test above is implemented at `src/outbox/drain.acceptance.test.ts`
+and passes. Run it with:
+
+```bash
+pnpm --filter @katapatha/mobile test
+```
+
+It queues three events while the transport is failing, drains them
+(`accepted=3, duplicates=0`), then replays the identical batch and asserts
+`duplicates=3` with no local row changed. Five further cases cover a realistic
+arrive → unload → deliver-with-POD run, the `sync_log` counts, a double-tap being
+a local no-op, concurrent drains being single-flight, and a delivery's events
+never being split across two requests.
+
+It runs under Node with no device and no server: `src/db/driver.ts` is a seam, so
+the test drives the **real DDL and the real SQL** through `node:sqlite` while the
+app uses `expo-sqlite`. The applier is faked in-process because **Prism cannot
+express this test** — the mock returns the static example from `sync.yaml`
+(`accepted: 3, duplicates: 0`) with three hard-coded ULIDs whatever it is sent,
+so a replay against it can never report `duplicates=3`. The request *shape* is
+asserted separately, against a stubbed `fetch`, in `src/outbox/transport.test.ts`.
+
+`src/outbox/claims.ts` therefore has `OFFLINE_DURABILITY_VERIFIED = true`.
+
+**Still outstanding, and the UI copy is written not to depend on it:**
+`apps/api/src/services/delivery.ts` mints its own ULID server-side and guards on
+stop status rather than keying on the client's id, and `routes/sync.ts` is a 501
+stub. Server-side idempotency — what makes a replay safe rather than a
+double-write — is not implemented yet. Re-run these assertions by hand against
+the real endpoint the day BE3 lands it.

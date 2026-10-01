@@ -1,10 +1,15 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["DOM", "ES2022"],
     "jsx": "react-jsx",
     "moduleResolution": "bundler",
+    // DOM is here for the web-shaped globals React Native does provide (fetch,
+    // URL, AbortController, Crypto). node is for node:sqlite, which backs the
+    // outbox tests -- expo-sqlite is a native module and cannot run under Node,
+    // so the tests drive the same SQL through a different binding.
+    "lib": ["DOM", "ES2022"],
+    "types": ["node", "react"],
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["app", "src", "*.ts"]
+  "include": ["src", "*.ts"]
 }

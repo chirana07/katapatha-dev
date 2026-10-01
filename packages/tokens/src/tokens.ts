@@ -22,6 +22,9 @@ export const color = {
   canvas: "#F1F5F9",
   raised: "#F8FAFC",
   surface: "#FFFFFF",
+  // Borders and dividers. tokens.css has carried --c-line since the start; this
+  // mirror had simply drifted, and React Native cannot read the CSS.
+  line: "#E2E8F0",
   link: "#2563EB",
 } as const;
 
