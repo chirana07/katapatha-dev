@@ -202,6 +202,7 @@ export default async function StoreOrdersPage({
                 const state = storeState(order);
                 return (
                   <article key={order.id} className="rounded-[var(--radius-card)] border border-line bg-surface p-4">
+                    <Link href={`/store/orders/${order.id}`} className="block rounded-sm focus-visible:outline-offset-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="font-mono font-semibold">{order.ref}</p>
@@ -227,6 +228,7 @@ export default async function StoreOrdersPage({
                         </dd>
                       </div>
                     </dl>
+                    </Link>
                   </article>
                 );
               })}
@@ -251,7 +253,9 @@ export default async function StoreOrdersPage({
                     const state = storeState(order);
                     return (
                       <tr key={order.id} className="hover:bg-raised">
-                        <td className="px-4 py-3 font-mono font-semibold">{order.ref}</td>
+                        <td className="px-4 py-3 font-mono font-semibold">
+                          <Link href={`/store/orders/${order.id}`} className="text-link underline-offset-4 hover:underline">{order.ref}</Link>
+                        </td>
                         <td className="px-4 py-3"><BrandPill brand={order.brand} /></td>
                         <td className="px-4 py-3 text-muted">{order.tempRequirement === "chilled" ? "Chilled" : "Ambient"}</td>
                         <td className="tabular px-4 py-3 text-right font-semibold">{order.units}</td>
