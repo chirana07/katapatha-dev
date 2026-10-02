@@ -276,17 +276,38 @@ async function main() {
     return user.depotCode;
   });
 
+  // Store Manager owns OUT074. Pick the trip whose load list serves that
+  // outlet so the DRIVER's run ends on an order the STORE can confirm the
+  // receipt of — the smoke's last step depends on that linkage.
+  const STORE_OUTLET_ID = "OUT074";
   let readyableTripId;
-  await step("Loader lists today's trips, picks one to load", async () => {
-    const { status, data } = await request("GET", `/trips?date=${HERO_DATE}`);
-    assertEqual("GET /trips status", 200, status);
-    if (!Array.isArray(data) || data.length === 0) {
-      throw new Error("empty trip list");
-    }
-    const trip = data.find((t) => t.status === "PLANNED" || t.status === "LOADING") ?? data[0];
-    readyableTripId = trip.id;
-    return `${data.length} trips; working ${trip.vehicleId} trip${trip.tripNo} status ${trip.status}`;
-  });
+  let targetStopOrderId;
+  await step(
+    `Loader lists today's trips, picks one that serves ${STORE_OUTLET_ID}`,
+    async () => {
+      const { status, data } = await request("GET", `/trips?date=${HERO_DATE}`);
+      assertEqual("GET /trips status", 200, status);
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error("empty trip list");
+      }
+      // Scan every trip's load list in reverse-order for the OUT074 line.
+      for (const trip of data) {
+        if (trip.status === "DEPARTED" || trip.status === "COMPLETED") continue;
+        const list = await request("GET", `/trips/${trip.id}/load-list`);
+        if (list.status !== 200) continue;
+        const match = list.data.lines.find((line) => line.outletId === STORE_OUTLET_ID);
+        if (match) {
+          readyableTripId = trip.id;
+          targetStopOrderId = match.orderId;
+          return `${data.length} trips; working ${trip.vehicleId} trip${trip.tripNo} (serves ${STORE_OUTLET_ID})`;
+        }
+      }
+      // Fallback: no trip touches OUT074, take the first open trip.
+      const fallback = data.find((t) => t.status === "PLANNED" || t.status === "LOADING") ?? data[0];
+      readyableTripId = fallback.id;
+      return `${data.length} trips; no ${STORE_OUTLET_ID} line today, falling back to ${fallback.vehicleId}`;
+    },
+  );
 
   await step("Loader fetches the trip's load list (reverse delivery order)", async () => {
     const { status, data } = await request("GET", `/trips/${readyableTripId}/load-list`);
@@ -372,17 +393,46 @@ async function main() {
 
   let runStopId;
   let runOrderId;
-  await step("Driver fetches today's run", async () => {
-    const { status, data } = await request("GET", `/drivers/me/run?date=${HERO_DATE}`);
-    assertEqual("run status", 200, status);
-    if (!data.trips?.length) throw new Error("empty run");
-    const stop = data.trips[0].stops[0];
-    runStopId = stop.id;
-    runOrderId = stop.orders[0].orderId;
-    return `${data.trips.length} trip(s), first stop ${stop.outletId}`;
+  await step(
+    `Driver fetches today's run, picks the stop at ${STORE_OUTLET_ID} when present`,
+    async () => {
+      const { status, data } = await request("GET", `/drivers/me/run?date=${HERO_DATE}`);
+      assertEqual("run status", 200, status);
+      if (!data.trips?.length) throw new Error("empty run");
+      // Prefer the stop at STORE_OUTLET_ID so the final receipt step can run.
+      let chosen = null;
+      for (const trip of data.trips) {
+        for (const stop of trip.stops) {
+          if (stop.outletId === STORE_OUTLET_ID) {
+            chosen = stop;
+            break;
+          }
+        }
+        if (chosen) break;
+      }
+      if (!chosen) chosen = data.trips[0].stops[0];
+      runStopId = chosen.id;
+      runOrderId =
+        chosen.orders.find((o) => o.orderId === targetStopOrderId)?.orderId ??
+        chosen.orders[0].orderId;
+      return `${data.trips.length} trip(s), chose stop ${chosen.outletId}`;
+    },
+  );
+
+  let runExpectedUnits = 0;
+  await step("Driver confirms the stop's expected units for the receipt step", async () => {
+    const { data } = await request("GET", `/drivers/me/run?date=${HERO_DATE}`);
+    for (const trip of data.trips) {
+      for (const stop of trip.stops) {
+        if (stop.id !== runStopId) continue;
+        const order = stop.orders.find((o) => o.orderId === runOrderId);
+        if (order) runExpectedUnits = order.expectedUnits;
+      }
+    }
+    if (runExpectedUnits <= 0) throw new Error("could not read expectedUnits from run");
+    return `${runExpectedUnits} units`;
   });
 
-  const deliveredUnits = 60;
   await step("Driver records ARRIVED → UNLOAD_START → DELIVERED+POD in order", async () => {
     const ulid = () => {
       // 26-char Crockford base-32 ULID shape.
@@ -424,7 +474,7 @@ async function main() {
             type: "DELIVERED",
             occurredAt: new Date().toISOString(),
             orderId: runOrderId,
-            deliveredUnits,
+            deliveredUnits: runExpectedUnits,
             recipientName: "Smoke Receiver",
           },
           {
@@ -442,18 +492,14 @@ async function main() {
 
   // ── STORE: confirm receipt ─────────────────────────────────────────────
   await step("Store Manager (whose order was delivered) confirms receipt", async () => {
-    // Find the outlet for runStopId — it may not be fathima's outlet in
-    // the general case, so sign in as whoever owns it. For the hero-day
-    // seed, OUT040 belongs to … skip and just check for an OUT074-owned
-    // delivered order. This step is best-effort: if no delivered order
-    // belongs to fathima today, we note it and continue.
     await signIn("fathima@waypoint.lk");
     const { data: orders } = await request("GET", "/orders");
     const delivered = orders.find(
       (o) => o.status === "DELIVERED" || o.status === "PART_DELIVERED",
     );
     if (!delivered) {
-      return "no delivered order on OUT074 for this seed — walked a different outlet's spine";
+      // Fallback honesty — smoke still exits ok, but names the gap.
+      return "no delivered order on OUT074 for this seed — spine walked a non-OUT074 trip";
     }
     const resp = await request("PUT", `/orders/${delivered.id}/receipt`, {
       body: { unitsReceived: delivered.units, matches: true },

@@ -119,7 +119,7 @@ planItem:
           application/json:
             schema:
               type: object
-              required: [planId, status, stats, trips]
+              required: [planId, status, stats, trips, deferrals]
               properties:
                 planId: { type: string }
                 status: { type: string, enum: [DRAFT, PUBLISHED, SUPERSEDED] }
@@ -127,6 +127,24 @@ planItem:
                 trips:
                   type: array
                   items: { $ref: "../components/schemas/trips.yaml#/Trip" }
+                deferrals:
+                  type: array
+                  description: >
+                    The DEFERRED assignments on this plan, each with the
+                    reason code the dispatcher has attached (null when
+                    still pending). The dispatcher UI confirms every
+                    pending deferral through PUT /plans/{planId}/deferrals
+                    before the publication gate opens.
+                  items:
+                    type: object
+                    required: [assignmentId, orderId, orderRef]
+                    properties:
+                      assignmentId: { type: string, examples: ["clx0asg1a2b3c4d5e6f7g8h"] }
+                      orderId: { type: string, examples: ["clx0ord1a2b3c4d5e6f7g8h9"] }
+                      orderRef: { type: string, examples: ["ORD-004312"] }
+                      reasonCode:
+                        type: [string, "null"]
+                        examples: ["REEFER_FULL"]
             example:
               planId: "clx0pln1a2b3c4d5e6f7g8h"
               status: DRAFT
@@ -143,6 +161,11 @@ planItem:
                   plannedMinutes: 212
                   sumWeightKg: 3210.5
                   sumVolumeM3: 16.8
+              deferrals:
+                - assignmentId: "clx0asg1a2b3c4d5e6f7g8h"
+                  orderId: "clx0ord1a2b3c4d5e6f7g8h9"
+                  orderRef: "ORD-004312"
+                  reasonCode: null
       "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
       "404": { $ref: "../components/responses/common.yaml#/NotFound" }
 

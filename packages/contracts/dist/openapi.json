@@ -832,7 +832,8 @@
                     "planId",
                     "status",
                     "stats",
-                    "trips"
+                    "trips",
+                    "deferrals"
                   ],
                   "properties": {
                     "planId": {
@@ -853,6 +854,47 @@
                       "type": "array",
                       "items": {
                         "$ref": "#/components/schemas/Trip"
+                      }
+                    },
+                    "deferrals": {
+                      "type": "array",
+                      "description": "The DEFERRED assignments on this plan, each with the reason code the dispatcher has attached (null when still pending). The dispatcher UI confirms every pending deferral through PUT /plans/{planId}/deferrals before the publication gate opens.\n",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "assignmentId",
+                          "orderId",
+                          "orderRef"
+                        ],
+                        "properties": {
+                          "assignmentId": {
+                            "type": "string",
+                            "examples": [
+                              "clx0asg1a2b3c4d5e6f7g8h"
+                            ]
+                          },
+                          "orderId": {
+                            "type": "string",
+                            "examples": [
+                              "clx0ord1a2b3c4d5e6f7g8h9"
+                            ]
+                          },
+                          "orderRef": {
+                            "type": "string",
+                            "examples": [
+                              "ORD-004312"
+                            ]
+                          },
+                          "reasonCode": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "examples": [
+                              "REEFER_FULL"
+                            ]
+                          }
+                        }
                       }
                     }
                   }
@@ -880,6 +922,14 @@
                       "plannedMinutes": 212,
                       "sumWeightKg": 3210.5,
                       "sumVolumeM3": 16.8
+                    }
+                  ],
+                  "deferrals": [
+                    {
+                      "assignmentId": "clx0asg1a2b3c4d5e6f7g8h",
+                      "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
+                      "orderRef": "ORD-004312",
+                      "reasonCode": null
                     }
                   ]
                 }
