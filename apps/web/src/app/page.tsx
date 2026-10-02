@@ -40,7 +40,9 @@ const ROLES = [
 ] as const;
 
 export default function Home() {
-  const showAccess = process.env.NODE_ENV !== "production";
+  const showAccess =
+    process.env.ALLOW_DEMO_ACCESS === "1" ||
+    String(process.env.NODE_ENV) !== "production";
 
   return (
     <main className="min-h-screen bg-canvas text-ink">

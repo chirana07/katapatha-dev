@@ -24,12 +24,19 @@ const SAFE_HOMES = new Set(["/store", "/dispatcher", "/loader", "/driver"]);
  * accepts the four seeded demo emails — a request for anything else goes
  * through the real /sign-in page.
  */
+function demoAccessEnabled(): boolean {
+  return (
+    process.env.ALLOW_DEMO_ACCESS === "1" ||
+    String(process.env.NODE_ENV) !== "production"
+  );
+}
+
 export async function signInAs(
   _previous: AccessState,
   formData: FormData,
 ): Promise<AccessState> {
-  if (String(process.env.NODE_ENV) === "production") {
-    return { error: "This endpoint is not available in production." };
+  if (!demoAccessEnabled()) {
+    return { error: "Demo access is not enabled on this deployment." };
   }
 
   const email = String(formData.get("email") ?? "").trim().toLowerCase();

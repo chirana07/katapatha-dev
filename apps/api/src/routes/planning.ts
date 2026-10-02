@@ -243,12 +243,30 @@ export default async function (fastify: FastifyInstance) {
           200: {
             type: "object",
             additionalProperties: false,
-            required: ["planId", "status", "stats", "trips"],
+            required: ["planId", "status", "stats", "trips", "deferrals"],
             properties: {
               planId: { type: "string" },
               status: { type: "string", enum: ["DRAFT", "PUBLISHED", "SUPERSEDED"] },
               stats: PLAN_STATS,
               trips: { type: "array", items: TRIP },
+              deferrals: {
+                // The DEFERRED assignments on this plan, including whether a
+                // reason has been attached — the dispatcher needs this to
+                // confirm each one before the publication gate opens. Added
+                // as an additive field per CONVENTIONS.md rule 8.
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["assignmentId", "orderId", "orderRef"],
+                  properties: {
+                    assignmentId: { type: "string" },
+                    orderId: { type: "string" },
+                    orderRef: { type: "string" },
+                    reasonCode: { oneOf: [{ type: "string" }, { type: "null" }] },
+                  },
+                },
+              },
             },
           },
           404: ERROR_RESPONSE,
@@ -263,6 +281,15 @@ export default async function (fastify: FastifyInstance) {
       if (!plan || plan.planningDay.depotCode !== user.depotCode) {
         return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Plan not found." } });
       }
+
+      const deferrals = plan.assignments
+        .filter((a) => a.decision === "DEFERRED")
+        .map((a) => ({
+          assignmentId: a.id,
+          orderId: a.orderId,
+          orderRef: a.order.ref,
+          reasonCode: a.reasonCode ?? null,
+        }));
 
       return {
         planId: plan.id,
@@ -290,6 +317,7 @@ export default async function (fastify: FastifyInstance) {
           sumWeightKg: trip.sumWeightKg ?? undefined,
           sumVolumeM3: trip.sumVolumeM3 ?? undefined,
         })),
+        deferrals,
       };
     },
   );

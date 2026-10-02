@@ -60,8 +60,19 @@ const ACCOUNTS = [
   },
 ] as const;
 
+function demoAccessEnabled(): boolean {
+  // LEAD scaffolded ALLOW_DEMO_ACCESS=0 in apps/api/.env.example as the
+  // explicit opt-in flag for the review accounts. Honour it here so a
+  // demo deploy can set the flag without flipping NODE_ENV off production.
+  // Also enabled in any non-production build so local dev never needs it.
+  return (
+    process.env.ALLOW_DEMO_ACCESS === "1" ||
+    String(process.env.NODE_ENV) !== "production"
+  );
+}
+
 export default function AccessPage() {
-  if (String(process.env.NODE_ENV) === "production") {
+  if (!demoAccessEnabled()) {
     return notFound();
   }
 
