@@ -3207,6 +3207,16 @@
             "examples": [
               null
             ]
+          },
+          "tripStopId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required on the batched POST /sync/stop-events path (a batch spans several stops and the server needs to route each event to the right one). Ignored and may be null on POST /stops/{stopId}/events, where the URL already carries the stop. Additive field; existing clients that omit it keep working on the per-stop path.\n",
+            "examples": [
+              "clx0stp1a2b3c4d5e6f7g8h"
+            ]
           }
         }
       },

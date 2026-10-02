@@ -43,6 +43,10 @@ type EventBody = {
   signatureData: string | null;
   photoData: string | null;
   reasonCode: string | null;
+  // Additive field. Required on POST /sync/stop-events (a batch spans
+  // several stops and the server routes each event by this id). Ignored on
+  // POST /stops/{stopId}/events where the URL carries the stop.
+  tripStopId: string | null;
 };
 
 /**
@@ -61,6 +65,7 @@ function toBody(row: OutboxRow): EventBody {
     signatureData: row.signature_data,
     photoData: row.photo_data,
     reasonCode: row.reason_code,
+    tripStopId: row.stop_id,
   };
 }
 

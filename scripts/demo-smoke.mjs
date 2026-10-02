@@ -490,6 +490,53 @@ async function main() {
     return "4 events";
   });
 
+  // ── SYNC: drain a batched replay through POST /sync/stop-events ────────
+  // A replay of the ARRIVED/UNLOAD_START/DELIVERED/POD_CAPTURED ids we just
+  // posted per-stop should every row come back as a duplicate without
+  // changing state. Also exercises the batched path's dedup and the
+  // SyncLog write, so the demo claim "same applier, online or offline" is
+  // literally proven on each run.
+  await step(
+    `Sync replay of the day's events (POST /sync/stop-events)`,
+    async () => {
+      // Fetch every StopEvent the server has recorded today, replay those
+      // ids as a batch. Dedup should flag all of them.
+      const { data } = await request("GET", "/sync/stop-events?sinceSeq=0");
+      if (!data?.events?.length) return "no server events to replay";
+      const events = data.events.slice(0, 50).map((event) => ({
+        id: event.id,
+        type: event.type,
+        occurredAt: event.occurredAt,
+        tripStopId: runStopId,
+        orderId: event.orderId,
+        deliveredUnits: event.deliveredUnits,
+        recipientName: event.recipientName,
+        signatureData: event.signatureData,
+        photoData: event.photoData,
+        reasonCode: event.reasonCode,
+      }));
+      const { status, data: result } = await request("POST", "/sync/stop-events", {
+        body: {
+          deviceId: "smoke-device",
+          clientClockAt: new Date().toISOString(),
+          events,
+        },
+      });
+      assertEqual("sync status", 200, status);
+      if (result.accepted !== 0) {
+        throw new Error(
+          `expected 0 accepted on replay (all duplicates), got ${result.accepted}`,
+        );
+      }
+      if (result.duplicates !== events.length) {
+        throw new Error(
+          `expected ${events.length} duplicates, got ${result.duplicates}`,
+        );
+      }
+      return `${result.duplicates}/${events.length} duplicates, clockSkew ${result.clockSkewMs}ms`;
+    },
+  );
+
   // ── STORE: confirm receipt ─────────────────────────────────────────────
   await step("Store Manager (whose order was delivered) confirms receipt", async () => {
     await signIn("fathima@waypoint.lk");

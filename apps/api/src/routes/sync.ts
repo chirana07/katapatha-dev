@@ -1,12 +1,37 @@
 import type { FastifyInstance } from "fastify";
+import type { ProblemKind } from "@prisma/client";
 import {
   DEFERRAL_REASONS,
   PROBLEM_REASONS,
   SHORTFALL_REASONS,
 } from "@katapatha/core/domain/reasons";
 import { prisma } from "../lib/db.js";
+import { requireDriverStop } from "../lib/authorization.js";
 import { accessNoteFor } from "../services/store.js";
-import { loadRun } from "../services/delivery.js";
+import {
+  arriveAtStop,
+  completeStop,
+  loadRun,
+  reportProblem,
+  startUnloading,
+} from "../services/delivery.js";
+
+function toProblemKind(code: string | null | undefined): ProblemKind {
+  switch (code) {
+    case "OUTLET_CLOSED":
+      return "OUTLET_CLOSED";
+    case "ROAD_BLOCKED":
+      return "ROAD_BLOCKED";
+    case "VEHICLE_BREAKDOWN":
+      return "VEHICLE_BREAKDOWN";
+    case "ACCESS_DENIED":
+      return "ACCESS_DENIED";
+    case "DELIVERY_REFUSED":
+      return "DELIVERY_REFUSED";
+    default:
+      return "OTHER";
+  }
+}
 
 /**
  * Owner: BE3
@@ -34,14 +59,6 @@ import { loadRun } from "../services/delivery.js";
  * column; this gives millisecond ordering which is more than enough for the
  * cross-device catchup use case the pull endpoint serves.
  */
-
-const NOT_IMPLEMENTED_POST = {
-  error: {
-    code: "NOT_IMPLEMENTED",
-    message:
-      "Batched POST /sync/stop-events needs a contract change (per-event stopId). The mobile outbox already falls back to POST /stops/:stopId/events, which carries the same applier.",
-  },
-} as const;
 
 const ERROR_RESPONSE = {
   type: "object",
@@ -158,10 +175,304 @@ function latestServerSeq(): Promise<number> {
     .then((row) => (row ? row.recordedAt.getTime() : 0));
 }
 
+const BATCH_RESULT = {
+  type: "object",
+  additionalProperties: false,
+  required: ["accepted", "duplicates", "conflicts", "clockSkewMs", "serverSeq", "results"],
+  properties: {
+    accepted: { type: "integer" },
+    duplicates: { type: "integer" },
+    conflicts: { type: "integer" },
+    clockSkewMs: { type: "integer" },
+    serverSeq: { type: "integer" },
+    results: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "status"],
+        properties: {
+          id: { type: "string" },
+          status: { type: "string", enum: ["accepted", "duplicate", "conflict"] },
+          conflictState: {
+            oneOf: [
+              { type: "string", enum: ["NONE", "STALE_ASSIGNMENT", "SUPERSEDED"] },
+              { type: "null" },
+            ],
+          },
+        },
+      },
+    },
+  },
+} as const;
+
+type IncomingSyncEvent = {
+  id: string;
+  type:
+    | "ARRIVED"
+    | "UNLOAD_START"
+    | "DELIVERED"
+    | "PART_DELIVERED"
+    | "FAILED"
+    | "SKIPPED"
+    | "POD_CAPTURED";
+  occurredAt: string;
+  tripStopId?: string | null;
+  orderId?: string | null;
+  deliveredUnits?: number | null;
+  recipientName?: string | null;
+  signatureData?: string | null;
+  photoData?: string | null;
+  reasonCode?: string | null;
+};
+
 export default async function (fastify: FastifyInstance) {
   fastify.post(
     "/sync/stop-events",
-    async (_request, reply) => reply.status(501).send(NOT_IMPLEMENTED_POST),
+    {
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["deviceId", "clientClockAt", "events"],
+          properties: {
+            deviceId: { type: "string", minLength: 1 },
+            clientClockAt: { type: "string", format: "date-time" },
+            events: {
+              type: "array",
+              minItems: 1,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "type", "occurredAt"],
+                properties: {
+                  id: { type: "string", pattern: "^[0-9A-HJKMNP-TV-Z]{26}$" },
+                  type: {
+                    type: "string",
+                    enum: [
+                      "ARRIVED",
+                      "UNLOAD_START",
+                      "DELIVERED",
+                      "PART_DELIVERED",
+                      "FAILED",
+                      "SKIPPED",
+                      "POD_CAPTURED",
+                    ],
+                  },
+                  occurredAt: { type: "string", format: "date-time" },
+                  tripStopId: { oneOf: [{ type: "string" }, { type: "null" }] },
+                  orderId: { oneOf: [{ type: "string" }, { type: "null" }] },
+                  deliveredUnits: { oneOf: [{ type: "integer", minimum: 0 }, { type: "null" }] },
+                  recipientName: { oneOf: [{ type: "string" }, { type: "null" }] },
+                  signatureData: { oneOf: [{ type: "string" }, { type: "null" }] },
+                  photoData: { oneOf: [{ type: "string" }, { type: "null" }] },
+                  reasonCode: { oneOf: [{ type: "string" }, { type: "null" }] },
+                },
+              },
+            },
+          },
+        },
+        response: {
+          200: BATCH_RESULT,
+          403: ERROR_RESPONSE,
+          409: ERROR_RESPONSE,
+          422: ERROR_RESPONSE,
+        },
+      },
+    },
+    async (request, reply) => {
+      const user = request.requireRole("DRIVER", "DISPATCHER");
+      const body = request.body as {
+        deviceId: string;
+        clientClockAt: string;
+        events: IncomingSyncEvent[];
+      };
+
+      // Every event in the batch must know its stop — the batch spans several
+      // of them and the server dispatches by this id. The mobile outbox has
+      // stop_id on every row already; a missing field is a client bug.
+      const missingStop = body.events.find((event) => !event.tripStopId);
+      if (missingStop) {
+        return reply.status(422).send({
+          error: {
+            code: "MISSING_TRIP_STOP_ID",
+            message:
+              "Every event in a /sync batch must carry tripStopId. Use POST /stops/:stopId/events when the stopId lives in the URL instead.",
+          },
+        });
+      }
+
+      // Scope-check each distinct stop. The driver can only drain events for
+      // stops on their claimed vehicle's run — a batch that touches someone
+      // else's stop fails fast with no partial writes.
+      const stopIds = Array.from(new Set(body.events.map((event) => event.tripStopId!)));
+      for (const stopId of stopIds) {
+        try {
+          await requireDriverStop(user, stopId);
+        } catch {
+          return reply.status(403).send({
+            error: {
+              code: "STOP_NOT_ON_RUN",
+              message: `Stop ${stopId} is not on this driver's run.`,
+            },
+          });
+        }
+      }
+
+      // Dedup by StopEvent.id in one query — a replay from a flaky phone sees
+      // every id again and the server reports duplicate without re-applying.
+      const incomingIds = body.events.map((event) => event.id);
+      const existing = await prisma.stopEvent.findMany({
+        where: { id: { in: incomingIds } },
+        select: { id: true },
+      });
+      const duplicateIds = new Set(existing.map((row) => row.id));
+
+      // Pre-load expected units per stop for the completion grouping.
+      const stopOrders = await prisma.tripStopOrder.findMany({
+        where: { tripStopId: { in: stopIds } },
+        select: { tripStopId: true, order: { select: { id: true, units: true } } },
+      });
+      const expectedByStopAndOrder = new Map<string, Map<string, number>>();
+      for (const row of stopOrders) {
+        const inner = expectedByStopAndOrder.get(row.tripStopId) ?? new Map<string, number>();
+        inner.set(row.order.id, row.order.units);
+        expectedByStopAndOrder.set(row.tripStopId, inner);
+      }
+
+      type ResultRow = {
+        id: string;
+        status: "accepted" | "duplicate" | "conflict";
+        conflictState: "NONE" | null;
+      };
+      const results: ResultRow[] = [];
+      let accepted = 0;
+      let duplicates = 0;
+
+      type CompletionPlan = {
+        recipient: string | null;
+        signature?: string;
+        photo?: string;
+        lines: Array<{ eventId: string; orderId: string; units: number; expected: number }>;
+      };
+      const completionsByStop = new Map<string, CompletionPlan>();
+
+      for (const event of body.events) {
+        if (duplicateIds.has(event.id)) {
+          duplicates += 1;
+          results.push({ id: event.id, status: "duplicate", conflictState: "NONE" });
+          continue;
+        }
+
+        const stopId = event.tripStopId!;
+        try {
+          if (event.type === "ARRIVED") {
+            await arriveAtStop(stopId, user);
+          } else if (event.type === "UNLOAD_START") {
+            await startUnloading(stopId, user);
+          } else if (event.type === "DELIVERED" || event.type === "PART_DELIVERED") {
+            if (!event.orderId || event.deliveredUnits == null) {
+              return reply.status(422).send({
+                error: {
+                  code: "DELIVERED_INCOMPLETE",
+                  message: "DELIVERED/PART_DELIVERED events need orderId and deliveredUnits.",
+                },
+              });
+            }
+            const expected = expectedByStopAndOrder.get(stopId)?.get(event.orderId);
+            if (expected == null) {
+              return reply.status(422).send({
+                error: {
+                  code: "ORDER_NOT_ON_STOP",
+                  message: `Order ${event.orderId} is not on stop ${stopId}.`,
+                },
+              });
+            }
+            const plan = completionsByStop.get(stopId) ?? { recipient: null, lines: [] };
+            plan.lines.push({
+              eventId: event.id,
+              orderId: event.orderId,
+              units: event.deliveredUnits,
+              expected,
+            });
+            if (event.recipientName) plan.recipient = event.recipientName;
+            completionsByStop.set(stopId, plan);
+          } else if (event.type === "POD_CAPTURED") {
+            const plan = completionsByStop.get(stopId) ?? { recipient: null, lines: [] };
+            if (event.recipientName) plan.recipient = event.recipientName;
+            if (event.signatureData) plan.signature = event.signatureData;
+            if (event.photoData) plan.photo = event.photoData;
+            completionsByStop.set(stopId, plan);
+          } else if (event.type === "FAILED" || event.type === "SKIPPED") {
+            await reportProblem(user, {
+              kind: toProblemKind(event.reasonCode),
+              note: event.reasonCode ?? (event.type === "SKIPPED" ? "Stop skipped." : "Problem reported."),
+              tripStopId: stopId,
+            });
+          }
+
+          accepted += 1;
+          results.push({ id: event.id, status: "accepted", conflictState: "NONE" });
+        } catch (error) {
+          return reply.status(409).send({
+            error: {
+              code: "APPLY_FAILED",
+              message: error instanceof Error ? error.message : "Could not apply event.",
+            },
+          });
+        }
+      }
+
+      for (const [stopId, plan] of completionsByStop) {
+        if (plan.lines.length === 0) continue;
+        if (!plan.recipient) {
+          return reply.status(422).send({
+            error: {
+              code: "RECIPIENT_REQUIRED",
+              message: `Stop ${stopId}'s delivery completion needs the recipient's name on a POD event.`,
+            },
+          });
+        }
+        await completeStop(stopId, user, {
+          recipientName: plan.recipient,
+          delivered: plan.lines.map((line) => ({
+            orderId: line.orderId,
+            units: line.units,
+            expected: line.expected,
+          })),
+          signatureData: plan.signature,
+          photoData: plan.photo,
+        });
+      }
+
+      const now = new Date();
+      const clientClock = new Date(body.clientClockAt);
+      const clockSkewMs = Number.isFinite(clientClock.getTime())
+        ? now.getTime() - clientClock.getTime()
+        : 0;
+      const serverSeq = await latestServerSeq();
+
+      await prisma.syncLog.create({
+        data: {
+          deviceId: body.deviceId,
+          userId: user.id,
+          batchSize: body.events.length,
+          accepted,
+          duplicates,
+          conflicts: 0,
+          clockSkewMs,
+        },
+      });
+
+      return reply.status(200).send({
+        accepted,
+        duplicates,
+        conflicts: 0,
+        clockSkewMs,
+        serverSeq,
+        results,
+      });
+    },
   );
 
   fastify.get(
