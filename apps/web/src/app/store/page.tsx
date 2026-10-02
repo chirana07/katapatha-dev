@@ -168,8 +168,8 @@ export default async function StoreOrdersPage({
   const attention = orders.filter((order) => needsAttention(storeState(order))).length;
 
   return (
-    <main className="mx-auto w-full max-w-7xl p-4 sm:p-6">
-      <header className="flex flex-wrap items-end justify-between gap-4">
+    <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
+      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">My orders</h1>
           <p className="mt-1 text-muted">Status and expected outcome for this outlet.</p>
