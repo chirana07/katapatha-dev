@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { HOME_FOR_ROLE } from "@katapatha/core/domain/authPaths";
 import { api } from "@/lib/api";
 import { confirmDeferrals, publishPlan } from "./actions";
+import { DeferralRow } from "./deferral-row";
 
 export const dynamic = "force-dynamic";
 
@@ -142,42 +143,20 @@ export default async function PlanPage({
           {plan.data.status === "DRAFT" ? (
             <form action={confirmDeferrals} className="mt-4">
               <input type="hidden" name="planId" value={plan.data.planId} />
-              <ul className="flex flex-col gap-3">
+              <ul className="flex flex-col gap-4">
                 {deferrals.map((row) => (
-                  <li key={row.assignmentId} className="rounded-[var(--radius-control)] border border-line p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="font-semibold text-ink">{row.orderRef}</p>
-                        <p className="font-mono text-xs text-muted">{row.orderId}</p>
-                      </div>
-                      <label className="flex min-w-[260px] flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-muted">
-                        Reason
-                        <select
-                          name={`reasonCode:${row.assignmentId}`}
-                          defaultValue={row.reasonCode ?? ""}
-                          required
-                          className="min-h-11 rounded-[var(--radius-control)] border border-line bg-surface px-3 text-base font-normal normal-case tracking-normal text-ink"
-                        >
-                          <option value="" disabled>
-                            Choose a reason
-                          </option>
-                          {deferralReasons.map((code) => (
-                            <option key={code} value={code}>
-                              {reasonLabel(code)}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-                  </li>
+                  <DeferralRow key={row.assignmentId} deferral={row} allReasons={deferralReasons} />
                 ))}
               </ul>
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5">
                 <p className="text-xs text-muted">
                   Reasons come from the server vocabulary at <code className="rounded bg-raised px-1">/reference/vocabularies</code>. A deferral with no reason blocks publication.
                 </p>
-                <button type="submit" className="min-h-11 rounded-[var(--radius-control)] bg-action px-4 font-semibold text-ink hover:brightness-95">
-                  Save deferral reasons
+                <button type="submit" className="min-h-11 inline-flex items-center gap-2 rounded-[var(--radius-control)] bg-action px-4 font-semibold text-ink hover:brightness-95">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
+                    <circle cx="12" cy="12" r="9" /><path d="M8 12l3 3 5-6" />
+                  </svg>
+                  Defer and notify stores
                 </button>
               </div>
             </form>
