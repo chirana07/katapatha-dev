@@ -136,6 +136,7 @@ describe("the sync request", () => {
       "reasonCode",
       "recipientName",
       "signatureData",
+      "tripStopId",
       "type",
     ]);
     // Absent values must be null, not undefined: undefined serialises to an

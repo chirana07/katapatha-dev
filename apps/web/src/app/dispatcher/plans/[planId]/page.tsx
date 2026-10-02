@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { HOME_FOR_ROLE } from "@katapatha/core/domain/authPaths";
 import { api } from "@/lib/api";
-import { publishPlan } from "./actions";
+import { confirmDeferrals, publishPlan } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +13,24 @@ const ERRORS: Record<string, string> = {
   already_published: "This draft has already been published or replaced. The current state is shown below.",
   validation_blocked: "Publication is blocked. Resolve every error below and validate the plan again.",
   publish_outcome_unknown: "The publish result could not be confirmed. The latest plan state is shown below. Retrying will not publish the plan twice.",
+  deferrals_empty: "Pick a reason for every deferral before saving.",
+  deferrals_rejected: "The server rejected one or more deferral reasons. Reload and try again.",
 };
+
+const DEFERRAL_FALLBACK = [
+  "REEFER_FULL",
+  "NO_VAN",
+  "WINDOW_UNREACHABLE",
+  "TIME_BUDGET",
+  "FUEL_QUOTA",
+  "VEHICLE_IN_WORKSHOP",
+  "ORDER_TOO_LARGE",
+  "AFTER_CUTOFF",
+] as const;
+
+function reasonLabel(code: string) {
+  return code.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 function validUuid(value: string | undefined) {
   return Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
@@ -50,10 +67,12 @@ export default async function PlanPage({
 
   let plan;
   let validation;
+  let vocab;
   try {
-    [plan, validation] = await Promise.all([
+    [plan, validation, vocab] = await Promise.all([
       client.GET("/plans/{planId}", { params: { path: { planId } } }),
       client.GET("/plans/{planId}/validation", { params: { path: { planId }, query: { stage: "publish" } } }),
+      client.GET("/reference/vocabularies", {}),
     ]);
   } catch {
     return <ReadFailure />;
@@ -66,6 +85,11 @@ export default async function PlanPage({
   const check = validation.error || !validation.data ? null : validation.data;
   const requestId = validUuid(query.retry) ? query.retry! : crypto.randomUUID();
   const canPublish = plan.data.status === "DRAFT" && Boolean(check && !check.blocking);
+
+  const deferrals = Array.isArray(plan.data.deferrals) ? plan.data.deferrals : [];
+  const pendingDeferralCount = deferrals.filter((d) => !d.reasonCode).length;
+  const deferralReasons: string[] =
+    (vocab.data?.deferralReasons as string[] | undefined) ?? [...DEFERRAL_FALLBACK];
 
   return (
     <main className="mx-auto w-full max-w-7xl p-4 sm:p-6 lg:p-8">
@@ -80,6 +104,7 @@ export default async function PlanPage({
       </header>
 
       {query.notice === "published" ? <Banner title="Plan published" detail="The final trips are now available to dock and driver teams." tone="success" /> : null}
+      {query.notice === "deferrals_saved" ? <Banner title="Deferral reasons saved" detail={pendingDeferralCount === 0 ? "Every deferral now carries a reason. The publication gate is open." : `${pendingDeferralCount} deferral${pendingDeferralCount === 1 ? "" : "s"} still need a reason.`} tone="success" /> : null}
       {query.error ? <Banner title="Plan needs attention" detail={ERRORS[query.error] ?? "The request could not be completed. Reload and try again."} tone="error" /> : null}
 
       <section aria-label="Plan summary" className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -88,6 +113,79 @@ export default async function PlanPage({
         <Metric label="Deferred" value={plan.data.stats.deferred} detail="Require an operational reason" />
         <Metric label="Trips" value={plan.data.stats.tripsBuilt} detail="Built for dispatch" />
       </section>
+
+      {deferrals.length > 0 ? (
+        <section aria-labelledby="deferrals-heading" className="mt-6 rounded-[var(--radius-card)] border border-line bg-surface p-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-line pb-3">
+            <div>
+              <h2 id="deferrals-heading" className="text-lg font-semibold">Deferral decisions</h2>
+              <p className="mt-1 text-sm text-muted">
+                {pendingDeferralCount === 0
+                  ? "Every deferral carries a reason. Publication can proceed when validation is clear."
+                  : `${pendingDeferralCount} of ${deferrals.length} deferral${deferrals.length === 1 ? "" : "s"} still need a reason before the plan can be published.`}
+              </p>
+            </div>
+            <span className={`inline-flex items-center gap-2 rounded-md px-3 py-1 text-sm font-semibold ${pendingDeferralCount === 0 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
+              <span aria-hidden className="size-2 rounded-full bg-current" />
+              {pendingDeferralCount === 0 ? "all confirmed" : "pending"}
+            </span>
+          </div>
+          {plan.data.status === "DRAFT" ? (
+            <form action={confirmDeferrals} className="mt-4">
+              <input type="hidden" name="planId" value={plan.data.planId} />
+              <ul className="flex flex-col gap-3">
+                {deferrals.map((row) => (
+                  <li key={row.assignmentId} className="rounded-[var(--radius-control)] border border-line p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-ink">{row.orderRef}</p>
+                        <p className="font-mono text-xs text-muted">{row.orderId}</p>
+                      </div>
+                      <label className="flex min-w-[260px] flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-muted">
+                        Reason
+                        <select
+                          name={`reasonCode:${row.assignmentId}`}
+                          defaultValue={row.reasonCode ?? ""}
+                          required
+                          className="min-h-11 rounded-[var(--radius-control)] border border-line bg-surface px-3 text-base font-normal normal-case tracking-normal text-ink"
+                        >
+                          <option value="" disabled>
+                            Choose a reason
+                          </option>
+                          {deferralReasons.map((code) => (
+                            <option key={code} value={code}>
+                              {reasonLabel(code)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+                <p className="text-xs text-muted">
+                  Reasons come from the server vocabulary at <code className="rounded bg-raised px-1">/reference/vocabularies</code>. A deferral with no reason blocks publication.
+                </p>
+                <button type="submit" className="min-h-11 rounded-[var(--radius-control)] bg-action px-4 font-semibold text-ink hover:brightness-95">
+                  Save deferral reasons
+                </button>
+              </div>
+            </form>
+          ) : (
+            <ul className="mt-4 flex flex-col gap-2">
+              {deferrals.map((row) => (
+                <li key={row.assignmentId} className="flex items-center justify-between rounded-[var(--radius-control)] border border-line p-3 text-sm">
+                  <span className="font-semibold text-ink">{row.orderRef}</span>
+                  <span className="text-muted">
+                    {row.reasonCode ? reasonLabel(row.reasonCode) : "no reason recorded"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
 
       <section className="mt-6 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div>

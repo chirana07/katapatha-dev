@@ -993,6 +993,11 @@ export interface components {
             photoData?: string | null;
             /** @example null */
             reasonCode?: string | null;
+            /**
+             * @description Required on the batched POST /sync/stop-events path (a batch spans several stops and the server needs to route each event to the right one). Ignored and may be null on POST /stops/{stopId}/events, where the URL already carries the stop. Additive field; existing clients that omit it keep working on the per-stop path.
+             * @example clx0stp1a2b3c4d5e6f7g8h
+             */
+            tripStopId?: string | null;
         };
         SubmitEventsRequest: {
             /** @example device-7f3a91 */
@@ -1819,6 +1824,14 @@ export interface operations {
                      *           "sumWeightKg": 3210.5,
                      *           "sumVolumeM3": 16.8
                      *         }
+                     *       ],
+                     *       "deferrals": [
+                     *         {
+                     *           "assignmentId": "clx0asg1a2b3c4d5e6f7g8h",
+                     *           "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
+                     *           "orderRef": "ORD-004312",
+                     *           "reasonCode": null
+                     *         }
                      *       ]
                      *     }
                      */
@@ -1828,6 +1841,17 @@ export interface operations {
                         status: "DRAFT" | "PUBLISHED" | "SUPERSEDED";
                         stats: components["schemas"]["PlanStats"];
                         trips: components["schemas"]["Trip"][];
+                        /** @description The DEFERRED assignments on this plan, each with the reason code the dispatcher has attached (null when still pending). The dispatcher UI confirms every pending deferral through PUT /plans/{planId}/deferrals before the publication gate opens. */
+                        deferrals: {
+                            /** @example clx0asg1a2b3c4d5e6f7g8h */
+                            assignmentId: string;
+                            /** @example clx0ord1a2b3c4d5e6f7g8h9 */
+                            orderId: string;
+                            /** @example ORD-004312 */
+                            orderRef: string;
+                            /** @example REEFER_FULL */
+                            reasonCode?: string | null;
+                        }[];
                     };
                 };
             };

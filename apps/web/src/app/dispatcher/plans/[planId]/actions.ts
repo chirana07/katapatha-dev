@@ -18,6 +18,60 @@ function planPath(planId: string) {
   return `/dispatcher/plans/${encodeURIComponent(planId)}`;
 }
 
+export async function confirmDeferrals(formData: FormData) {
+  const planId = field(formData, "planId");
+  const home = planPath(planId);
+  if (!planId || planId.length > 128) redirect("/dispatcher?error=invalid_request");
+
+  // Collect reasonCode:<assignmentId> entries from the form. The page emits
+  // one hidden input per deferral so we know the full set we're confirming,
+  // even if the dispatcher left some selects unchanged.
+  const decisions: Array<{ assignmentId: string; reasonCode: string }> = [];
+  for (const [name, value] of formData.entries()) {
+    if (!name.startsWith("reasonCode:")) continue;
+    const assignmentId = name.slice("reasonCode:".length);
+    if (!assignmentId) continue;
+    const reasonCode = typeof value === "string" ? value.trim() : "";
+    if (!reasonCode) continue;
+    decisions.push({ assignmentId, reasonCode });
+  }
+  if (decisions.length === 0) {
+    redirect(`${home}?error=deferrals_empty`);
+  }
+
+  let client;
+  let me;
+  try {
+    client = await api();
+    me = await client.GET("/auth/me");
+  } catch {
+    redirect(`${home}?error=unreachable`);
+  }
+  if (me.response.status === 401) redirect(`/sign-in?next=${encodeURIComponent(home)}`);
+  if (me.error || !me.data) redirect(`${home}?error=session`);
+  if (me.data.role !== "DISPATCHER") redirect(HOME_FOR_ROLE[me.data.role]);
+
+  let result;
+  try {
+    result = await client.PUT("/plans/{planId}/deferrals", {
+      params: { path: { planId } },
+      body: { decisions },
+    });
+  } catch {
+    redirect(`${home}?error=unreachable`);
+  }
+  if (result.error || !result.data) {
+    if (result.response.status === 401) redirect(`/sign-in?next=${encodeURIComponent(home)}`);
+    if (result.response.status === 403) redirect("/dispatcher?error=forbidden");
+    if (result.response.status === 422) redirect(`${home}?error=deferrals_rejected`);
+    redirect(`${home}?error=unreachable`);
+  }
+
+  revalidatePath("/dispatcher");
+  revalidatePath(home);
+  redirect(`${home}?notice=deferrals_saved`);
+}
+
 export async function publishPlan(formData: FormData) {
   const planId = field(formData, "planId");
   const requestId = field(formData, "requestId");

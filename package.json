@@ -18,7 +18,9 @@
     "db:up": "docker compose up -d db",
     "db:migrate": "pnpm --filter @katapatha/api db:migrate",
     "db:seed": "pnpm --filter @katapatha/api db:seed",
-    "db:studio": "pnpm --filter @katapatha/api db:studio"
+    "db:studio": "pnpm --filter @katapatha/api db:studio",
+    "demo:reset": "node scripts/demo-reset.mjs",
+    "demo:smoke": "node scripts/demo-smoke.mjs"
   },
   "devDependencies": {
     "turbo": "2.5.8",
