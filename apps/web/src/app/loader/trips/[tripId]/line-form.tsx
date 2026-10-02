@@ -89,23 +89,42 @@ export function LineForm({
       <input type="hidden" name="orderId" value={line.orderId} />
       <input type="hidden" name="clientRequestId" value={clientRequestId} />
 
-      <div className="flex flex-col gap-1 md:w-32">
+      <div className="flex flex-col gap-1 md:w-44">
         <label htmlFor={unitsId} className="text-xs font-semibold uppercase tracking-wide text-muted">
           Loaded units
         </label>
-        <input
-          id={unitsId}
-          name="loadedUnits"
-          type="number"
-          inputMode="numeric"
-          min={0}
-          step={1}
-          required
-          value={loadedUnits}
-          onChange={(event) => setLoadedUnits(event.target.value)}
-          className="tabular min-h-11 rounded-[var(--radius-control)] border border-line bg-surface px-3 text-ink"
-          aria-describedby={`${unitsId}-hint`}
-        />
+        <div className="flex items-stretch overflow-hidden rounded-[var(--radius-control)] border border-line bg-surface">
+          <button
+            type="button"
+            onClick={() => setLoadedUnits((v) => String(Math.max(0, (parseInt(v, 10) || 0) - 1)))}
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center border-r border-line text-lg text-ink hover:bg-raised disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={(parseInt(loadedUnits, 10) || 0) <= 0}
+            aria-label="Decrement loaded units"
+          >
+            −
+          </button>
+          <input
+            id={unitsId}
+            name="loadedUnits"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            step={1}
+            required
+            value={loadedUnits}
+            onChange={(event) => setLoadedUnits(event.target.value)}
+            className="tabular h-11 min-w-0 flex-1 bg-transparent px-2 text-center text-ink focus:outline-none"
+            aria-describedby={`${unitsId}-hint`}
+          />
+          <button
+            type="button"
+            onClick={() => setLoadedUnits((v) => String((parseInt(v, 10) || 0) + 1))}
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center border-l border-line text-lg text-ink hover:bg-raised"
+            aria-label="Increment loaded units"
+          >
+            +
+          </button>
+        </div>
         <p id={`${unitsId}-hint`} className="text-xs text-muted">
           Expected {line.expectedUnits}
         </p>
