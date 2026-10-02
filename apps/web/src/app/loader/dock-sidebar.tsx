@@ -89,8 +89,9 @@ export async function DockSidebar() {
           </div>
         </div>
         <Link
-          href="/sign-in?signOut=1"
+          href="/sign-out"
           aria-label="Sign out"
+          prefetch={false}
           className="inline-flex h-8 w-8 items-center justify-center rounded-md text-white/70 hover:bg-white/10 hover:text-white"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
