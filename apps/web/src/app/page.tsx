@@ -205,7 +205,7 @@ export default function Home() {
         <div className="grid gap-12 lg:grid-cols-[1fr_1fr]">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--c-ruby)]">
-              Designed for Sri Lanka's delivery reality
+              Designed for Sri Lanka&apos;s delivery reality
             </p>
             <h2 className="mt-3 text-4xl font-semibold leading-tight tracking-tight text-ink">
               The whole route,
@@ -315,7 +315,7 @@ export default function Home() {
               <br />the handoff stays.
             </h3>
             <p className="mt-4 max-w-md text-sm text-muted">
-              Lamp Mode preserves the driver's local record, shows dispatch the last
+              Lamp Mode preserves the driver&apos;s local record, shows dispatch the last
               reliable update, and gives the store an honest arrival range.
             </p>
             <Link
