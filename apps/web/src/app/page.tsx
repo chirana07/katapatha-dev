@@ -123,14 +123,24 @@ export default function Home() {
         </div>
       </header>
 
-      <section
-        className="relative overflow-hidden bg-[color:var(--c-navy)] text-white"
-        style={{
-          backgroundImage:
-            "radial-gradient(ellipse at 85% 15%, rgba(246,183,35,0.18), transparent 55%), radial-gradient(ellipse at 20% 90%, rgba(246,183,35,0.08), transparent 55%)",
-        }}
-      >
-        <div className="mx-auto grid w-full max-w-6xl gap-12 px-5 py-16 sm:px-8 lg:grid-cols-[1.1fr_1fr] lg:py-24">
+      <section className="relative overflow-hidden bg-[color:var(--c-navy)] text-white">
+        <Image
+          src="/landing-hero.png"
+          alt=""
+          fill
+          priority
+          sizes="100vw"
+          className="object-cover object-right opacity-55"
+        />
+        <div
+          aria-hidden="true"
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(100deg, rgba(32,54,78,0.95) 0%, rgba(32,54,78,0.78) 42%, rgba(32,54,78,0.35) 100%)",
+          }}
+        />
+        <div className="relative mx-auto grid w-full max-w-6xl gap-12 px-5 py-16 sm:px-8 lg:grid-cols-[1.1fr_1fr] lg:py-24">
           <div>
             <p className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-white/80">
               <span className="h-1.5 w-1.5 rounded-full bg-action" />
@@ -220,20 +230,19 @@ export default function Home() {
               Driver, and Store Manager, united as one shared digital truth.
             </p>
           </div>
-          <div className="grid grid-cols-4 grid-rows-2 gap-2" aria-hidden="true">
-            {[
-              "var(--c-flame)",
-              "var(--c-ruby)",
-              "var(--c-navy)",
-              "var(--c-brand-fresh)",
-              "var(--c-ochre)",
-              "var(--c-crimson)",
-              "var(--c-brand-fresh)",
-              "var(--c-ink)",
-            ].map((bg, i) => (
-              <div key={i} className="aspect-square rounded-md" style={{ background: bg }} />
-            ))}
-          </div>
+          <figure className="flex flex-col gap-3">
+            <Image
+              src="/landing-mosaic.png"
+              alt="A visual language for a system that moves through cities, highlands, depots, and storefronts."
+              width={786}
+              height={442}
+              className="h-auto w-full rounded-[var(--radius-card)]"
+            />
+            <figcaption className="text-xs text-muted">
+              A visual language for a system that moves through cities, highlands,
+              depots, and storefronts.
+            </figcaption>
+          </figure>
         </div>
       </section>
 
