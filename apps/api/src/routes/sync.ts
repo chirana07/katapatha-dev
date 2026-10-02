@@ -353,6 +353,10 @@ export default async function (fastify: FastifyInstance) {
         recipient: string | null;
         signature?: string;
         photo?: string;
+        /** The client's ULID for the stop-level POD_CAPTURED event. */
+        podEventId?: string;
+        /** The POD event's device clock, which stands for the whole completion. */
+        occurredAt?: Date;
         lines: Array<{ eventId: string; orderId: string; units: number; expected: number }>;
       };
       const completionsByStop = new Map<string, CompletionPlan>();
@@ -365,11 +369,24 @@ export default async function (fastify: FastifyInstance) {
         }
 
         const stopId = event.tripStopId!;
+        // The client's identity and timing for this fact, exactly as the per-stop
+        // route passes them. Without this the services mint their own ULID, so
+        // the dedup query above would look for ids that are never stored and
+        // `duplicates` would be structurally 0 on this path -- and occurredAt
+        // would be the drain time rather than the moment the driver was at the
+        // outlet. This endpoint is the one the outbox tries FIRST, so the
+        // guarantee has to hold here, not only on the fallback.
+        const meta = {
+          id: event.id,
+          occurredAt: new Date(event.occurredAt),
+          deviceId: body.deviceId,
+        };
+
         try {
           if (event.type === "ARRIVED") {
-            await arriveAtStop(stopId, user);
+            await arriveAtStop(stopId, user, meta);
           } else if (event.type === "UNLOAD_START") {
-            await startUnloading(stopId, user);
+            await startUnloading(stopId, user, meta);
           } else if (event.type === "DELIVERED" || event.type === "PART_DELIVERED") {
             if (!event.orderId || event.deliveredUnits == null) {
               return reply.status(422).send({
@@ -402,13 +419,22 @@ export default async function (fastify: FastifyInstance) {
             if (event.recipientName) plan.recipient = event.recipientName;
             if (event.signatureData) plan.signature = event.signatureData;
             if (event.photoData) plan.photo = event.photoData;
+            plan.podEventId = event.id;
+            plan.occurredAt = meta.occurredAt;
             completionsByStop.set(stopId, plan);
           } else if (event.type === "FAILED" || event.type === "SKIPPED") {
-            await reportProblem(user, {
-              kind: toProblemKind(event.reasonCode),
-              note: event.reasonCode ?? (event.type === "SKIPPED" ? "Stop skipped." : "Problem reported."),
-              tripStopId: stopId,
-            });
+            // outcome, so a skip is recorded as SKIPPED rather than flattened to
+            // FAILED -- DOMAIN.md keeps them as distinct stop statuses.
+            await reportProblem(
+              user,
+              {
+                kind: toProblemKind(event.reasonCode),
+                note: event.reasonCode ?? (event.type === "SKIPPED" ? "Stop skipped." : "Problem reported."),
+                tripStopId: stopId,
+                outcome: event.type,
+              },
+              meta,
+            );
           }
 
           accepted += 1;
@@ -433,23 +459,43 @@ export default async function (fastify: FastifyInstance) {
             },
           });
         }
-        await completeStop(stopId, user, {
-          recipientName: plan.recipient,
-          delivered: plan.lines.map((line) => ({
-            orderId: line.orderId,
-            units: line.units,
-            expected: line.expected,
-          })),
-          signatureData: plan.signature,
-          photoData: plan.photo,
-        });
+        await completeStop(
+          stopId,
+          user,
+          {
+            recipientName: plan.recipient,
+            delivered: plan.lines.map((line) => ({
+              orderId: line.orderId,
+              units: line.units,
+              expected: line.expected,
+              // Was collected into plan.lines and then dropped here, which is
+              // what made a replayed delivery look new.
+              eventId: line.eventId,
+            })),
+            signatureData: plan.signature,
+            photoData: plan.photo,
+            podEventId: plan.podEventId,
+          },
+          { occurredAt: plan.occurredAt, deviceId: body.deviceId },
+        );
       }
 
       const now = new Date();
       const clientClock = new Date(body.clientClockAt);
-      const clockSkewMs = Number.isFinite(clientClock.getTime())
+      // Clamped to the INT4 range, because SyncLog.clockSkewMs is a Prisma `Int`
+      // and an unclamped value makes the whole drain 500. That is not a
+      // hypothetical: ~24.9 days of skew overflows a 32-bit integer, and a
+      // handset whose clock reset to the epoch after a flat battery reports
+      // decades. The outbox treats 5xx as retryable, so such a phone would retry
+      // forever and never drain a single event -- the one device state this
+      // endpoint exists to tolerate.
+      //
+      // Clamping loses nothing that matters: anything at the cap is already far
+      // past the threshold at which the app warns the driver their clock is wrong.
+      const rawSkewMs = Number.isFinite(clientClock.getTime())
         ? now.getTime() - clientClock.getTime()
         : 0;
+      const clockSkewMs = Math.max(-2_147_483_648, Math.min(2_147_483_647, rawSkewMs));
       const serverSeq = await latestServerSeq();
 
       await prisma.syncLog.create({
