@@ -32,12 +32,41 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 
+function KpiIcon({ kind }: { kind: "truck" | "clock" | "check" | "alert" }) {
+  const common = "h-5 w-5";
+  if (kind === "truck")
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={common} aria-hidden>
+        <path d="M3 7h11v9H3z" /><path d="M14 10h4l2 3v3h-6" /><circle cx="7" cy="18.5" r="1.5" /><circle cx="17" cy="18.5" r="1.5" />
+      </svg>
+    );
+  if (kind === "clock")
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={common} aria-hidden>
+        <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
+      </svg>
+    );
+  if (kind === "check")
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={common} aria-hidden>
+        <circle cx="12" cy="12" r="9" /><path d="M8 12l3 3 5-6" />
+      </svg>
+    );
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={common} aria-hidden>
+      <circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16v.01" />
+    </svg>
+  );
+}
+
 function SummaryCard({
+  icon,
   label,
   value,
   detail,
   tone = "neutral",
 }: {
+  icon: "truck" | "clock" | "check" | "alert";
   label: string;
   value: number;
   detail: string;
@@ -49,12 +78,25 @@ function SummaryCard({
     warn: "text-amber-800",
     bad: "text-critical",
   }[tone];
+  const iconBg = {
+    neutral: "bg-blue-50 text-link",
+    good: "bg-emerald-50 text-emerald-700",
+    warn: "bg-amber-50 text-amber-800",
+    bad: "bg-red-50 text-[color:var(--c-ruby)]",
+  }[tone];
 
   return (
     <article className="rounded-[var(--radius-card)] border border-line bg-surface p-4">
-      <p className="text-sm text-muted">{label}</p>
-      <p className={`tabular mt-1 text-3xl font-semibold ${toneClass}`}>{value}</p>
-      <p className="mt-2 text-sm text-muted">{detail}</p>
+      <div className="flex items-start gap-3">
+        <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md ${iconBg}`}>
+          <KpiIcon kind={icon} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className={`tabular text-2xl font-semibold ${toneClass}`}>{value}</p>
+          <p className="text-sm text-muted">{label}</p>
+        </div>
+      </div>
+      <p className="mt-3 text-xs text-muted">{detail}</p>
     </article>
   );
 }
@@ -154,27 +196,32 @@ export default async function StoreOrdersPage({
       ) : null}
 
       <section aria-label="Order summary" className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <SummaryCard label="Total orders" value={orders.length} detail="Visible to this outlet" />
-        <SummaryCard label="In progress" value={awaiting} detail="Queued through delivery" tone="warn" />
-        <SummaryCard label="Delivered" value={delivered} detail="Completed orders" tone="good" />
-        <SummaryCard label="Needs attention" value={attention} detail="Deferred, failed, or cancelled" tone="bad" />
+        <SummaryCard icon="truck" label="Open orders" value={awaiting} detail={awaiting === 0 ? "Nothing on the way" : "Queued through delivery"} />
+        <SummaryCard icon="clock" label="Awaiting confirmation" value={orders.filter((o) => storeState(o) === "queued").length} detail="Not yet accepted by dispatch" tone="warn" />
+        <SummaryCard icon="check" label="Delivered" value={delivered} detail="Completed orders" tone="good" />
+        <SummaryCard icon="alert" label="Needs attention" value={attention} detail="Deferred, failed, or cancelled" tone="bad" />
       </section>
 
-      <nav aria-label="Filter orders" className="mt-6 flex gap-2 overflow-x-auto pb-2">
+      <nav aria-label="Filter orders" className="mt-6 flex gap-6 overflow-x-auto border-b border-line">
         {FILTERS.map((filter) => {
           const active = filter.value === selected;
+          const count =
+            filter.value === "all"
+              ? orders.length
+              : orders.filter((order) => storeState(order) === filter.value).length;
           return (
             <Link
               key={filter.value}
               href={filter.value === "all" ? "/store" : `/store?status=${filter.value}`}
               aria-current={active ? "page" : undefined}
-              className={`min-h-11 shrink-0 rounded-[var(--radius-control)] border px-4 py-2.5 text-sm font-semibold ${
-                active
-                  ? "border-action bg-action text-ink"
-                  : "border-line bg-surface text-muted hover:text-ink"
+              className={`-mb-px inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-1 pb-3 text-sm font-semibold transition-colors ${
+                active ? "border-action text-ink" : "border-transparent text-muted hover:text-ink"
               }`}
             >
               {filter.label}
+              <span className={`tabular rounded-full px-2 text-xs ${active ? "bg-action/20 text-ink" : "bg-raised text-muted"}`}>
+                {count}
+              </span>
             </Link>
           );
         })}
