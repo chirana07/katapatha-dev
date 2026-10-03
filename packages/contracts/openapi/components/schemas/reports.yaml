@@ -1,0 +1,441 @@
+# Owner: BE3
+#
+# The dispatcher's reports, for their own depot. A dispatcher is depot-scoped,
+# so there is no "all depots" shape here; `utilisationByDepot` holds one entry.
+#
+# Every figure comes from one of two sources, merged by day (see
+# `coverage` and `historySource`): days run in this system (live), and days
+# from the analytics history. A metric the data cannot honestly support is
+# null, with a `note` saying why — never a plausible-looking number.
+#
+# "On time" means the vehicle ARRIVED no later than the outlet's delivery
+# window closed (the mall access window where an outlet has one). It is not a
+# comparison with the planned arrival, which is reported separately as the
+# average arrival delta.
+
+HistorySource:
+  type: object
+  description: >
+    Where the analytics history behind the historical days came from. `synthetic`
+    means generated for the development fixture and not competition data; a
+    client must show that, not hide it.
+  required: [kind, label]
+  properties:
+    kind: { type: string, enum: [synthetic, competition, unknown] }
+    label: { type: string, examples: ["History is SYNTHETIC, generated for the development fixture. It is not the competition data."] }
+
+Coverage:
+  type: object
+  description: How many days of the range each source supplied.
+  required: [liveDays, historyDays, emptyDays]
+  properties:
+    liveDays: { type: integer, description: "Days with orders recorded in this system.", examples: [1] }
+    historyDays: { type: integer, description: "Days taken from the analytics history.", examples: [6] }
+    emptyDays: { type: integer, description: "Days with no data from either source (typically Sundays).", examples: [0] }
+
+DaySource:
+  type: string
+  enum: [live, history, none]
+
+ExceptionCount:
+  type: object
+  required: [kind, label, count]
+  properties:
+    kind:
+      type: string
+      description: >
+        SHORT_DELIVERY, LATE_DELIVERY, DAMAGED_ITEMS, TEMPERATURE, WRONG_ITEMS, or a
+        driver problem kind (OUTLET_CLOSED, ACCESS_DENIED, ROAD_BLOCKED,
+        VEHICLE_BREAKDOWN, DELIVERY_REFUSED, OTHER).
+      examples: ["SHORT_DELIVERY"]
+    label: { type: string, examples: ["Short delivery"] }
+    count: { type: integer, examples: [9] }
+
+OutletPerformance:
+  type: object
+  description: >
+    One outlet's performance. `orders` and `discrepancies` exist only for days
+    run in this system and are null for an outlet seen only in the historical
+    legs, which record visits rather than orders.
+  required: [outletId, displayName, districtName, brand, stops, orders, onTimePct, late, discrepancies, avgArrivalDeltaMin]
+  properties:
+    outletId: { type: string, examples: ["OUT074"] }
+    displayName: { oneOf: [{ type: string }, { type: "null" }] }
+    districtName: { oneOf: [{ type: string }, { type: "null" }], examples: ["Puttalam"] }
+    brand: { oneOf: [{ $ref: "./common.yaml#/Brand" }, { type: "null" }] }
+    stops: { type: integer, description: "Visits with a recorded arrival.", examples: [14] }
+    orders: { oneOf: [{ type: integer }, { type: "null" }] }
+    onTimePct: { oneOf: [{ type: number }, { type: "null" }], description: "Share of stops that arrived before the window closed, one decimal.", examples: [93.0] }
+    late: { type: integer, examples: [1] }
+    discrepancies: { oneOf: [{ type: integer }, { type: "null" }] }
+    avgArrivalDeltaMin:
+      description: Mean of actual minus planned arrival, in minutes. Negative is earlier than planned. Null when no stop carried a plan.
+      oneOf: [{ type: integer }, { type: "null" }]
+      examples: [-14]
+
+ReportHeader:
+  type: object
+  required: [depotCode, from, to, historySource, coverage]
+  properties:
+    depotCode: { type: string, examples: ["Peliyagoda"] }
+    from: { $ref: "./common.yaml#/DateOnly" }
+    to: { $ref: "./common.yaml#/DateOnly" }
+    historySource: { $ref: "#/HistorySource" }
+    coverage: { $ref: "#/Coverage" }
+
+DemandCounts:
+  type: object
+  required: [planned, delivered, deferred, undelivered]
+  properties:
+    planned: { type: integer, description: "Orders requested for the days, deferred and never-run included.", examples: [840] }
+    delivered: { type: integer, examples: [812] }
+    deferred: { type: integer, examples: [28] }
+    undelivered: { type: integer, description: "Planned but neither delivered nor deferred: still open, failed, or (historical days) never run.", examples: [0] }
+
+ReportsOverview:
+  type: object
+  required: [depotCode, from, to, historySource, coverage, onTime, orders, utilisation, discrepancies, onTimeSeries, utilisationByDepot, topOutlets, totalOutlets, topExceptions]
+  properties:
+    depotCode: { type: string }
+    from: { $ref: "./common.yaml#/DateOnly" }
+    to: { $ref: "./common.yaml#/DateOnly" }
+    historySource: { $ref: "#/HistorySource" }
+    coverage: { $ref: "#/Coverage" }
+    onTime:
+      type: object
+      required: [pct, onTime, total, targetPct, vsPreviousPts, note]
+      properties:
+        pct: { oneOf: [{ type: number }, { type: "null" }], description: "Null when no stop had a recorded arrival." }
+        onTime: { type: integer }
+        total: { type: integer }
+        targetPct: { type: number, examples: [95] }
+        vsPreviousPts: { oneOf: [{ type: number }, { type: "null" }], description: "Percentage points against the previous range of the same length." }
+        note: { oneOf: [{ type: string }, { type: "null" }] }
+    orders:
+      allOf:
+        - $ref: "#/DemandCounts"
+        - type: object
+          required: [note]
+          properties:
+            note: { oneOf: [{ type: string }, { type: "null" }] }
+    utilisation:
+      type: object
+      required: [pct, targetPct, vehicles, trips, note]
+      properties:
+        pct: { oneOf: [{ type: integer }, { type: "null" }], description: "Mean trip load against vehicle volume capacity. Null unless a trip was published in this system in the range." }
+        targetPct: { type: number, examples: [80] }
+        vehicles: { type: integer }
+        trips: { type: integer }
+        note: { oneOf: [{ type: string }, { type: "null" }] }
+    discrepancies:
+      type: object
+      required: [count, pctOfOrders, vsPrevious, note]
+      properties:
+        count: { oneOf: [{ type: integer }, { type: "null" }], description: "Distinct orders with short, damaged, warm, wrong or refused goods. Null when no day in the range was run in this system." }
+        pctOfOrders: { oneOf: [{ type: number }, { type: "null" }] }
+        vsPrevious: { oneOf: [{ type: integer }, { type: "null" }] }
+        note: { oneOf: [{ type: string }, { type: "null" }] }
+    onTimeSeries:
+      type: array
+      items:
+        type: object
+        required: [date, source, onTimePct, onTime, total]
+        properties:
+          date: { $ref: "./common.yaml#/DateOnly" }
+          source: { $ref: "#/DaySource" }
+          onTimePct: { oneOf: [{ type: number }, { type: "null" }] }
+          onTime: { type: integer }
+          total: { type: integer }
+    utilisationByDepot:
+      description: One entry, the caller's own depot.
+      type: array
+      items:
+        type: object
+        required: [depotCode, vehicles, utilisationPct, targetPct]
+        properties:
+          depotCode: { type: string }
+          vehicles: { type: integer }
+          utilisationPct: { oneOf: [{ type: integer }, { type: "null" }] }
+          targetPct: { type: number }
+    topOutlets:
+      description: The six busiest outlets by stops.
+      type: array
+      items: { $ref: "#/OutletPerformance" }
+    totalOutlets: { type: integer, examples: [93] }
+    topExceptions:
+      type: object
+      required: [total, items]
+      properties:
+        total: { type: integer }
+        items: { type: array, items: { $ref: "#/ExceptionCount" } }
+
+ReportsDeliveries:
+  type: object
+  required: [depotCode, from, to, historySource, coverage, totals, days, byBrand, notes]
+  properties:
+    depotCode: { type: string }
+    from: { $ref: "./common.yaml#/DateOnly" }
+    to: { $ref: "./common.yaml#/DateOnly" }
+    historySource: { $ref: "#/HistorySource" }
+    coverage: { $ref: "#/Coverage" }
+    totals:
+      allOf:
+        - $ref: "#/DemandCounts"
+        - type: object
+          required: [stops, onTimePct, avgArrivalDeltaMin]
+          properties:
+            stops: { type: integer }
+            onTimePct: { oneOf: [{ type: number }, { type: "null" }] }
+            avgArrivalDeltaMin: { oneOf: [{ type: integer }, { type: "null" }] }
+    days:
+      type: array
+      items:
+        allOf:
+          - $ref: "#/DemandCounts"
+          - type: object
+            required: [date, source, stops, onTime, onTimePct]
+            properties:
+              date: { $ref: "./common.yaml#/DateOnly" }
+              source: { $ref: "#/DaySource" }
+              stops: { type: integer }
+              onTime: { type: integer }
+              onTimePct: { oneOf: [{ type: number }, { type: "null" }] }
+    byBrand:
+      type: array
+      items:
+        allOf:
+          - $ref: "#/DemandCounts"
+          - type: object
+            required: [brand, stops, onTimePct, avgArrivalDeltaMin]
+            properties:
+              brand: { $ref: "./common.yaml#/Brand" }
+              stops: { type: integer }
+              onTimePct: { oneOf: [{ type: number }, { type: "null" }] }
+              avgArrivalDeltaMin: { oneOf: [{ type: integer }, { type: "null" }] }
+    notes: { type: array, items: { type: string } }
+
+ReportsFleet:
+  type: object
+  required: [depotCode, from, to, historySource, coverage, utilisation, vehicles, byTemp, notes]
+  properties:
+    depotCode: { type: string }
+    from: { $ref: "./common.yaml#/DateOnly" }
+    to: { $ref: "./common.yaml#/DateOnly" }
+    historySource: { $ref: "#/HistorySource" }
+    coverage: { $ref: "#/Coverage" }
+    utilisation:
+      type: object
+      required: [pct, targetPct, note]
+      properties:
+        pct: { oneOf: [{ type: integer }, { type: "null" }] }
+        targetPct: { type: number, examples: [80] }
+        note: { oneOf: [{ type: string }, { type: "null" }] }
+    vehicles:
+      type: array
+      items:
+        type: object
+        required: [vehicleId, type, temp, volumeCapM3, trips, stops, onTimePct, avgLoadPct, workshopDays]
+        properties:
+          vehicleId: { type: string, examples: ["VEH101"] }
+          type: { type: string, enum: [truck, van] }
+          temp: { $ref: "./common.yaml#/VehicleTemp" }
+          volumeCapM3: { type: number }
+          trips: { type: integer, description: "Trips run in this system plus historical routes." }
+          stops: { type: integer }
+          onTimePct: { oneOf: [{ type: number }, { type: "null" }] }
+          avgLoadPct: { oneOf: [{ type: integer }, { type: "null" }], description: "Null without a trip published in this system." }
+          workshopDays: { type: integer, description: "Days in the range the vehicle was marked in the workshop." }
+    byTemp:
+      type: array
+      items:
+        type: object
+        required: [temp, vehicles, trips, avgLoadPct]
+        properties:
+          temp: { $ref: "./common.yaml#/VehicleTemp" }
+          vehicles: { type: integer }
+          trips: { type: integer }
+          avgLoadPct: { oneOf: [{ type: integer }, { type: "null" }] }
+    notes: { type: array, items: { type: string } }
+
+OutletSort:
+  type: string
+  enum: [stops, onTime, discrepancies]
+  description: "stops: busiest first. onTime: worst on-time share first. discrepancies: most first."
+
+ReportsOutlets:
+  type: object
+  required: [depotCode, from, to, historySource, coverage, sort, outlets, notes]
+  properties:
+    depotCode: { type: string }
+    from: { $ref: "./common.yaml#/DateOnly" }
+    to: { $ref: "./common.yaml#/DateOnly" }
+    historySource: { $ref: "#/HistorySource" }
+    coverage: { $ref: "#/Coverage" }
+    sort: { $ref: "#/OutletSort" }
+    outlets: { type: array, items: { $ref: "#/OutletPerformance" } }
+    notes: { type: array, items: { type: string } }
+
+ReportsExceptions:
+  type: object
+  required: [depotCode, from, to, historySource, coverage, total, byKind, byDay, recent, notes]
+  properties:
+    depotCode: { type: string }
+    from: { $ref: "./common.yaml#/DateOnly" }
+    to: { $ref: "./common.yaml#/DateOnly" }
+    historySource: { $ref: "#/HistorySource" }
+    coverage: { $ref: "#/Coverage" }
+    total: { type: integer }
+    byKind: { type: array, items: { $ref: "#/ExceptionCount" } }
+    byDay:
+      type: array
+      items:
+        type: object
+        required: [date, count]
+        properties:
+          date: { $ref: "./common.yaml#/DateOnly" }
+          count: { type: integer }
+    recent:
+      description: The 50 most recent, newest first.
+      type: array
+      items:
+        type: object
+        required: [kind, label, date, source, at, orderRef, outletId, note]
+        properties:
+          kind: { type: string }
+          label: { type: string }
+          date: { $ref: "./common.yaml#/DateOnly" }
+          source: { type: string, enum: [live, history] }
+          at: { oneOf: [{ type: string, format: date-time }, { type: "null" }] }
+          orderRef: { oneOf: [{ type: string }, { type: "null" }] }
+          outletId: { oneOf: [{ type: string }, { type: "null" }] }
+          note: { oneOf: [{ type: string }, { type: "null" }] }
+    notes: { type: array, items: { type: string } }
+
+WeekRef:
+  type: object
+  required: [isoYear, isoWeek, startDate, endDate]
+  properties:
+    isoYear: { type: integer, examples: [2026] }
+    isoWeek: { type: integer, examples: [16] }
+    startDate: { $ref: "./common.yaml#/DateOnly" }
+    endDate: { $ref: "./common.yaml#/DateOnly", description: "The week's last operating weekday (Saturday)." }
+
+CapacityLevel:
+  type: string
+  description: Trips needed against trips available, using the shared capacity thresholds. `near` is 90% or more.
+  enum: [ok, near, over]
+
+CapacityWeek:
+  allOf:
+    - $ref: "#/WeekRef"
+    - type: object
+      required: [kind, signals, operatingDays, totalM3, chilledM3, ambientM3, reeferTripsPerDay, reefersInWorkshop, chilledCapacityM3, fleetCapacityM3, level, action, actions]
+      properties:
+        kind:
+          type: string
+          enum: [actual, forecast]
+          description: A week with history shows what happened; otherwise the stored forecast.
+        signals:
+          type: array
+          description: Calendar causes, e.g. "Vesak ramp", "Payday", "Monsoon".
+          items: { type: string }
+        operatingDays: { type: integer, examples: [6] }
+        totalM3: { type: number, examples: [306.9] }
+        chilledM3: { type: number, examples: [105.5] }
+        ambientM3: { type: number }
+        reeferTripsPerDay:
+          type: object
+          required: [needed, capacity, shortfall]
+          properties:
+            needed: { type: integer, description: "Chilled m3 per operating day over the planned load per trip, rounded up.", examples: [5] }
+            capacity: { type: integer, description: "Available reefers x 2 trips a day.", examples: [4] }
+            shortfall: { type: integer, examples: [1] }
+        reefersInWorkshop: { type: integer, description: "Reefers marked in the workshop on any day of the week; counted out for the whole week." }
+        chilledCapacityM3: { type: number, description: "Chilled volume the available reefers can carry in the week at the planned load per trip." }
+        fleetCapacityM3: { type: number, description: "Whole-fleet capacity in the week at observed loading, not nameplate." }
+        level: { $ref: "#/CapacityLevel" }
+        action:
+          type: string
+          description: A short label. "Covered", "Covered, no slack", "+1 hired reefer", "Recall 1 from workshop, +1 hired reefer".
+          examples: ["+1 hired reefer"]
+        actions:
+          type: array
+          description: The persisted capacity actions for this week, so a row can link to its decisions.
+          items:
+            type: object
+            required: [id, kind, status]
+            properties:
+              id: { type: string }
+              kind: { $ref: "./capacityActions.yaml#/CapacityActionKind" }
+              status: { $ref: "./capacityActions.yaml#/CapacityActionStatus" }
+
+CapacityForecast:
+  type: object
+  description: >
+    The depot's capacity forecast. Forecast volumes were produced by a stored,
+    documented method (`forecastMethod`); only `forecastError` is computed at
+    read time. When `historySource.kind` is `synthetic`, every volume here is
+    generated for the development fixture and must be shown as such.
+  required: [depotCode, brand, from, to, forecastMethod, forecastGeneratedAt, historySource, weeks, reeferCount, fleetCapacityM3, reeferCapacityM3, loadPerReeferTripM3, peakWeek, chilledPeak, reeferShortfallWeeks, forecastError, forecastErrorPct, recommendedActions, assumptions]
+  properties:
+    depotCode: { type: string }
+    brand: { oneOf: [{ $ref: "./common.yaml#/Brand" }, { type: "null" }], description: "The brand filter applied, if any." }
+    from: { oneOf: [{ $ref: "./common.yaml#/DateOnly" }, { type: "null" }] }
+    to: { oneOf: [{ $ref: "./common.yaml#/DateOnly" }, { type: "null" }] }
+    forecastMethod:
+      oneOf: [{ type: string }, { type: "null" }]
+      description: The method string stored on the forecast rows. Starts with SYNTHETIC when generated for the fixture.
+    forecastGeneratedAt: { oneOf: [{ type: string, format: date-time }, { type: "null" }] }
+    historySource: { $ref: "#/HistorySource" }
+    weeks: { type: array, items: { $ref: "#/CapacityWeek" } }
+    reeferCount: { type: integer, examples: [9] }
+    fleetCapacityM3: { type: number, description: "Whole-fleet capacity for a six-day week at observed loading." }
+    reeferCapacityM3: { type: number, description: "Reefer capacity for a six-day week at the planned load per trip." }
+    loadPerReeferTripM3: { type: number, description: "Mean reefer volume capacity x the observed fill, in m3.", examples: [5.8] }
+    peakWeek:
+      oneOf:
+        - allOf:
+            - $ref: "#/WeekRef"
+            - type: object
+              required: [totalM3, signals, vsRecentPct]
+              properties:
+                totalM3: { type: number }
+                signals: { type: array, items: { type: string } }
+                vsRecentPct: { oneOf: [{ type: integer }, { type: "null" }], description: "Against the mean of the last four known weeks." }
+        - type: "null"
+    chilledPeak:
+      oneOf:
+        - allOf:
+            - $ref: "#/WeekRef"
+            - type: object
+              required: [chilledM3, vsRecentPct]
+              properties:
+                chilledM3: { type: number }
+                vsRecentPct: { oneOf: [{ type: integer }, { type: "null" }] }
+        - type: "null"
+    reeferShortfallWeeks:
+      type: object
+      description: Of the forecast weeks in range, how many need more reefer trips a day than the reefers can run.
+      required: [count, of, maxTripsPerDayShort]
+      properties:
+        count: { type: integer, examples: [3] }
+        of: { type: integer, examples: [6] }
+        maxTripsPerDayShort: { type: integer, examples: [5] }
+    forecastError:
+      type: object
+      required: [mapePct, chilledMapePct, weeksTested, leadWeeks, note]
+      properties:
+        mapePct: { oneOf: [{ type: number }, { type: "null" }], description: "Mean absolute percentage error of the same method on the last known weeks." }
+        chilledMapePct: { oneOf: [{ type: number }, { type: "null" }] }
+        weeksTested: { type: integer }
+        leadWeeks: { type: integer, description: "How far ahead the backtest forecast, matching the real gap to the first forecast week." }
+        note: { type: string }
+    forecastErrorPct: { oneOf: [{ type: number }, { type: "null" }], description: "Same as forecastError.mapePct, for the headline tile." }
+    recommendedActions:
+      description: Up to eight persisted proposals for the forecast weeks that still apply, largest relief first. Rejected and stale ones are left out.
+      type: array
+      items: { $ref: "./capacityActions.yaml#/CapacityAction" }
+    assumptions:
+      description: Each assumption the numbers rest on, in words.
+      type: array
+      items: { type: string }

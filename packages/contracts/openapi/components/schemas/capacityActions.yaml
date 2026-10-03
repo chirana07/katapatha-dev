@@ -1,0 +1,99 @@
+# Owner: BE3
+#
+# A capacity action is what the forecast says to do about a reefer shortfall,
+# and the dispatcher's decision on it. Proposals are derived from the forecast
+# and persisted the first time a week is read, so each has an id a decision can
+# name; reading again never creates a second.
+#
+# State machine: PROPOSED -> APPROVED -> APPLIED, or REJECTED from PROPOSED or
+# APPROVED. APPLY does only what the system can truly do (clear a reefer's
+# workshop days; raise a week's fuel quota). Hiring, moving a delivery day and
+# asking stores to order early are recorded, and `consequences` says plainly
+# that nothing else changed.
+
+CapacityActionKind:
+  type: string
+  enum: [RECALL_FROM_WORKSHOP, HIRE_RELIEF_VEHICLE, SHIFT_BRAND_DAY, RAISE_FUEL_QUOTA, PRE_BUILD_ORDERS, SPLIT_LARGE_ORDER]
+
+CapacityActionStatus:
+  type: string
+  enum: [PROPOSED, APPROVED, APPLIED, REJECTED]
+
+CapacityDecision:
+  type: string
+  enum: [APPROVE, REJECT, APPLY]
+
+CapacityAction:
+  type: object
+  required: [id, isoYear, isoWeek, depotCode, brand, kind, title, detail, params, expectedRelief, status, stale, availableDecisions, decidedBy, decidedAt, reasonCode, note, appliesFromDate, createdAt]
+  properties:
+    id: { type: string, examples: ["clx0cap1a2b3c4d5e6f7g8h9"] }
+    isoYear: { type: integer, examples: [2026] }
+    isoWeek: { type: integer, examples: [16] }
+    depotCode: { type: string, examples: ["Peliyagoda"] }
+    brand: { oneOf: [{ $ref: "./common.yaml#/Brand" }, { type: "null" }] }
+    kind: { $ref: "#/CapacityActionKind" }
+    title: { type: string, examples: ["Hire 1 reefer for 13–18 Apr"] }
+    detail: { type: string, examples: ["Peliyagoda · covers 1 of the 1 short trip a day in W16"] }
+    params:
+      type: object
+      additionalProperties: true
+      description: >
+        Kind-specific. HIRE_RELIEF_VEHICLE: count, vehicleTemp, fromDate, toDate,
+        shortfallTripsPerDay. RECALL_FROM_WORKSHOP: vehicleIds, dates, count.
+        PRE_BUILD_ORDERS / SHIFT_BRAND_DAY: brand and the assumed share moved
+        (and fromDay/toDay). RAISE_FUEL_QUOTA: vehicles[{vehicleId, quotaL, usedL, proposedQuotaL}].
+    expectedRelief:
+      type: object
+      additionalProperties: true
+      description: >
+        tripsPerDay (or litres for fuel), a `basis` sentence, and `estimate`:
+        true when the figure rests on an assumption rather than arithmetic.
+    status: { $ref: "#/CapacityActionStatus" }
+    stale:
+      type: boolean
+      description: True for an open proposal the forecast no longer calls for (the week is covered now). Decided actions are never stale.
+    availableDecisions:
+      type: array
+      items: { $ref: "#/CapacityDecision" }
+    decidedBy: { oneOf: [{ type: string }, { type: "null" }], description: "Name of the dispatcher who last decided." }
+    decidedAt: { oneOf: [{ type: string, format: date-time }, { type: "null" }] }
+    reasonCode: { oneOf: [{ type: string }, { type: "null" }] }
+    note: { oneOf: [{ type: string }, { type: "null" }] }
+    appliesFromDate: { oneOf: [{ $ref: "./common.yaml#/DateOnly" }, { type: "null" }] }
+    createdAt: { type: string, format: date-time }
+
+CapacityActionList:
+  type: object
+  required: [depotCode, isoYear, isoWeek, items]
+  properties:
+    depotCode: { type: string }
+    isoYear: { oneOf: [{ type: integer }, { type: "null" }], description: "Echo of the filter; null when listing the whole stored forecast horizon." }
+    isoWeek: { oneOf: [{ type: integer }, { type: "null" }] }
+    items: { type: array, items: { $ref: "#/CapacityAction" } }
+
+CapacityDecisionRequest:
+  type: object
+  additionalProperties: false
+  required: [decision]
+  properties:
+    decision: { $ref: "#/CapacityDecision" }
+    reasonCode:
+      type: string
+      description: A short UPPER_SNAKE code, recorded in the decision log. Optional.
+      pattern: '^[A-Z][A-Z0-9_]*$'
+      maxLength: 40
+      examples: ["COVERED_ELSEWHERE"]
+    note: { type: string, maxLength: 500 }
+
+CapacityDecisionResult:
+  type: object
+  required: [action, consequences]
+  properties:
+    action: { $ref: "#/CapacityAction" }
+    consequences:
+      type: array
+      description: >
+        What the decision did, in plain words, including what it did NOT do.
+        Show these to the dispatcher.
+      items: { type: string }

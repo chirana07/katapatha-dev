@@ -1,0 +1,300 @@
+# Owner: BE3
+collection:
+  get:
+    operationId: listCapacityActions
+    summary: Capacity actions for a week, or the whole forecast horizon
+    description: >
+      Dispatcher only, own depot. Proposals are derived from the forecast for weeks
+      with a reefer shortfall (hire, recall from workshop, ask Fresh stores to order
+      early, move the delivery day, raise a fuel quota that binds) and persisted
+      the first time a week is read. Reading again returns the same rows: it never
+      creates a duplicate, and an open proposal is refreshed in place if the
+      week's numbers move. A decided action is never altered.
+
+      Give both `isoYear` and `isoWeek`, or neither (the stored forecast horizon).
+    tags: [capacity]
+    parameters:
+      - name: isoYear
+        in: query
+        required: false
+        schema: { type: string, pattern: '^20\d{2}$', examples: ["2026"] }
+      - name: isoWeek
+        in: query
+        required: false
+        schema: { type: string, pattern: '^([1-9]|[1-4]\d|5[0-3])$', examples: ["16"] }
+    responses:
+      "200":
+        description: The week's actions, oldest week first.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/capacityActions.yaml#/CapacityActionList" }
+            example:
+              {
+                "depotCode": "Peliyagoda",
+                "isoYear": 2026,
+                "isoWeek": 16,
+                "items": [
+                  {
+                    "id": "cmuslkzkk0000ufehamunrppq",
+                    "isoYear": 2026,
+                    "isoWeek": 16,
+                    "depotCode": "Peliyagoda",
+                    "brand": null,
+                    "kind": "RECALL_FROM_WORKSHOP",
+                    "title": "Recall VEH103 from the workshop for 13–18 Apr",
+                    "detail": "Peliyagoda · frees 2 trips a day in W16",
+                    "params": {
+                      "count": 1,
+                      "dates": [
+                        "2026-04-15",
+                        "2026-04-16"
+                      ],
+                      "vehicleIds": [
+                        "VEH103"
+                      ]
+                    },
+                    "expectedRelief": {
+                      "basis": "1 reefer back in service, two trips a day each",
+                      "estimate": false,
+                      "tripsPerDay": 2
+                    },
+                    "status": "PROPOSED",
+                    "stale": false,
+                    "availableDecisions": [
+                      "APPROVE",
+                      "REJECT"
+                    ],
+                    "decidedBy": null,
+                    "decidedAt": null,
+                    "reasonCode": null,
+                    "note": null,
+                    "appliesFromDate": "2026-04-13",
+                    "createdAt": "2026-10-03T16:19:44.277Z"
+                  },
+                  {
+                    "id": "cmuslkzkk0001ufeh07xkwwou",
+                    "isoYear": 2026,
+                    "isoWeek": 16,
+                    "depotCode": "Peliyagoda",
+                    "brand": null,
+                    "kind": "HIRE_RELIEF_VEHICLE",
+                    "title": "Hire 1 reefer for 13–18 Apr",
+                    "detail": "Peliyagoda · covers 2 of the 3 short trips a day in W16",
+                    "params": {
+                      "count": 1,
+                      "toDate": "2026-04-18",
+                      "fromDate": "2026-04-13",
+                      "vehicleTemp": "reefer",
+                      "shortfallTripsPerDay": 3
+                    },
+                    "expectedRelief": {
+                      "basis": "1 hired reefer, two trips a day each",
+                      "estimate": false,
+                      "tripsPerDay": 2
+                    },
+                    "status": "PROPOSED",
+                    "stale": false,
+                    "availableDecisions": [
+                      "APPROVE",
+                      "REJECT"
+                    ],
+                    "decidedBy": null,
+                    "decidedAt": null,
+                    "reasonCode": null,
+                    "note": null,
+                    "appliesFromDate": "2026-04-13",
+                    "createdAt": "2026-10-03T16:19:44.277Z"
+                  },
+                  {
+                    "id": "cmuslkzkk0002ufeh8m55ryw4",
+                    "isoYear": 2026,
+                    "isoWeek": 16,
+                    "depotCode": "Peliyagoda",
+                    "brand": "Fresh",
+                    "kind": "PRE_BUILD_ORDERS",
+                    "title": "Ask Fresh stores to order chilled a day early",
+                    "detail": "Spreads W16 chilled volume across the days before · relief is an estimate",
+                    "params": {
+                      "brand": "Fresh",
+                      "daysEarly": 1,
+                      "assumedShiftPct": 15
+                    },
+                    "expectedRelief": {
+                      "basis": "Assumes 15% of the week's chilled volume moves a day earlier",
+                      "estimate": true,
+                      "tripsPerDay": 1
+                    },
+                    "status": "PROPOSED",
+                    "stale": false,
+                    "availableDecisions": [
+                      "APPROVE",
+                      "REJECT"
+                    ],
+                    "decidedBy": null,
+                    "decidedAt": null,
+                    "reasonCode": null,
+                    "note": null,
+                    "appliesFromDate": "2026-04-13",
+                    "createdAt": "2026-10-03T16:19:44.277Z"
+                  },
+                  {
+                    "id": "cmuslkzkk0003ufehsvxdn434",
+                    "isoYear": 2026,
+                    "isoWeek": 16,
+                    "depotCode": "Peliyagoda",
+                    "brand": "Fresh",
+                    "kind": "SHIFT_BRAND_DAY",
+                    "title": "Move Fresh chilled deliveries from Friday to Tuesday",
+                    "detail": "W16 · relief is an estimate",
+                    "params": {
+                      "brand": "Fresh",
+                      "toDay": "Tuesday",
+                      "fromDay": "Friday",
+                      "assumedShiftPct": 25
+                    },
+                    "expectedRelief": {
+                      "basis": "Assumes 25% of the week's chilled volume moves off Friday",
+                      "estimate": true,
+                      "tripsPerDay": 2
+                    },
+                    "status": "PROPOSED",
+                    "stale": false,
+                    "availableDecisions": [
+                      "APPROVE",
+                      "REJECT"
+                    ],
+                    "decidedBy": null,
+                    "decidedAt": null,
+                    "reasonCode": null,
+                    "note": null,
+                    "appliesFromDate": "2026-04-13",
+                    "createdAt": "2026-10-03T16:19:44.277Z"
+                  }
+                ]
+              }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+decision:
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema: { type: string }
+  post:
+    operationId: decideCapacityAction
+    summary: Approve, reject or apply a capacity action
+    description: >
+      PROPOSED -> APPROVED (APPROVE); PROPOSED or APPROVED -> REJECTED (REJECT);
+      APPROVED -> APPLIED (APPLY). Anything else is a 409; APPLY on a PROPOSED action
+      is `ACTION_NOT_APPROVED`.
+
+      APPLY does only what the system can truly do. RECALL_FROM_WORKSHOP clears the
+      reefer's workshop days in the week (days whose plan is already published are
+      left alone). RAISE_FUEL_QUOTA raises that week's fuel quota in the ledger,
+      never lowers it. HIRE_RELIEF_VEHICLE, SHIFT_BRAND_DAY and PRE_BUILD_ORDERS are
+      recorded only, and `consequences` says plainly that nothing else changes.
+
+      The status change and APPLY's effect happen in one transaction. Every decision
+      is written to the decision log with entityType `CapacityAction`.
+      An action in another depot answers 403, the same as one that does not exist.
+    tags: [capacity]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/capacityActions.yaml#/CapacityDecisionRequest" }
+          example: {"decision": "APPROVE", "note": "Book by 10 Apr"}
+    responses:
+      "200":
+        description: The action after the decision, and what the decision did.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/capacityActions.yaml#/CapacityDecisionResult" }
+            examples:
+              approved:
+                summary: Approved; nothing has changed yet
+                value:
+                  {
+                    "action": {
+                      "id": "cmuslkzkk0001ufeh07xkwwou",
+                      "isoYear": 2026,
+                      "isoWeek": 16,
+                      "depotCode": "Peliyagoda",
+                      "brand": null,
+                      "kind": "HIRE_RELIEF_VEHICLE",
+                      "title": "Hire 1 reefer for 13–18 Apr",
+                      "detail": "Peliyagoda · covers 2 of the 3 short trips a day in W16",
+                      "params": {
+                        "count": 1,
+                        "toDate": "2026-04-18",
+                        "fromDate": "2026-04-13",
+                        "vehicleTemp": "reefer",
+                        "shortfallTripsPerDay": 3
+                      },
+                      "expectedRelief": {
+                        "basis": "1 hired reefer, two trips a day each",
+                        "estimate": false,
+                        "tripsPerDay": 2
+                      },
+                      "status": "APPROVED",
+                      "stale": false,
+                      "availableDecisions": [
+                        "APPLY",
+                        "REJECT"
+                      ],
+                      "decidedBy": "Nimal Perera",
+                      "decidedAt": "2026-04-07T08:12:40.000Z",
+                      "reasonCode": null,
+                      "note": "Book by 10 Apr",
+                      "appliesFromDate": "2026-04-13",
+                      "createdAt": "2026-10-03T16:19:44.277Z"
+                    },
+                    "consequences": [
+                      "Approved. Nothing has changed yet; apply it when you are ready."
+                    ]
+                  }
+              appliedRecordOnly:
+                summary: Applying a hire is recorded only
+                value:
+                  {
+                    "action": {
+                      "id": "cmuslkzkk0001ufeh07xkwwou",
+                      "isoYear": 2026,
+                      "isoWeek": 16,
+                      "depotCode": "Peliyagoda",
+                      "brand": null,
+                      "kind": "HIRE_RELIEF_VEHICLE",
+                      "title": "Hire 1 reefer for 13–18 Apr",
+                      "detail": "Peliyagoda · covers 2 of the 3 short trips a day in W16",
+                      "params": {
+                        "count": 1,
+                        "toDate": "2026-04-18",
+                        "fromDate": "2026-04-13",
+                        "vehicleTemp": "reefer",
+                        "shortfallTripsPerDay": 3
+                      },
+                      "expectedRelief": {
+                        "basis": "1 hired reefer, two trips a day each",
+                        "estimate": false,
+                        "tripsPerDay": 2
+                      },
+                      "status": "APPLIED",
+                      "stale": false,
+                      "availableDecisions": [],
+                      "decidedBy": "Nimal Perera",
+                      "decidedAt": "2026-04-07T08:12:40.000Z",
+                      "reasonCode": null,
+                      "note": "Book by 10 Apr",
+                      "appliesFromDate": "2026-04-13",
+                      "createdAt": "2026-10-03T16:19:44.277Z"
+                    },
+                    "consequences": [
+                      "Recorded only. This system does not book or register a hired vehicle: nothing else changes, and the forecast still shows the shortfall until a vehicle is added to the fleet."
+                    ]
+                  }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "409": { $ref: "../components/responses/common.yaml#/Conflict" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }

@@ -1,0 +1,1080 @@
+# Owner: BE3
+overview:
+  get:
+    operationId: getReportsOverview
+    summary: Headline delivery performance for the depot
+    description: >
+      Headline tiles, the daily on-time series, the busiest outlets and the top exceptions.
+      Orders delivered vs planned and deferred; fleet utilisation against the 80% target
+      (only from trips published in this system); discrepancies as a count and a share of
+      orders (only for days run in this system).
+      
+            Dispatcher only, and only for the caller's own depot (the design shows every depot;
+            a dispatcher is depot-scoped, so a `depot` naming another is a 403).
+      
+            Days run in this system and days from the analytics history are merged by day, never
+            both for one date. "On time" means the vehicle arrived no later than the outlet's
+            window closed. A figure the data cannot support is null with a `note`.
+    tags: [reports]
+    parameters:
+      - name: from
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+        description: First day of the range. With neither `from` nor `to`, the seven days ending at the newest day with data.
+      - name: to
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+        description: Last day of the range, inclusive. At most 366 days after `from`.
+      - name: depot
+        in: query
+        required: false
+        schema: { type: string }
+        description: Must be the caller's own depot if given; a dispatcher cannot read another depot's reports (403).
+    responses:
+      "200":
+        description: The report.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/reports.yaml#/ReportsOverview" }
+            example:
+              {
+                "depotCode": "Peliyagoda",
+                "from": "2026-04-03",
+                "to": "2026-04-09",
+                "historySource": {
+                  "kind": "synthetic",
+                  "label": "History is SYNTHETIC, generated for the development fixture. It is not the competition data."
+                },
+                "coverage": {
+                  "liveDays": 1,
+                  "historyDays": 0,
+                  "emptyDays": 6
+                },
+                "onTime": {
+                  "pct": 50,
+                  "onTime": 1,
+                  "total": 2,
+                  "targetPct": 95,
+                  "vsPreviousPts": -50,
+                  "note": null
+                },
+                "orders": {
+                  "planned": 12,
+                  "delivered": 3,
+                  "deferred": 1,
+                  "undelivered": 8,
+                  "note": null
+                },
+                "utilisation": {
+                  "pct": 30,
+                  "targetPct": 80,
+                  "vehicles": 4,
+                  "trips": 1,
+                  "note": null
+                },
+                "discrepancies": {
+                  "count": 3,
+                  "pctOfOrders": 25,
+                  "vsPrevious": null,
+                  "note": null
+                },
+                "onTimeSeries": [
+                  {
+                    "date": "2026-04-03",
+                    "source": "none",
+                    "onTimePct": null,
+                    "onTime": 0,
+                    "total": 0
+                  },
+                  {
+                    "date": "2026-04-04",
+                    "source": "none",
+                    "onTimePct": null,
+                    "onTime": 0,
+                    "total": 0
+                  },
+                  {
+                    "date": "2026-04-05",
+                    "source": "none",
+                    "onTimePct": null,
+                    "onTime": 0,
+                    "total": 0
+                  },
+                  {
+                    "date": "2026-04-06",
+                    "source": "none",
+                    "onTimePct": null,
+                    "onTime": 0,
+                    "total": 0
+                  },
+                  {
+                    "date": "2026-04-07",
+                    "source": "none",
+                    "onTimePct": null,
+                    "onTime": 0,
+                    "total": 0
+                  },
+                  {
+                    "date": "2026-04-08",
+                    "source": "none",
+                    "onTimePct": null,
+                    "onTime": 0,
+                    "total": 0
+                  },
+                  {
+                    "date": "2026-04-09",
+                    "source": "live",
+                    "onTimePct": 50,
+                    "onTime": 1,
+                    "total": 2
+                  }
+                ],
+                "utilisationByDepot": [
+                  {
+                    "depotCode": "Peliyagoda",
+                    "vehicles": 4,
+                    "utilisationPct": 30,
+                    "targetPct": 80
+                  }
+                ],
+                "topOutlets": [
+                  {
+                    "outletId": "OUT010",
+                    "displayName": null,
+                    "districtName": "Colombo",
+                    "brand": "Fresh",
+                    "stops": 1,
+                    "orders": 3,
+                    "onTimePct": 100,
+                    "late": 0,
+                    "discrepancies": 2,
+                    "avgArrivalDeltaMin": 10
+                  },
+                  {
+                    "outletId": "OUT080",
+                    "displayName": null,
+                    "districtName": "Gampaha",
+                    "brand": "Fresh",
+                    "stops": 1,
+                    "orders": 1,
+                    "onTimePct": 0,
+                    "late": 1,
+                    "discrepancies": 0,
+                    "avgArrivalDeltaMin": 190
+                  },
+                  {
+                    "outletId": "OUT020",
+                    "displayName": null,
+                    "districtName": "Colombo",
+                    "brand": "Style",
+                    "stops": 0,
+                    "orders": 2,
+                    "onTimePct": null,
+                    "late": 0,
+                    "discrepancies": 0,
+                    "avgArrivalDeltaMin": null
+                  },
+                  {
+                    "outletId": "OUT030",
+                    "displayName": null,
+                    "districtName": "Gampaha",
+                    "brand": "Tech",
+                    "stops": 0,
+                    "orders": 2,
+                    "onTimePct": null,
+                    "late": 0,
+                    "discrepancies": 0,
+                    "avgArrivalDeltaMin": null
+                  },
+                  {
+                    "outletId": "OUT040",
+                    "displayName": null,
+                    "districtName": "Puttalam",
+                    "brand": "Fresh",
+                    "stops": 0,
+                    "orders": 2,
+                    "onTimePct": null,
+                    "late": 0,
+                    "discrepancies": 1,
+                    "avgArrivalDeltaMin": null
+                  },
+                  {
+                    "outletId": "OUT074",
+                    "displayName": null,
+                    "districtName": "Puttalam",
+                    "brand": "Fresh",
+                    "stops": 0,
+                    "orders": 2,
+                    "onTimePct": null,
+                    "late": 0,
+                    "discrepancies": 0,
+                    "avgArrivalDeltaMin": null
+                  }
+                ],
+                "totalOutlets": 6,
+                "topExceptions": {
+                  "total": 5,
+                  "items": [
+                    {
+                      "kind": "SHORT_DELIVERY",
+                      "label": "Short delivery",
+                      "count": 2
+                    },
+                    {
+                      "kind": "LATE_DELIVERY",
+                      "label": "Late delivery",
+                      "count": 1
+                    },
+                    {
+                      "kind": "ROAD_BLOCKED",
+                      "label": "Road blocked",
+                      "count": 1
+                    },
+                    {
+                      "kind": "TEMPERATURE",
+                      "label": "Temperature",
+                      "count": 1
+                    }
+                  ]
+                }
+              }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+deliveries:
+  get:
+    operationId: getReportsDeliveries
+    summary: Delivery volumes and punctuality by day and brand
+    description: >
+      Orders planned, delivered and deferred per day with the on-time share, and the same by brand.
+      Historical days count orders dispatched on the day as delivered: the training data
+      does not record whether an attempt succeeded.
+      
+            Dispatcher only, and only for the caller's own depot (the design shows every depot;
+            a dispatcher is depot-scoped, so a `depot` naming another is a 403).
+      
+            Days run in this system and days from the analytics history are merged by day, never
+            both for one date. "On time" means the vehicle arrived no later than the outlet's
+            window closed. A figure the data cannot support is null with a `note`.
+    tags: [reports]
+    parameters:
+      - name: from
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+        description: First day of the range. With neither `from` nor `to`, the seven days ending at the newest day with data.
+      - name: to
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+        description: Last day of the range, inclusive. At most 366 days after `from`.
+      - name: depot
+        in: query
+        required: false
+        schema: { type: string }
+        description: Must be the caller's own depot if given; a dispatcher cannot read another depot's reports (403).
+    responses:
+      "200":
+        description: The report.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/reports.yaml#/ReportsDeliveries" }
+            example:
+              {
+                "depotCode": "Peliyagoda",
+                "from": "2026-04-03",
+                "to": "2026-04-09",
+                "historySource": {
+                  "kind": "synthetic",
+                  "label": "History is SYNTHETIC, generated for the development fixture. It is not the competition data."
+                },
+                "coverage": {
+                  "liveDays": 1,
+                  "historyDays": 0,
+                  "emptyDays": 6
+                },
+                "totals": {
+                  "planned": 12,
+                  "delivered": 3,
+                  "deferred": 1,
+                  "undelivered": 8,
+                  "stops": 2,
+                  "onTimePct": 50,
+                  "avgArrivalDeltaMin": 100
+                },
+                "days": [
+                  {
+                    "date": "2026-04-03",
+                    "source": "none",
+                    "planned": 0,
+                    "delivered": 0,
+                    "deferred": 0,
+                    "undelivered": 0,
+                    "stops": 0,
+                    "onTime": 0,
+                    "onTimePct": null
+                  },
+                  {
+                    "date": "2026-04-04",
+                    "source": "none",
+                    "planned": 0,
+                    "delivered": 0,
+                    "deferred": 0,
+                    "undelivered": 0,
+                    "stops": 0,
+                    "onTime": 0,
+                    "onTimePct": null
+                  },
+                  {
+                    "date": "2026-04-05",
+                    "source": "none",
+                    "planned": 0,
+                    "delivered": 0,
+                    "deferred": 0,
+                    "undelivered": 0,
+                    "stops": 0,
+                    "onTime": 0,
+                    "onTimePct": null
+                  },
+                  {
+                    "date": "2026-04-06",
+                    "source": "none",
+                    "planned": 0,
+                    "delivered": 0,
+                    "deferred": 0,
+                    "undelivered": 0,
+                    "stops": 0,
+                    "onTime": 0,
+                    "onTimePct": null
+                  },
+                  {
+                    "date": "2026-04-07",
+                    "source": "none",
+                    "planned": 0,
+                    "delivered": 0,
+                    "deferred": 0,
+                    "undelivered": 0,
+                    "stops": 0,
+                    "onTime": 0,
+                    "onTimePct": null
+                  },
+                  {
+                    "date": "2026-04-08",
+                    "source": "none",
+                    "planned": 0,
+                    "delivered": 0,
+                    "deferred": 0,
+                    "undelivered": 0,
+                    "stops": 0,
+                    "onTime": 0,
+                    "onTimePct": null
+                  },
+                  {
+                    "date": "2026-04-09",
+                    "source": "live",
+                    "planned": 12,
+                    "delivered": 3,
+                    "deferred": 1,
+                    "undelivered": 8,
+                    "stops": 2,
+                    "onTime": 1,
+                    "onTimePct": 50
+                  }
+                ],
+                "byBrand": [
+                  {
+                    "brand": "Fresh",
+                    "planned": 8,
+                    "delivered": 3,
+                    "deferred": 1,
+                    "undelivered": 4,
+                    "stops": 2,
+                    "onTimePct": 50,
+                    "avgArrivalDeltaMin": 100
+                  },
+                  {
+                    "brand": "Style",
+                    "planned": 2,
+                    "delivered": 0,
+                    "deferred": 0,
+                    "undelivered": 2,
+                    "stops": 0,
+                    "onTimePct": null,
+                    "avgArrivalDeltaMin": null
+                  },
+                  {
+                    "brand": "Tech",
+                    "planned": 2,
+                    "delivered": 0,
+                    "deferred": 0,
+                    "undelivered": 2,
+                    "stops": 0,
+                    "onTimePct": null,
+                    "avgArrivalDeltaMin": null
+                  }
+                ],
+                "notes": []
+              }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+fleet:
+  get:
+    operationId: getReportsFleet
+    summary: Vehicle use and load for the depot
+    description: >
+      Per vehicle: trips, stops, on-time share, average load against capacity (trips published
+      in this system only) and workshop days. Plus reefer vs ambient totals.
+      
+            Dispatcher only, and only for the caller's own depot (the design shows every depot;
+            a dispatcher is depot-scoped, so a `depot` naming another is a 403).
+      
+            Days run in this system and days from the analytics history are merged by day, never
+            both for one date. "On time" means the vehicle arrived no later than the outlet's
+            window closed. A figure the data cannot support is null with a `note`.
+    tags: [reports]
+    parameters:
+      - name: from
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+        description: First day of the range. With neither `from` nor `to`, the seven days ending at the newest day with data.
+      - name: to
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+        description: Last day of the range, inclusive. At most 366 days after `from`.
+      - name: depot
+        in: query
+        required: false
+        schema: { type: string }
+        description: Must be the caller's own depot if given; a dispatcher cannot read another depot's reports (403).
+    responses:
+      "200":
+        description: The report.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/reports.yaml#/ReportsFleet" }
+            example:
+              {
+                "depotCode": "Peliyagoda",
+                "from": "2026-04-03",
+                "to": "2026-04-09",
+                "historySource": {
+                  "kind": "synthetic",
+                  "label": "History is SYNTHETIC, generated for the development fixture. It is not the competition data."
+                },
+                "coverage": {
+                  "liveDays": 1,
+                  "historyDays": 0,
+                  "emptyDays": 6
+                },
+                "utilisation": {
+                  "pct": 30,
+                  "targetPct": 80,
+                  "note": null
+                },
+                "vehicles": [
+                  {
+                    "vehicleId": "VEH101",
+                    "type": "truck",
+                    "temp": "reefer",
+                    "volumeCapM3": 30,
+                    "trips": 1,
+                    "stops": 2,
+                    "onTimePct": 50,
+                    "avgLoadPct": 30,
+                    "workshopDays": 0
+                  },
+                  {
+                    "vehicleId": "VEH102",
+                    "type": "truck",
+                    "temp": "ambient",
+                    "volumeCapM3": 34,
+                    "trips": 0,
+                    "stops": 0,
+                    "onTimePct": null,
+                    "avgLoadPct": null,
+                    "workshopDays": 0
+                  },
+                  {
+                    "vehicleId": "VEH103",
+                    "type": "van",
+                    "temp": "reefer",
+                    "volumeCapM3": 10,
+                    "trips": 0,
+                    "stops": 0,
+                    "onTimePct": null,
+                    "avgLoadPct": null,
+                    "workshopDays": 0
+                  },
+                  {
+                    "vehicleId": "VEH104",
+                    "type": "van",
+                    "temp": "ambient",
+                    "volumeCapM3": 12,
+                    "trips": 0,
+                    "stops": 0,
+                    "onTimePct": null,
+                    "avgLoadPct": null,
+                    "workshopDays": 1
+                  }
+                ],
+                "byTemp": [
+                  {
+                    "temp": "reefer",
+                    "vehicles": 2,
+                    "trips": 1,
+                    "avgLoadPct": 30
+                  },
+                  {
+                    "temp": "ambient",
+                    "vehicles": 2,
+                    "trips": 0,
+                    "avgLoadPct": null
+                  }
+                ],
+                "notes": []
+              }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+outlets:
+  get:
+    operationId: getReportsOutlets
+    summary: Per-outlet punctuality and discrepancies
+    description: >
+      Every outlet with a stop in the range, ordered by `sort`. Orders and discrepancies exist
+      only for days run in this system.
+      
+            Dispatcher only, and only for the caller's own depot (the design shows every depot;
+            a dispatcher is depot-scoped, so a `depot` naming another is a 403).
+      
+            Days run in this system and days from the analytics history are merged by day, never
+            both for one date. "On time" means the vehicle arrived no later than the outlet's
+            window closed. A figure the data cannot support is null with a `note`.
+    tags: [reports]
+    parameters:
+      - name: from
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+        description: First day of the range. With neither `from` nor `to`, the seven days ending at the newest day with data.
+      - name: to
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+        description: Last day of the range, inclusive. At most 366 days after `from`.
+      - name: depot
+        in: query
+        required: false
+        schema: { type: string }
+        description: Must be the caller's own depot if given; a dispatcher cannot read another depot's reports (403).
+      - name: sort
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/reports.yaml#/OutletSort" }
+    responses:
+      "200":
+        description: The report.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/reports.yaml#/ReportsOutlets" }
+            example:
+              {
+                "depotCode": "Peliyagoda",
+                "from": "2026-04-03",
+                "to": "2026-04-09",
+                "historySource": {
+                  "kind": "synthetic",
+                  "label": "History is SYNTHETIC, generated for the development fixture. It is not the competition data."
+                },
+                "coverage": {
+                  "liveDays": 1,
+                  "historyDays": 0,
+                  "emptyDays": 6
+                },
+                "sort": "onTime",
+                "outlets": [
+                  {
+                    "outletId": "OUT080",
+                    "displayName": null,
+                    "districtName": "Gampaha",
+                    "brand": "Fresh",
+                    "stops": 1,
+                    "orders": 1,
+                    "onTimePct": 0,
+                    "late": 1,
+                    "discrepancies": 0,
+                    "avgArrivalDeltaMin": 190
+                  },
+                  {
+                    "outletId": "OUT010",
+                    "displayName": null,
+                    "districtName": "Colombo",
+                    "brand": "Fresh",
+                    "stops": 1,
+                    "orders": 3,
+                    "onTimePct": 100,
+                    "late": 0,
+                    "discrepancies": 2,
+                    "avgArrivalDeltaMin": 10
+                  },
+                  {
+                    "outletId": "OUT020",
+                    "displayName": null,
+                    "districtName": "Colombo",
+                    "brand": "Style",
+                    "stops": 0,
+                    "orders": 2,
+                    "onTimePct": null,
+                    "late": 0,
+                    "discrepancies": 0,
+                    "avgArrivalDeltaMin": null
+                  }
+                ],
+                "notes": [
+                  "Orders and discrepancies are counted only for days run in this system; for historical days an outlet shows its visits (stops) and on-time share."
+                ]
+              }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+exceptions:
+  get:
+    operationId: getReportsExceptions
+    summary: What went wrong, by kind and by day
+    description: >
+      Exceptions by kind and by day with the fifty most recent. Late arrivals come from both
+      sources; shortfalls, bad receipts and driver problems only from days run in this system.
+      Each order counts once per kind however many records describe it.
+      
+            Dispatcher only, and only for the caller's own depot (the design shows every depot;
+            a dispatcher is depot-scoped, so a `depot` naming another is a 403).
+      
+            Days run in this system and days from the analytics history are merged by day, never
+            both for one date. "On time" means the vehicle arrived no later than the outlet's
+            window closed. A figure the data cannot support is null with a `note`.
+    tags: [reports]
+    parameters:
+      - name: from
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+        description: First day of the range. With neither `from` nor `to`, the seven days ending at the newest day with data.
+      - name: to
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+        description: Last day of the range, inclusive. At most 366 days after `from`.
+      - name: depot
+        in: query
+        required: false
+        schema: { type: string }
+        description: Must be the caller's own depot if given; a dispatcher cannot read another depot's reports (403).
+    responses:
+      "200":
+        description: The report.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/reports.yaml#/ReportsExceptions" }
+            example:
+              {
+                "depotCode": "Peliyagoda",
+                "from": "2026-04-03",
+                "to": "2026-04-09",
+                "historySource": {
+                  "kind": "synthetic",
+                  "label": "History is SYNTHETIC, generated for the development fixture. It is not the competition data."
+                },
+                "coverage": {
+                  "liveDays": 1,
+                  "historyDays": 0,
+                  "emptyDays": 6
+                },
+                "total": 5,
+                "byKind": [
+                  {
+                    "kind": "SHORT_DELIVERY",
+                    "label": "Short delivery",
+                    "count": 2
+                  },
+                  {
+                    "kind": "LATE_DELIVERY",
+                    "label": "Late delivery",
+                    "count": 1
+                  },
+                  {
+                    "kind": "ROAD_BLOCKED",
+                    "label": "Road blocked",
+                    "count": 1
+                  },
+                  {
+                    "kind": "TEMPERATURE",
+                    "label": "Temperature",
+                    "count": 1
+                  }
+                ],
+                "byDay": [
+                  {
+                    "date": "2026-04-03",
+                    "count": 0
+                  },
+                  {
+                    "date": "2026-04-04",
+                    "count": 0
+                  },
+                  {
+                    "date": "2026-04-05",
+                    "count": 0
+                  },
+                  {
+                    "date": "2026-04-06",
+                    "count": 0
+                  },
+                  {
+                    "date": "2026-04-07",
+                    "count": 0
+                  },
+                  {
+                    "date": "2026-04-08",
+                    "count": 0
+                  },
+                  {
+                    "date": "2026-04-09",
+                    "count": 5
+                  }
+                ],
+                "recent": [
+                  {
+                    "kind": "SHORT_DELIVERY",
+                    "label": "Short delivery",
+                    "date": "2026-04-09",
+                    "source": "live",
+                    "at": "2026-10-03T16:19:36.910Z",
+                    "orderRef": "DEMO-001",
+                    "outletId": "OUT010",
+                    "note": null
+                  },
+                  {
+                    "kind": "TEMPERATURE",
+                    "label": "Temperature",
+                    "date": "2026-04-09",
+                    "source": "live",
+                    "at": "2026-10-03T16:19:36.909Z",
+                    "orderRef": "DEMO-005",
+                    "outletId": "OUT040",
+                    "note": null
+                  },
+                  {
+                    "kind": "ROAD_BLOCKED",
+                    "label": "Road blocked",
+                    "date": "2026-04-09",
+                    "source": "live",
+                    "at": "2026-04-09T02:30:00.000Z",
+                    "orderRef": null,
+                    "outletId": "OUT080",
+                    "note": "Flooded road"
+                  }
+                ],
+                "notes": []
+              }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+capacityForecast:
+  get:
+    operationId: getReportsCapacityForecast
+    summary: Weekly demand vs reefer capacity, with recommended actions
+    description: >
+      Weekly demand against reefer capacity for the depot, with the forecast's own
+      measured error and the persisted recommended actions. Weeks with history are
+      `actual`; weeks with a stored forecast are `forecast`. Reefer trips a day needed
+      = chilled m3 per operating day over the planned load per trip (mean reefer capacity
+      x the fill observed in the competition training data); capacity = available reefers
+      x 2 trips. Each assumption is listed in `assumptions`.
+      
+      Reading this creates the week's capacity-action proposals the first time it is
+      called (once only), so `recommendedActions` carry ids a decision can name.
+      When `historySource.kind` is `synthetic` every volume is generated for the
+      development fixture, not competition data.
+      
+      Dispatcher only, own depot only.
+    tags: [reports]
+    parameters:
+      - name: from
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+        description: A date in the first week wanted. With neither `from` nor `to`, eight weeks starting two weeks before the stored forecast.
+      - name: to
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+        description: A date in the last week wanted. At most 53 weeks.
+      - name: depot
+        in: query
+        required: false
+        schema: { type: string }
+        description: Must be the caller's own depot if given (403 otherwise).
+      - name: brand
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/Brand" }
+        description: Narrows the demand and the error to one brand. Reefer capacity and the proposals stay the depot's.
+    responses:
+      "200":
+        description: The capacity forecast.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/reports.yaml#/CapacityForecast" }
+            example:
+              {
+                "depotCode": "Peliyagoda",
+                "brand": null,
+                "from": "2026-04-06",
+                "to": "2026-04-26",
+                "forecastMethod": "SYNTHETIC seasonal-naive+trailing8 v1 (calendar-scaled) on generated fixture history, not competition data",
+                "forecastGeneratedAt": "2026-10-03T16:19:36.733Z",
+                "historySource": {
+                  "kind": "synthetic",
+                  "label": "History is SYNTHETIC, generated for the development fixture. It is not the competition data."
+                },
+                "weeks": [
+                  {
+                    "isoYear": 2026,
+                    "isoWeek": 16,
+                    "startDate": "2026-04-13",
+                    "endDate": "2026-04-18",
+                    "kind": "forecast",
+                    "signals": [
+                      "New Year ramp",
+                      "Payday",
+                      "Monsoon"
+                    ],
+                    "operatingDays": 5,
+                    "totalM3": 283.9,
+                    "chilledM3": 100,
+                    "ambientM3": 183.9,
+                    "reeferTripsPerDay": {
+                      "needed": 5,
+                      "capacity": 2,
+                      "shortfall": 3
+                    },
+                    "reefersInWorkshop": 1,
+                    "chilledCapacityM3": 50,
+                    "fleetCapacityM3": 284,
+                    "level": "over",
+                    "action": "Recall 1 from workshop, +1 hired reefer",
+                    "actions": [
+                      {
+                        "id": "cmuslkzkk0000ufehamunrppq",
+                        "kind": "RECALL_FROM_WORKSHOP",
+                        "status": "PROPOSED"
+                      },
+                      {
+                        "id": "cmuslkzkk0001ufeh07xkwwou",
+                        "kind": "HIRE_RELIEF_VEHICLE",
+                        "status": "PROPOSED"
+                      },
+                      {
+                        "id": "cmuslkzkk0002ufeh8m55ryw4",
+                        "kind": "PRE_BUILD_ORDERS",
+                        "status": "PROPOSED"
+                      },
+                      {
+                        "id": "cmuslkzkk0003ufehsvxdn434",
+                        "kind": "SHIFT_BRAND_DAY",
+                        "status": "PROPOSED"
+                      }
+                    ]
+                  },
+                  {
+                    "isoYear": 2026,
+                    "isoWeek": 17,
+                    "startDate": "2026-04-20",
+                    "endDate": "2026-04-25",
+                    "kind": "forecast",
+                    "signals": [
+                      "Vesak ramp",
+                      "Payday",
+                      "Monsoon"
+                    ],
+                    "operatingDays": 6,
+                    "totalM3": 290.5,
+                    "chilledM3": 103,
+                    "ambientM3": 187.4,
+                    "reeferTripsPerDay": {
+                      "needed": 4,
+                      "capacity": 4,
+                      "shortfall": 0
+                    },
+                    "reefersInWorkshop": 0,
+                    "chilledCapacityM3": 120,
+                    "fleetCapacityM3": 340.8,
+                    "level": "near",
+                    "action": "Covered, no slack",
+                    "actions": []
+                  }
+                ],
+                "reeferCount": 2,
+                "fleetCapacityM3": 340.8,
+                "reeferCapacityM3": 120,
+                "loadPerReeferTripM3": 5,
+                "peakWeek": {
+                  "isoYear": 2026,
+                  "isoWeek": 15,
+                  "startDate": "2026-04-06",
+                  "endDate": "2026-04-11",
+                  "totalM3": 306.9,
+                  "signals": [
+                    "New Year ramp",
+                    "Monsoon"
+                  ],
+                  "vsRecentPct": 7
+                },
+                "chilledPeak": {
+                  "isoYear": 2026,
+                  "isoWeek": 15,
+                  "startDate": "2026-04-06",
+                  "endDate": "2026-04-11",
+                  "chilledM3": 105.5,
+                  "vsRecentPct": 1
+                },
+                "reeferShortfallWeeks": {
+                  "count": 1,
+                  "of": 3,
+                  "maxTripsPerDayShort": 3
+                },
+                "forecastError": {
+                  "mapePct": 5.6,
+                  "chilledMapePct": 7.2,
+                  "weeksTested": 8,
+                  "leadWeeks": 1,
+                  "note": "Mean absolute error of the same method re-run on the last 8 known weeks, forecasting 1 week ahead, on the depot's total volume."
+                },
+                "forecastErrorPct": 5.6,
+                "recommendedActions": [
+                  {
+                    "id": "cmuslkzkk0001ufeh07xkwwou",
+                    "isoYear": 2026,
+                    "isoWeek": 16,
+                    "depotCode": "Peliyagoda",
+                    "brand": null,
+                    "kind": "HIRE_RELIEF_VEHICLE",
+                    "title": "Hire 1 reefer for 13–18 Apr",
+                    "detail": "Peliyagoda · covers 2 of the 3 short trips a day in W16",
+                    "params": {
+                      "count": 1,
+                      "toDate": "2026-04-18",
+                      "fromDate": "2026-04-13",
+                      "vehicleTemp": "reefer",
+                      "shortfallTripsPerDay": 3
+                    },
+                    "expectedRelief": {
+                      "basis": "1 hired reefer, two trips a day each",
+                      "estimate": false,
+                      "tripsPerDay": 2
+                    },
+                    "status": "PROPOSED",
+                    "stale": false,
+                    "availableDecisions": [
+                      "APPROVE",
+                      "REJECT"
+                    ],
+                    "decidedBy": null,
+                    "decidedAt": null,
+                    "reasonCode": null,
+                    "note": null,
+                    "appliesFromDate": "2026-04-13",
+                    "createdAt": "2026-10-03T16:19:44.277Z"
+                  },
+                  {
+                    "id": "cmuslkzkk0000ufehamunrppq",
+                    "isoYear": 2026,
+                    "isoWeek": 16,
+                    "depotCode": "Peliyagoda",
+                    "brand": null,
+                    "kind": "RECALL_FROM_WORKSHOP",
+                    "title": "Recall VEH103 from the workshop for 13–18 Apr",
+                    "detail": "Peliyagoda · frees 2 trips a day in W16",
+                    "params": {
+                      "count": 1,
+                      "dates": [
+                        "2026-04-15",
+                        "2026-04-16"
+                      ],
+                      "vehicleIds": [
+                        "VEH103"
+                      ]
+                    },
+                    "expectedRelief": {
+                      "basis": "1 reefer back in service, two trips a day each",
+                      "estimate": false,
+                      "tripsPerDay": 2
+                    },
+                    "status": "PROPOSED",
+                    "stale": false,
+                    "availableDecisions": [
+                      "APPROVE",
+                      "REJECT"
+                    ],
+                    "decidedBy": null,
+                    "decidedAt": null,
+                    "reasonCode": null,
+                    "note": null,
+                    "appliesFromDate": "2026-04-13",
+                    "createdAt": "2026-10-03T16:19:44.277Z"
+                  },
+                  {
+                    "id": "cmuslkzkk0003ufehsvxdn434",
+                    "isoYear": 2026,
+                    "isoWeek": 16,
+                    "depotCode": "Peliyagoda",
+                    "brand": "Fresh",
+                    "kind": "SHIFT_BRAND_DAY",
+                    "title": "Move Fresh chilled deliveries from Friday to Tuesday",
+                    "detail": "W16 · relief is an estimate",
+                    "params": {
+                      "brand": "Fresh",
+                      "toDay": "Tuesday",
+                      "fromDay": "Friday",
+                      "assumedShiftPct": 25
+                    },
+                    "expectedRelief": {
+                      "basis": "Assumes 25% of the week's chilled volume moves off Friday",
+                      "estimate": true,
+                      "tripsPerDay": 2
+                    },
+                    "status": "PROPOSED",
+                    "stale": false,
+                    "availableDecisions": [
+                      "APPROVE",
+                      "REJECT"
+                    ],
+                    "decidedBy": null,
+                    "decidedAt": null,
+                    "reasonCode": null,
+                    "note": null,
+                    "appliesFromDate": "2026-04-13",
+                    "createdAt": "2026-10-03T16:19:44.277Z"
+                  }
+                ],
+                "assumptions": [
+                  "A reefer trip is planned to carry 25% of its volume capacity (40% for ambient vehicles), the loading observed in the competition training data. At this depot that is 5 m³ per reefer trip.",
+                  "Each vehicle runs at most 2 trips a day, so 2 reefers give 4 trips a day.",
+                  "A reefer marked in the workshop on any day of a week is counted out for that whole week.",
+                  "Calendar effects on demand: payday +12%, festival ramp +30% x ramp, monsoon -2%.",
+                  "Forecast figures are demand for the depot (all orders requested that week), not deliveries completed."
+                ]
+              }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }

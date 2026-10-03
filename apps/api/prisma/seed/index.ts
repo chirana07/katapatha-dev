@@ -10,12 +10,14 @@
 
 import { PrismaClient } from "@prisma/client";
 import { seedForecastShells, seedHeroDay } from "./heroDay";
+import { seedHistory } from "./history";
 import { seedReference } from "./reference";
 import { resolveDataSource, sourceChecksum } from "./source";
 import { printAccounts, seedUsers } from "./users";
 
 const SEED_KEY = "waypoint";
-const SEED_VERSION = "1";
+// 2: adds the analytics history and the persisted forecast (history.ts).
+const SEED_VERSION = "2";
 
 const prisma = new PrismaClient();
 
@@ -84,11 +86,25 @@ async function main(): Promise<void> {
     console.log(`[seed] ${forecastWeeks} forecast rows opened (depot x brand x week).`);
   }
 
+  // After the shells, because the forecast replaces the shells' "pending" rows.
+  const history = await seedHistory(prisma, source);
+  const label = history.mode === "synthetic" ? "SYNTHETIC (generated, not competition data)" : history.mode;
+  console.log(
+    `[seed] History [${label}]: ${history.dailyRows} daily and ${history.weeklyRows} weekly demand rows, ` +
+      `${history.legs} legs, ${history.serviceObservations} service observations, ` +
+      `${history.calendarDaysAdded} synthetic calendar days, ${history.forecastRows} forecast rows` +
+      (history.skippedRows > 0 ? `, ${history.skippedRows} unparseable CSV rows skipped` : "") +
+      ".",
+  );
+  for (const note of history.notes) console.log(`[seed]   ${note}`);
+
   await prisma.seedMeta.create({
     data: {
       key: SEED_KEY,
       version: SEED_VERSION,
-      dataSource: source.kind,
+      // "fixture-synthetic" says the demand history is generated too; plain
+      // "fixture" would have read as just a small network.
+      dataSource: history.dataSource,
       checksum,
     },
   });
