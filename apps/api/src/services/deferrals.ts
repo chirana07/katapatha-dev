@@ -95,7 +95,10 @@ export async function describeDeferrals(plan: LoadedPlan) {
         deferredYesterday: order.deferredYesterday,
       },
       cause,
-      suggestedReasonCode: suggestDeferralReason(cause?.rejectionCode),
+      suggestedReasonCode: suggestDeferralReason(
+        cause?.rejectionCode,
+        cause?.explanation.map((line) => line.code) ?? [],
+      ),
       movesTo: {
         date: movesToDate,
         windowOpen: order.windowOpen,
@@ -148,34 +151,62 @@ function outletRefOf(a: LoadedAssignment): OutletRef {
 
 export type Impact = "lowest" | "protected" | "skipped_twice" | "high";
 
-/** How many other orders in the lane the drawer compares against. */
+/** How many competing orders the drawer shows next to this one. */
 const MAX_OTHERS = 4;
 
+/** What kind of vehicle this order needed — the resource it competed for. */
+function resourceFor(a: LoadedAssignment): "refrigerated vehicle" | "van" | "vehicle" {
+  if (a.order.tempRequirement === "chilled") return "refrigerated vehicle";
+  if (a.order.outlet.parkingConstraint === "van_only") return "van";
+  return "vehicle";
+}
+
 /**
- * "Why this order and not another": the other orders competing for the same
- * lane (brand + district, the allocator's own grouping), ranked by the same
- * priority policy the allocator used. Returns null when the assignment is not
- * a deferral on this plan.
+ * "Why this order and not another": the orders that were served on a vehicle
+ * this order could also have used — the only ones whose deferral could have
+ * made room for it. Competition for a vehicle is depot-wide, not per lane: a
+ * reefer serving Colombo could have been sent to Puttalam instead.
+ *
+ * Ranked by the allocator's own priority policy; the lowest-priority served
+ * order is the one that would have been cheapest to swap ("lowest").
+ * Returns null when the assignment is not a deferral on this plan.
  */
 export async function laneAlternatives(plan: LoadedPlan, assignmentId: string) {
   const target = plan.assignments.find((a) => a.id === assignmentId && a.decision === "DEFERRED");
   if (!target) return null;
 
-  const lane = plan.assignments.filter(
-    (a) =>
-      a.order.brand === target.order.brand && a.order.districtName === target.order.districtName,
-  );
+  // Which vehicle each served order rode on. Every wave counts: a vehicle's
+  // two trips are shared across waves, so a predawn order can use up the trip
+  // a daytime order needed (VEH103 making two Fresh runs leaves no slot for
+  // Tech).
+  const vehicleByOrder = new Map<string, { type: string; temp: string }>();
+  for (const trip of plan.trips) {
+    for (const stop of trip.stops) {
+      for (const link of stop.orders) vehicleByOrder.set(link.orderId, trip.vehicle);
+    }
+  }
+  const resource = resourceFor(target);
+  const couldCarryTarget = (v: { type: string; temp: string }) =>
+    (resource !== "refrigerated vehicle" || v.temp === "reefer") &&
+    (target.order.outlet.parkingConstraint !== "van_only" || v.type === "van");
+
+  const competitors = plan.assignments.filter((a) => {
+    if (a.decision !== "SERVED") return false;
+    const vehicle = vehicleByOrder.get(a.orderId);
+    return vehicle ? couldCarryTarget(vehicle) : false;
+  });
+  const field = [target, ...competitors];
 
   const fleet = await prisma.vehicle.aggregate({
     where: { depotCode: plan.planningDay.depotCode },
     _max: { volumeCapM3: true },
   });
   const ctx: PriorityContext = {
-    outlets: new Map(lane.map((a) => [a.order.outletId, outletRefOf(a)])),
+    outlets: new Map(field.map((a) => [a.order.outletId, outletRefOf(a)])),
     maxVolumeCapM3: fleet._max.volumeCapM3 ?? 0,
   };
 
-  const scored = lane
+  const scored = field
     .map((a) => {
       const ref = orderRefOf(a);
       return { a, ref, score: priorityScore(ref, ctx) };
@@ -193,24 +224,36 @@ export async function laneAlternatives(plan: LoadedPlan, assignmentId: string) {
     return "high";
   };
 
-  const ranked = scored.map((entry, i) => ({
-    orderRef: entry.ref.ref,
-    outletId: entry.a.order.outletId,
-    outletName: entry.a.order.outlet.displayName ?? null,
-    isThisOrder: entry.a.id === target.id,
-    decision: entry.a.decision as "SERVED" | "DEFERRED",
-    rank: i + 1,
-    impact: impactOf(entry),
-    why: explainPriority(entry.ref, ctx),
-  }));
+  const ranked = scored.map((entry, i) => {
+    const why = explainPriority(entry.ref, ctx);
+    return {
+      orderRef: entry.ref.ref,
+      outletId: entry.a.order.outletId,
+      outletName: entry.a.order.outlet.displayName ?? null,
+      isThisOrder: entry.a.id === target.id,
+      decision: entry.a.decision as "SERVED" | "DEFERRED",
+      rank: i + 1,
+      impact: impactOf(entry),
+      why: why === "routine" ? "no priority flags" : why,
+    };
+  });
 
-  // This order first, then the highest-priority competitors — the ones that
-  // actually took the space.
+  // This order first, then the served orders most worth comparing: the
+  // lowest-priority ones, i.e. the realistic swaps.
   const self = ranked.filter((r) => r.isThisOrder);
-  const others = ranked.filter((r) => !r.isThisOrder).slice(0, MAX_OTHERS);
+  const others = ranked
+    .filter((r) => !r.isThisOrder)
+    .reverse()
+    .slice(0, MAX_OTHERS)
+    .reverse();
 
   return {
-    lane: { brand: target.order.brand, districtName: target.order.districtName },
+    lane: {
+      brand: target.order.brand,
+      districtName: target.order.districtName,
+      resource,
+      competing: field.length,
+    },
     items: [...self, ...others],
   };
 }

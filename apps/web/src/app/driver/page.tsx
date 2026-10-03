@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { readError } from "./api-errors";
-import { colomboToday, formatClock, formatWindow } from "./format";
+import { colomboToday, formatClock, formatWindow, stopNumber } from "./format";
 import { ReleaseButton } from "./release-button";
 import {
   STOP_STATUS_LABEL,
@@ -143,7 +143,7 @@ export default async function DriverRunPage({
                             </span>
                           )}
                           <span>
-                            Stop {stop.seq} · Trip {trip.tripNo}
+                            Stop {stopNumber(stop.seq)} · Trip {trip.tripNo}
                           </span>
                         </p>
                         <p className="truncate text-base font-semibold text-ink">

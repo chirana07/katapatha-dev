@@ -188,9 +188,22 @@ LaneAlternatives:
       properties:
         brand: { type: string, examples: ["Fresh"] }
         districtName: { type: string, examples: ["Puttalam"] }
+        resource:
+          type: string
+          enum: [refrigerated vehicle, van, vehicle]
+          description: The kind of vehicle this order needed — what it competed for.
+        competing:
+          type: integer
+          description: >
+            This order plus every served order, depot-wide, that rode a vehicle
+            this order could also have used. 1 means nothing was swappable.
+          examples: [4]
     items:
       type: array
-      description: The deferred order first, then up to four competitors by priority rank.
+      description: >
+        The deferred order first, then up to four competitors: orders served on
+        a vehicle this order could have used, lowest priority (most swappable)
+        shown. Only the deferred order when nothing was swappable.
       items:
         type: object
         required: [orderRef, outletId, isThisOrder, decision, rank, impact, why]

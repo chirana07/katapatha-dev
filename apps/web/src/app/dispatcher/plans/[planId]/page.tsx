@@ -278,6 +278,7 @@ export default async function PlanPage({
           allReasons={deferralReasons}
           closeHref={home}
           readOnly={plan.data.status !== "DRAFT"}
+          sent={plan.data.status === "PUBLISHED"}
         />
       ) : null}
     </main>

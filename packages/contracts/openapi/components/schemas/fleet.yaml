@@ -29,7 +29,13 @@ FleetDay:
     lockedReason: { type: [string, "null"], examples: [null] }
     hasDraft:
       type: boolean
-      description: A draft plan exists; re-run auto-plan for a status change to take effect.
+      description: A draft plan exists for the day.
+      examples: [false]
+    draftStale:
+      type: boolean
+      description: >
+        A vehicle's status changed after the draft was built, so the draft no
+        longer reflects the fleet — re-run auto-plan.
       examples: [false]
     vehicles:
       type: array

@@ -1277,7 +1277,9 @@
                 "example": {
                   "lane": {
                     "brand": "Fresh",
-                    "districtName": "Puttalam"
+                    "districtName": "Puttalam",
+                    "resource": "refrigerated vehicle",
+                    "competing": 2
                   },
                   "items": [
                     {
@@ -2863,7 +2865,14 @@
           },
           "hasDraft": {
             "type": "boolean",
-            "description": "A draft plan exists; re-run auto-plan for a status change to take effect.",
+            "description": "A draft plan exists for the day.",
+            "examples": [
+              false
+            ]
+          },
+          "draftStale": {
+            "type": "boolean",
+            "description": "A vehicle's status changed after the draft was built, so the draft no longer reflects the fleet — re-run auto-plan.\n",
             "examples": [
               false
             ]
@@ -3544,12 +3553,28 @@
                 "examples": [
                   "Puttalam"
                 ]
+              },
+              "resource": {
+                "type": "string",
+                "enum": [
+                  "refrigerated vehicle",
+                  "van",
+                  "vehicle"
+                ],
+                "description": "The kind of vehicle this order needed — what it competed for."
+              },
+              "competing": {
+                "type": "integer",
+                "description": "This order plus every served order, depot-wide, that rode a vehicle this order could also have used. 1 means nothing was swappable.\n",
+                "examples": [
+                  4
+                ]
               }
             }
           },
           "items": {
             "type": "array",
-            "description": "The deferred order first, then up to four competitors by priority rank.",
+            "description": "The deferred order first, then up to four competitors: orders served on a vehicle this order could have used, lowest priority (most swappable) shown. Only the deferred order when nothing was swappable.\n",
             "items": {
               "type": "object",
               "required": [

@@ -282,7 +282,7 @@ planDeferralAlternatives:
           application/json:
             schema: { $ref: "../components/schemas/planning.yaml#/LaneAlternatives" }
             example:
-              lane: { brand: Fresh, districtName: "Puttalam" }
+              lane: { brand: Fresh, districtName: "Puttalam", resource: refrigerated vehicle, competing: 2 }
               items:
                 - { orderRef: "ORD-004312", outletId: "OUT074", outletName: "Puttalam", isThisOrder: true, decision: DEFERRED, rank: 3, impact: lowest, why: "window shuts 08:00" }
                 - { orderRef: "ORD-004298", outletId: "OUT033", outletName: null, isThisOrder: false, decision: SERVED, rank: 1, impact: protected, why: "deferred yesterday, window shuts 08:00" }

@@ -60,6 +60,7 @@ const FLEET_DAY = {
     editable: { type: "boolean" },
     lockedReason: { oneOf: [{ type: "string" }, { type: "null" }] },
     hasDraft: { type: "boolean" },
+    draftStale: { type: "boolean" },
     vehicles: { type: "array", items: VEHICLE_DAY },
   },
 } as const;
@@ -72,16 +73,28 @@ function asDate(value: string): Date {
 async function lockFor(date: Date, depotCode: string) {
   const day = await prisma.planningDay.findUnique({
     where: { date_depotCode: { date, depotCode } },
-    select: { status: true, plans: { where: { status: "DRAFT" }, select: { id: true }, take: 1 } },
+    select: {
+      status: true,
+      plans: { where: { status: "DRAFT" }, select: { createdAt: true }, orderBy: { createdAt: "desc" }, take: 1 },
+    },
   });
   if (day?.status === "PUBLISHED") {
     return {
       editable: false,
       lockedReason: "The plan for this day is published. Vehicle changes now go through the dock.",
       hasDraft: false,
+      draftStale: false,
     };
   }
-  return { editable: true, lockedReason: null, hasDraft: (day?.plans.length ?? 0) > 0 };
+  const draft = day?.plans[0];
+  // Stale only when a vehicle changed after the draft was built — a draft
+  // made from the current fleet needs no re-run.
+  const changedSince = draft
+    ? await prisma.vehicleDayStatus.count({
+        where: { date, vehicle: { depotCode }, setAt: { gt: draft.createdAt } },
+      })
+    : 0;
+  return { editable: true, lockedReason: null, hasDraft: Boolean(draft), draftStale: changedSince > 0 };
 }
 
 async function fleetDay(date: Date, depotCode: string) {

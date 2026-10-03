@@ -898,10 +898,15 @@ export interface components {
             /** @example null */
             lockedReason?: string | null;
             /**
-             * @description A draft plan exists; re-run auto-plan for a status change to take effect.
+             * @description A draft plan exists for the day.
              * @example false
              */
             hasDraft?: boolean;
+            /**
+             * @description A vehicle's status changed after the draft was built, so the draft no longer reflects the fleet — re-run auto-plan.
+             * @example false
+             */
+            draftStale?: boolean;
             vehicles: components["schemas"]["VehicleDay"][];
         };
         SetVehicleStatusRequest: {
@@ -1095,8 +1100,18 @@ export interface components {
                 brand: string;
                 /** @example Puttalam */
                 districtName: string;
+                /**
+                 * @description The kind of vehicle this order needed — what it competed for.
+                 * @enum {string}
+                 */
+                resource?: "refrigerated vehicle" | "van" | "vehicle";
+                /**
+                 * @description This order plus every served order, depot-wide, that rode a vehicle this order could also have used. 1 means nothing was swappable.
+                 * @example 4
+                 */
+                competing?: number;
             };
-            /** @description The deferred order first, then up to four competitors by priority rank. */
+            /** @description The deferred order first, then up to four competitors: orders served on a vehicle this order could have used, lowest priority (most swappable) shown. Only the deferred order when nothing was swappable. */
             items: {
                 /** @example ORD-004312 */
                 orderRef: string;
@@ -2386,7 +2401,9 @@ export interface operations {
                      * @example {
                      *       "lane": {
                      *         "brand": "Fresh",
-                     *         "districtName": "Puttalam"
+                     *         "districtName": "Puttalam",
+                     *         "resource": "refrigerated vehicle",
+                     *         "competing": 2
                      *       },
                      *       "items": [
                      *         {

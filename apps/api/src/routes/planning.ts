@@ -225,7 +225,12 @@ const LANE_ALTERNATIVES = {
       type: "object",
       additionalProperties: false,
       required: ["brand", "districtName"],
-      properties: { brand: { type: "string" }, districtName: { type: "string" } },
+      properties: {
+        brand: { type: "string" },
+        districtName: { type: "string" },
+        resource: { type: "string", enum: ["refrigerated vehicle", "van", "vehicle"] },
+        competing: { type: "integer" },
+      },
     },
     items: {
       type: "array",

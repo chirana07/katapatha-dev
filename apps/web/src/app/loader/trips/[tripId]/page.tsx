@@ -294,7 +294,7 @@ function LineRow({
                 Load first · last stop
               </span>
             )}
-            <span>Delivery seq {line.seq} · {line.outletId}</span>
+            <span>Delivery stop {line.seq + 1} · {line.outletId}</span>
           </p>
           <p className="truncate text-lg font-semibold text-ink">{line.orderRef}</p>
           <p className="tabular text-sm text-muted">
