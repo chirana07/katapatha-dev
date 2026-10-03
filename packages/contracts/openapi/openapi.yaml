@@ -61,6 +61,8 @@ tags:
     description: Driver run execution.
   - name: sync
     description: Offline outbox drain and pull.
+  - name: fleet
+    description: Which vehicles can run on a day.
 
 components:
   securitySchemes:
@@ -94,6 +96,8 @@ paths:
   # ---- planning (owner BE2) ----
   /planning-days:                             { $ref: "./paths/planning.yaml#/planningDays" }
   /planning-days/{planningDayId}/closure:     { $ref: "./paths/planning.yaml#/closure" }
+  /fleet/status:                              { $ref: "./paths/fleet.yaml#/fleetStatus" }
+  /fleet/status/{vehicleId}:                  { $ref: "./paths/fleet.yaml#/vehicleStatus" }
   /plans:                                     { $ref: "./paths/planning.yaml#/plans" }
   /plans/{planId}:                            { $ref: "./paths/planning.yaml#/planItem" }
   /plans/{planId}/validation:                 { $ref: "./paths/planning.yaml#/planValidation" }

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { HOME_FOR_ROLE } from "@katapatha/core/domain/authPaths";
 import { api } from "@/lib/api";
 import { closeQueue, createPlan } from "./actions";
+import { FleetPanel } from "./fleet-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,7 @@ const ERRORS: Record<string, string> = {
   queue_open: "Close the order queue before building a plan.",
   plan_invalid: "The queue could not produce a valid draft plan.",
   plan_outcome_unknown: "The plan request could not be confirmed. The latest state is shown below; retry uses the same request key.",
+  fleet_locked: "The plan for this day is already published, so vehicle status can no longer change here.",
 };
 
 function todayInColombo() {
@@ -77,8 +79,9 @@ export default async function DispatcherPage({
   let days;
   let orders;
   let plans;
+  let fleet;
   try {
-    [days, orders, plans] = await Promise.all([
+    [days, orders, plans, fleet] = await Promise.all([
       // Server derives depot from the signed-in dispatcher (see
       // apps/api/src/routes/planning.ts); the contract names a `depot` query
       // but the server rejects it as an additional property. Omit it until
@@ -86,6 +89,7 @@ export default async function DispatcherPage({
       client.GET("/planning-days", { params: { query: { date } } }),
       client.GET("/orders", { params: { query: { date } } }),
       client.GET("/plans", { params: { query: { date } } }),
+      client.GET("/fleet/status", { params: { query: { date } } }),
     ]);
   } catch {
     return <ReadFailure />;
@@ -217,6 +221,7 @@ export default async function DispatcherPage({
             </div>
             <form action={closeQueue}>
               <input type="hidden" name="planningDayId" value={day.id} />
+              <input type="hidden" name="date" value={day.date} />
               <button type="submit" className="min-h-12 rounded-[var(--radius-control)] bg-action px-5 font-semibold text-ink hover:brightness-95">Close order queue</button>
             </form>
           </div>
@@ -263,6 +268,9 @@ export default async function DispatcherPage({
           </div>
         )}
       </section>
+
+      {/* Fleet status is supplementary: if it can't load, the desk still works. */}
+      {day && fleet.data ? <FleetPanel fleet={fleet.data} /> : null}
 
       <section className="mt-6">
         <div className="flex flex-wrap items-end justify-between gap-3 pb-2">
@@ -434,8 +442,15 @@ function OrderStatus({ status }: { status: string }) {
   return <span className={`inline-flex rounded-md px-2 py-1 text-xs font-semibold ${style}`}>{status.toLowerCase().replaceAll("_", " ")}</span>;
 }
 
+const NOTICES: Record<string, string> = {
+  queue_closed: "Order queue closed. The delivery plan can now be built.",
+  plan_created: "Draft plan built. Review its trips, deferrals, and validation before publishing.",
+  fleet_updated: "Vehicle status saved. The next auto-plan run uses the updated fleet.",
+  fleet_updated_draft: "Vehicle status saved. Re-run auto-plan so the draft uses the updated fleet.",
+};
+
 function Notice({ kind }: { kind: string }) {
-  const message = kind === "queue_closed" ? "Order queue closed. The delivery plan can now be built." : "Draft plan built. Review its trips, deferrals, and validation before publishing.";
+  const message = NOTICES[kind] ?? NOTICES.plan_created;
   return <div role="status" className="mt-5 rounded-[var(--radius-card)] border border-emerald-200 bg-emerald-50 p-4 text-emerald-800"><p className="font-semibold">Planning updated</p><p className="mt-1 text-sm">{message}</p></div>;
 }
 
