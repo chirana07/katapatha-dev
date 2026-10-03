@@ -731,6 +731,12 @@ export interface components {
              * @enum {string}
              */
             storeState?: "queued" | "planned" | "on_the_way" | "delivered" | "deferred" | "cancelled";
+            /** @description Present once a plan that deferred this order is published: the dispatcher's reason and the operating day it moves to. `rolledToDate` is null when no vehicle in the fleet could carry the order as it stands, so no next run is promised. Additive (CONVENTIONS.md rule 8). */
+            deferral?: null | {
+                /** @example REEFER_FULL */
+                reasonCode: string;
+                rolledToDate: null | components["schemas"]["DateOnly"];
+            };
         };
         /** @description The store manager supplies units only. Outlet, brand, district and depot are derived server-side from the session — never trusted from the body. Weight and volume are estimated from the outlet's own history. */
         PlaceOrdersRequest: {
@@ -983,10 +989,10 @@ export interface components {
                  */
                 rank: number;
                 /**
-                 * @description protected — deferred yesterday, cannot be skipped twice; lowest — the lowest priority score in the lane; high — the rest.
+                 * @description protected — deferred yesterday and served today; skipped_twice — deferred yesterday and deferred again (the HIGH_PRIORITY_DEFERRED warning); lowest — the lowest priority score in the lane; high — the rest.
                  * @enum {string}
                  */
-                impact: "lowest" | "protected" | "high";
+                impact: "lowest" | "protected" | "skipped_twice" | "high";
                 /** @example deferred yesterday, window shuts 08:00 */
                 why: string;
             }[];

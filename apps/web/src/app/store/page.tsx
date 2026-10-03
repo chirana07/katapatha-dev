@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { api } from "@/lib/api";
+import { shortDay } from "@katapatha/core/domain/deferral";
 import { readError } from "./api-errors";
 import {
   needsAttention,
@@ -110,6 +111,11 @@ function StatusPill({ state }: { state: string }) {
       {storeStateLabel(state)}
     </span>
   );
+}
+
+/** One line under a deferred order; the full message is on the order page. */
+function DeferralNote({ deferral }: { deferral: { rolledToDate?: string | null } }) {
+  return <>{deferral.rolledToDate ? `Moves to ${shortDay(deferral.rolledToDate)}` : "Can't be delivered as ordered"}</>;
 }
 
 function BrandPill({ brand }: { brand: string }) {
@@ -253,6 +259,7 @@ export default async function StoreOrdersPage({
                       </div>
                       <StatusPill state={state} />
                     </div>
+                    {order.deferral ? <p className="mt-2 text-sm font-semibold text-critical"><DeferralNote deferral={order.deferral} /></p> : null}
                     <div className="mt-4 flex flex-wrap items-center gap-2">
                       <BrandPill brand={order.brand} />
                       <span className="text-sm text-muted">{order.tempRequirement === "chilled" ? "Chilled" : "Ambient"}</span>
@@ -304,7 +311,10 @@ export default async function StoreOrdersPage({
                         <td className="tabular px-4 py-3 text-muted">
                           {receivingWindowLabel(order)}
                         </td>
-                        <td className="px-4 py-3"><StatusPill state={state} /></td>
+                        <td className="px-4 py-3">
+                          <StatusPill state={state} />
+                          {order.deferral ? <p className="mt-1 text-xs text-critical"><DeferralNote deferral={order.deferral} /></p> : null}
+                        </td>
                       </tr>
                     );
                   })}

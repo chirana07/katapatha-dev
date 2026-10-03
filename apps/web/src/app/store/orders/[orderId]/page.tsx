@@ -2,6 +2,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { api } from "@/lib/api";
 import { readError } from "../../api-errors";
+import { deferralMessage } from "@katapatha/core/domain/deferral";
 import { receivingWindowLabel, storeState, storeStateLabel } from "../../order-state";
 import { OrderProgress } from "./order-progress";
 import { ReceiptForm } from "./receipt-form";
@@ -58,6 +59,22 @@ export default async function StoreOrderPage({
           {storeStateLabel(state)}
         </span>
       </header>
+
+      {order.deferral ? (
+        <section className="mt-6 rounded-[var(--radius-card)] border border-red-200 bg-red-50 p-4">
+          <p className="font-semibold text-critical">
+            {order.deferral.rolledToDate ? "This order moves to the next run" : "This order could not be delivered"}
+          </p>
+          <p className="mt-1 text-sm text-ink">
+            {deferralMessage(
+              { ref: order.ref, windowOpen: order.windowOpen ?? "", windowClose: order.windowClose ?? "" },
+              order.deferral.reasonCode,
+              order.deferral.rolledToDate ?? "",
+              !order.deferral.rolledToDate,
+            )}
+          </p>
+        </section>
+      ) : null}
 
       {receiptConfirmed ? (
         <section aria-live="polite" className="mt-6 rounded-[var(--radius-card)] bg-emerald-50 p-4 text-emerald-800">

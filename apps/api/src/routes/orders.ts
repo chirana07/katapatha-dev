@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { Brand, OrderStatus, TempRequirement } from "@prisma/client";
+import type { Brand, OrderStatus, Prisma, TempRequirement } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import type { SessionUser } from "../lib/auth.js";
 import { nextOperatingDate, unitSizeFor } from "../services/store.js";
@@ -82,6 +82,24 @@ const ORDER_RESPONSE_ITEM = {
       type: "string",
       enum: ["queued", "planned", "on_the_way", "delivered", "deferred", "cancelled"],
     },
+    // Additive: the published deferral's reason and moves-to day, so the
+    // store sees what the dispatcher told them (Figma D-05 store preview).
+    deferral: {
+      oneOf: [
+        { type: "null" },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["reasonCode", "rolledToDate"],
+          properties: {
+            reasonCode: { type: "string" },
+            rolledToDate: {
+              oneOf: [{ type: "null" }, { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }],
+            },
+          },
+        },
+      ],
+    },
   },
 } as const;
 
@@ -103,7 +121,26 @@ function storeStateOf(
   return "queued";
 }
 
-type OrderWithTripLinkage = Awaited<ReturnType<typeof fetchOrdersFor>>[number];
+/**
+ * What every order read needs: the trip linkage for `storeState`, and the
+ * latest published deferral for the additive `deferral` field.
+ */
+const ORDER_INCLUDE = {
+  assignments: {
+    select: {
+      plan: { select: { status: true } },
+      tripStop: { select: { trip: { select: { status: true } } } },
+    },
+  },
+  deferrals: {
+    where: { plan: { status: "PUBLISHED" } },
+    orderBy: { decidedAt: "desc" },
+    take: 1,
+    select: { reasonCode: true, rolledToDate: true },
+  },
+} satisfies Prisma.OrderInclude;
+
+type OrderWithTripLinkage = Prisma.OrderGetPayload<{ include: typeof ORDER_INCLUDE }>;
 
 async function fetchOrdersFor(user: SessionUser, args: { date?: Date }) {
   const where: Record<string, unknown> = {};
@@ -120,14 +157,7 @@ async function fetchOrdersFor(user: SessionUser, args: { date?: Date }) {
     where,
     orderBy: [{ requestedDate: "desc" }, { ref: "asc" }],
     take: 100,
-    include: {
-      assignments: {
-        select: {
-          plan: { select: { status: true } },
-          tripStop: { select: { trip: { select: { status: true } } } },
-        },
-      },
-    },
+    include: ORDER_INCLUDE,
   });
 }
 
@@ -150,6 +180,18 @@ function toOrderResponse(order: OrderWithTripLinkage) {
     requestedDate: order.requestedDate.toISOString().slice(0, 10),
     status: order.status,
     storeState: storeStateOf(order.status, Boolean(published), departed),
+    deferral: deferralOf(order),
+  };
+}
+
+function deferralOf(order: OrderWithTripLinkage) {
+  // Only while the order is actually deferred — a later plan that serves it
+  // supersedes the old decision.
+  const latest = order.status === "DEFERRED" ? order.deferrals[0] : undefined;
+  if (!latest) return null;
+  return {
+    reasonCode: latest.reasonCode,
+    rolledToDate: latest.rolledToDate?.toISOString().slice(0, 10) ?? null,
   };
 }
 
@@ -227,14 +269,7 @@ export default async function (fastify: FastifyInstance) {
 
       const order = await prisma.order.findFirst({
         where,
-        include: {
-          assignments: {
-            select: {
-              plan: { select: { status: true } },
-              tripStop: { select: { trip: { select: { status: true } } } },
-            },
-          },
-        },
+        include: ORDER_INCLUDE,
       });
       if (!order) {
         return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Order not found." } });
@@ -320,14 +355,7 @@ export default async function (fastify: FastifyInstance) {
             outletId,
             clientRequestId: { startsWith: requestKeyPrefix },
           },
-          include: {
-            assignments: {
-              select: {
-                plan: { select: { status: true } },
-                tripStop: { select: { trip: { select: { status: true } } } },
-              },
-            },
-          },
+          include: ORDER_INCLUDE,
         });
         return rows.sort((a, b) => lineIndexOf(a.clientRequestId) - lineIndexOf(b.clientRequestId));
       }
@@ -427,14 +455,7 @@ export default async function (fastify: FastifyInstance) {
 
       const withLinkage = await prisma.order.findMany({
         where: { id: { in: created.map((o) => o.id) } },
-        include: {
-          assignments: {
-            select: {
-              plan: { select: { status: true } },
-              tripStop: { select: { trip: { select: { status: true } } } },
-            },
-          },
-        },
+        include: ORDER_INCLUDE,
       });
 
       return reply.status(201).send(withLinkage.map(toOrderResponse));
