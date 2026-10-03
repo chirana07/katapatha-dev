@@ -37,7 +37,18 @@ Stop:
         properties:
           orderId: { type: string, examples: ["clx0ord1a2b3c4d5e6f7g8h9"] }
           orderRef: { type: string, examples: ["ORD-004312"] }
-          expectedUnits: { type: integer, examples: [120] }
+          expectedUnits:
+            type: integer
+            description: >
+              What is on the vehicle for this order — the units the dock loaded
+              when a load check exists, otherwise the units ordered. After a
+              dispatcher sends a shortfall short the two differ, and this is the
+              figure a handover is counted against.
+            examples: [120]
+          orderedUnits:
+            type: integer
+            description: What the store ordered. Additive.
+            examples: [120]
 
 StopEvent:
   type: object

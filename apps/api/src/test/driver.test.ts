@@ -192,12 +192,31 @@ describe("the driver's own routes", () => {
                 windowOpen: "06:00",
                 windowClose: "11:00",
                 accessNote: "Use the rear dock. Vans only — no truck access.",
-                orders: [{ orderId: "ORD1", orderRef: "ORD-004312", expectedUnits: 120 }],
+                orders: [{ orderId: "ORD1", orderRef: "ORD-004312", expectedUnits: 120, orderedUnits: 120 }],
               },
             ],
           },
         ],
       });
+    });
+
+    it("counts a handover against what is on board once a shortfall was sent short", async () => {
+      const server = await serverFor();
+      loadRunMock.mockResolvedValue([
+        { ...runTrip, loadChecks: [{ orderId: "ORD1", loadedUnits: 116 }] },
+      ] as never);
+
+      const response = await server.inject({
+        method: "GET",
+        url: "/v1/drivers/me/run?date=2026-04-09",
+      });
+
+      expect(response.statusCode).toBe(200);
+      // 120 ordered, 116 loaded. A driver handing over 116 has not come up
+      // short of what they were given, and must not be prompted as if so.
+      expect(response.json().trips[0].stops[0].orders).toEqual([
+        { orderId: "ORD1", orderRef: "ORD-004312", expectedUnits: 116, orderedUnits: 120 },
+      ]);
     });
 
     it("refuses to guess a date", async () => {

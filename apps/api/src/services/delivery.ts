@@ -429,6 +429,10 @@ export async function loadRun(vehicleId: string, date: Date) {
     orderBy: { tripNo: "asc" },
     include: {
       vehicle: true,
+      // What the dock actually put on the vehicle. After a dispatcher sends a
+      // shortfall short, this — not the ordered quantity — is what the driver
+      // is carrying and what a receipt can honestly match.
+      loadChecks: { select: { orderId: true, loadedUnits: true } },
       stops: {
         orderBy: { seq: "asc" },
         include: {

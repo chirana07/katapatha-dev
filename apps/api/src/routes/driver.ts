@@ -55,6 +55,7 @@ const STOP_ITEM = {
           orderId: { type: "string" },
           orderRef: { type: "string" },
           expectedUnits: { type: "integer" },
+          orderedUnits: { type: "integer" },
         },
       },
     },
@@ -211,11 +212,18 @@ export default async function (fastify: FastifyInstance) {
             windowOpen: stop.outlet.windowOpen,
             windowClose: stop.outlet.windowClose,
             accessNote: accessNoteFor(stop.outlet) || null,
-            orders: stop.orders.map(({ order }) => ({
-              orderId: order.id,
-              orderRef: order.ref,
-              expectedUnits: order.units,
-            })),
+            orders: stop.orders.map(({ order }) => {
+              const loaded = trip.loadChecks?.find((check) => check.orderId === order.id);
+              return {
+                orderId: order.id,
+                orderRef: order.ref,
+                // On board, not ordered: they differ once a shortfall has been
+                // sent short, and a driver counting against the ordered figure
+                // would be told a correct handover was short.
+                expectedUnits: loaded?.loadedUnits ?? order.units,
+                orderedUnits: order.units,
+              };
+            }),
           })),
         })),
       };
