@@ -1,0 +1,104 @@
+/**
+ * Helpers for the dispatcher's "Defer order" decision.
+ *
+ * Shared so the API and the web can never disagree about which reason the
+ * allocator's own finding points at, or which day a deferred order moves to.
+ */
+
+import { DEFERRAL_REASONS, type DeferralReasonCode } from "./reasons";
+
+/**
+ * Allocator rejection code -> the fixed deferral reason a dispatcher records.
+ *
+ * Keyed by string rather than the allocator's `RejectionCode` type because the
+ * allocator depends on core, not the other way round. Codes missing from the
+ * map get no suggestion: an order that yielded to a higher-priority one in its
+ * lane has no capacity reason to suggest, and pretending otherwise would put a
+ * misleading line in the store's history.
+ */
+const SUGGESTION: Readonly<Record<string, DeferralReasonCode>> = {
+  NO_REEFER_AVAILABLE: "REEFER_FULL",
+  NO_REEFER_IN_FLEET: "REEFER_FULL",
+  NO_VAN_AVAILABLE: "NO_VAN",
+  NO_VAN_IN_FLEET: "NO_VAN",
+  WINDOW_UNREACHABLE: "WINDOW_UNREACHABLE",
+  PREDAWN_BUDGET_EXCEEDED: "TIME_BUDGET",
+  DAYTIME_BUDGET_EXCEEDED: "TIME_BUDGET",
+  NO_TRIP_SLOT: "TIME_BUDGET",
+  DISTRICT_UNREACHABLE_IN_BUDGET: "TIME_BUDGET",
+  FUEL_QUOTA_EXCEEDED: "FUEL_QUOTA",
+  VEHICLE_IN_WORKSHOP: "VEHICLE_IN_WORKSHOP",
+  ORDER_EXCEEDS_FLEET_CAPACITY: "ORDER_TOO_LARGE",
+  VOLUME_CAP_EXCEEDED: "ORDER_TOO_LARGE",
+  WEIGHT_CAP_EXCEEDED: "ORDER_TOO_LARGE",
+};
+
+export function suggestDeferralReason(
+  rejectionCode: string | null | undefined,
+): DeferralReasonCode | null {
+  if (!rejectionCode) return null;
+  return SUGGESTION[rejectionCode] ?? null;
+}
+
+/**
+ * The first operating day after `date` (YYYY-MM-DD).
+ *
+ * `isOperating` answers from the reference calendar; `undefined` means the
+ * calendar has no row for that day, in which case Sunday is treated as closed
+ * — the fuel week and the depot week are both Monday to Saturday. Bounded so a
+ * calendar that marks everything closed cannot loop forever.
+ */
+export function nextOperatingDate(
+  date: string,
+  isOperating: (date: string) => boolean | undefined,
+): string {
+  const start = new Date(`${date}T00:00:00.000Z`);
+  const dayAfter = (n: number) => {
+    const d = new Date(start);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d;
+  };
+  for (let n = 1; n <= 14; n += 1) {
+    const d = dayAfter(n);
+    const iso = d.toISOString().slice(0, 10);
+    const known = isOperating(iso);
+    if (known === true) return iso;
+    if (known === undefined && d.getUTCDay() !== 0) return iso;
+  }
+  return dayAfter(1).toISOString().slice(0, 10);
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+
+/** "Wed 30 Sep" — formatted by hand so ICU data on the host can't change the copy. */
+export function shortDay(iso: string): string {
+  const d = new Date(`${iso}T00:00:00.000Z`);
+  return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+}
+
+const DEFERRAL_LABEL = new Map<string, string>(DEFERRAL_REASONS.map((r) => [r.code, r.label]));
+
+export function deferralReasonLabel(code: string): string {
+  return DEFERRAL_LABEL.get(code) ?? code.replaceAll("_", " ").toLowerCase();
+}
+
+/**
+ * What the store manager reads when a deferral is published. The API writes
+ * it into the outlet's notification; the dispatcher's drawer previews the
+ * exact same string before they commit.
+ */
+export function deferralMessage(
+  order: { ref: string; windowOpen: string; windowClose: string },
+  reasonCode: string,
+  movesTo: string,
+  permanent = false,
+): string {
+  const reason = `Reason: ${deferralReasonLabel(reasonCode).toLowerCase()}.`;
+  if (permanent) {
+    // No vehicle in the fleet can take it as it stands, so promising a slot
+    // on the next run would be a lie. Say what actually happens.
+    return `Your order ${order.ref} could not be delivered today. ${reason} The dispatcher will contact you about splitting or changing it.`;
+  }
+  return `Your order ${order.ref} moves to ${shortDay(movesTo)}, ${order.windowOpen}–${order.windowClose}. ${reason} It will be planned first on that run.`;
+}
