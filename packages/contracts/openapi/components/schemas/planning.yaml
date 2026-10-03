@@ -203,8 +203,10 @@ LaneAlternatives:
           rank: { type: integer, description: "1 = highest priority in the lane", examples: [3] }
           impact:
             type: string
-            enum: [lowest, protected, high]
+            enum: [lowest, protected, skipped_twice, high]
             description: >
-              protected — deferred yesterday, cannot be skipped twice;
-              lowest — the lowest priority score in the lane; high — the rest.
+              protected — deferred yesterday and served today;
+              skipped_twice — deferred yesterday and deferred again (the
+              HIGH_PRIORITY_DEFERRED warning); lowest — the lowest priority
+              score in the lane; high — the rest.
           why: { type: string, examples: ["deferred yesterday, window shuts 08:00"] }

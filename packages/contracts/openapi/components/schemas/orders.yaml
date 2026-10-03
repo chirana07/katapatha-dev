@@ -46,6 +46,22 @@ Order:
       type: string
       description: The narrower projection a store manager sees.
       enum: [queued, planned, on_the_way, delivered, deferred, cancelled]
+    deferral:
+      description: >
+        Present once a plan that deferred this order is published: the
+        dispatcher's reason and the operating day it moves to. `rolledToDate`
+        is null when no vehicle in the fleet could carry the order as it
+        stands, so no next run is promised. Additive (CONVENTIONS.md rule 8).
+      oneOf:
+        - type: "null"
+        - type: object
+          required: [reasonCode, rolledToDate]
+          properties:
+            reasonCode: { type: string, examples: ["REEFER_FULL"] }
+            rolledToDate:
+              oneOf:
+                - type: "null"
+                - $ref: "./common.yaml#/DateOnly"
 
 ReceiptRequest:
   type: object

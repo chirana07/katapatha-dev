@@ -11,6 +11,7 @@ type LaneAlternatives = components["schemas"]["LaneAlternatives"];
 const IMPACT: Record<string, { label: string; style: string }> = {
   lowest: { label: "Lowest impact", style: "bg-blue-50 text-link" },
   protected: { label: "Protected", style: "bg-emerald-50 text-emerald-700" },
+  skipped_twice: { label: "Skipped twice", style: "bg-red-50 text-[color:var(--c-ruby)]" },
   high: { label: "High impact", style: "bg-red-50 text-[color:var(--c-ruby)]" },
 };
 
@@ -31,6 +32,8 @@ export function DeferDrawer({
   planId,
   deferral,
   alternatives,
+  alternativesFailed,
+  error,
   allReasons,
   closeHref,
   readOnly,
@@ -38,6 +41,9 @@ export function DeferDrawer({
   planId: string;
   deferral: DeferralRow;
   alternatives: LaneAlternatives | null;
+  alternativesFailed: boolean;
+  /** A save error, shown here because the page banner sits behind the overlay. */
+  error: string | null;
   allReasons: string[];
   closeHref: string;
   readOnly: boolean;
@@ -105,6 +111,12 @@ export function DeferDrawer({
               </Link>
             </div>
 
+            {error ? (
+              <div role="alert" className="mt-5 rounded-[var(--radius-control)] border border-red-200 bg-red-50 p-3 text-sm font-semibold text-critical">
+                {error}
+              </div>
+            ) : null}
+
             {cause ? (
               <div className="mt-5 rounded-[var(--radius-control)] bg-red-50 p-4 text-sm">
                 <p className="font-semibold text-[color:var(--c-ruby)]">
@@ -156,6 +168,8 @@ export function DeferDrawer({
                   );
                 })}
               </ul>
+            ) : alternativesFailed ? (
+              <p className="mt-2 text-sm text-muted">The lane comparison could not be loaded. Reload to try again.</p>
             ) : (
               <p className="mt-2 text-sm text-muted">No other orders share this lane.</p>
             )}
