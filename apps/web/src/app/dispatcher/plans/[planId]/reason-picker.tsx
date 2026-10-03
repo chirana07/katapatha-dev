@@ -8,7 +8,7 @@ const COMMON = ["REEFER_FULL", "VEHICLE_IN_WORKSHOP", "WINDOW_UNREACHABLE", "TIM
 const OTHER = "__other__";
 
 /**
- * Figma D-05 reason block: the allocator's suggestion first with a
+ * D-05 reason block: the allocator's suggestion first with a
  * 'Suggested' chip, two common alternatives, and 'Other · add a note'. The
  * preview underneath is built by the same function the API uses to write the
  * store's notification, so what the dispatcher reads is what the store gets.
@@ -69,7 +69,7 @@ export function ReasonPicker({
   return (
     <>
       <fieldset disabled={readOnly}>
-        <legend className="text-xs font-semibold uppercase tracking-wide text-muted">
+        <legend className="text-xs font-bold uppercase tracking-wider text-muted">
           Reason · saved on the order and shown to the store
         </legend>
         <div className="mt-3 flex flex-col gap-2">
@@ -96,7 +96,7 @@ export function ReasonPicker({
                 value={otherCode}
                 required
                 onChange={(event) => setOtherCode(event.target.value)}
-                className="min-h-11 rounded-[var(--radius-control)] border border-line bg-surface px-3 text-sm text-ink"
+                className="min-h-11 rounded-control border border-line bg-surface px-3 text-sm text-ink"
               >
                 <option value="" disabled>
                   Choose a reason…
@@ -114,7 +114,7 @@ export function ReasonPicker({
                 maxLength={500}
                 rows={2}
                 placeholder="Note for the record (optional)"
-                className="rounded-[var(--radius-control)] border border-line bg-surface px-3 py-2 text-sm text-ink"
+                className="rounded-control border border-line bg-surface px-3 py-2 text-sm text-ink"
               />
             </div>
           ) : null}
@@ -126,7 +126,7 @@ export function ReasonPicker({
 
       {children}
 
-      <div className="mt-5 rounded-[var(--radius-control)] bg-raised p-4 text-sm">
+      <div className="mt-5 rounded-control bg-raised p-4 text-sm">
         <p className="text-xs font-semibold text-muted">{sent ? `Sent to ${lowerFirst(recipient)}` : `${recipient} will see`}</p>
         <p className="mt-1 text-ink">
           {preview ? <>&ldquo;{preview}&rdquo;</> : "Pick a reason to preview the message."}
@@ -154,19 +154,19 @@ function ReasonOption({
 }) {
   return (
     <label
-      className={`flex cursor-pointer items-center gap-3 rounded-[var(--radius-control)] border p-3 transition-colors has-[:disabled]:cursor-default ${checked ? "border-amber-300 bg-amber-50" : "border-line bg-surface hover:border-[color:var(--c-navy)]"}`}
+      className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-control border p-3 transition-colors has-[:disabled]:cursor-default ${checked ? "border-action bg-warn-surface" : "border-line bg-surface hover:border-rail"}`}
     >
       <input
         type="radio"
         name={name}
         checked={checked}
         onChange={onSelect}
-        className="h-4 w-4 accent-[color:var(--c-flame)]"
+        className="size-4 accent-action"
       />
       <span className="flex-1 text-sm font-semibold text-ink">
         {label}
         {chip ? (
-          <span className="ml-2 inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">
+          <span className="ml-2 inline-flex items-center rounded-control border border-good/25 bg-good-surface px-1.5 py-0.5 text-[11px] font-semibold text-good-ink">
             {chip}
           </span>
         ) : null}

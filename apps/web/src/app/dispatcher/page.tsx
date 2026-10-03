@@ -1,479 +1,386 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { HOME_FOR_ROLE } from "@katapatha/core/domain/authPaths";
+import type { components } from "@katapatha/contracts/types";
+import { PageBody, PageHeader } from "@/components/ui/page-header";
+import { StatCard } from "@/components/ui/stat-card";
+import { BrandPill, StatusPill, type Tone } from "@/components/ui/status-pill";
+import { DataTable, RowCard, Td, Th, Tr } from "@/components/ui/data-table";
+import { DateControl } from "@/components/ui/date-control";
+import { ButtonLink } from "@/components/ui/button";
+import { EmptyState, ErrorPanel } from "@/components/ui/states";
 import { api } from "@/lib/api";
-import { closeQueue, createPlan } from "./actions";
-import { FleetPanel } from "./fleet-panel";
+import { requireRole } from "@/lib/auth";
+import { dateParam, longDate } from "@/lib/dates";
+import { clockTime, percent, plural } from "@/lib/format";
+import { readFailure } from "@/lib/failures";
+import { loadDay } from "./desk-data";
+import { Flash } from "./flash";
+import { Glyph } from "./icons";
+import { NextStep } from "./next-step";
+import { ORDER_STATUS, groupCounts, inGroup, sumVolume, sumWeight } from "./order-status";
 
 export const dynamic = "force-dynamic";
 
-const STATUS_STYLE: Record<string, string> = {
-  OPEN: "bg-blue-50 text-blue-700",
-  CLOSED: "bg-amber-50 text-amber-800",
-  PLANNING: "bg-amber-50 text-amber-800",
-  PUBLISHED: "bg-emerald-50 text-emerald-700",
-};
+type Order = components["schemas"]["Order"];
 
-const ERRORS: Record<string, string> = {
-  session: "Your session could not be verified. Try again.",
-  depot: "Your dispatcher account is not assigned to a depot.",
-  invalid_request: "The planning request was incomplete. Reload and try again.",
-  forbidden: "This planning day is outside your depot access.",
-  stale: "This planning day changed. The latest state is shown below.",
-  unreachable: "Katapatha is temporarily unreachable. No planning state was changed.",
-  close_outcome_unknown: "The close request could not be confirmed. The latest queue state is shown below; retrying close is safe.",
-  queue_open: "Close the order queue before building a plan.",
-  plan_invalid: "The queue could not produce a valid draft plan.",
-  plan_outcome_unknown: "The plan request could not be confirmed. The latest state is shown below; retry uses the same request key.",
-  fleet_locked: "The plan for this day is already published, so vehicle status can no longer change here.",
-};
+const SHOWN = 8;
 
-function todayInColombo() {
-  const parts = new Intl.DateTimeFormat("en", {
-    timeZone: "Asia/Colombo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
-  return `${part("year")}-${part("month")}-${part("day")}`;
-}
-
-function longDate(iso: string) {
-  const [y, m, d] = iso.split("-").map(Number);
-  if (!y || !m || !d) return iso;
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function validUuid(value: string | undefined) {
-  return Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
-}
-
-export default async function DispatcherPage({
+/**
+ * D-02 — the dashboard: what the day looks like and what to do next.
+ *
+ * Everything here is a count or a list from an endpoint (/planning-days,
+ * /orders, /plans, /exceptions, /vehicles, /plans/{id}); there is no figure the
+ * API does not stand behind. Where the design drew a weather chip, a "+12% from
+ * yesterday" delta and a route map, this screen has none: no endpoint backs the
+ * first two, and the schematic map is its own page.
+ */
+export default async function DispatcherDashboard({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; notice?: string; retry?: string; date?: string }>;
+  searchParams: Promise<{ date?: string; error?: string; notice?: string; retry?: string }>;
 }) {
-  let client;
-  let me;
-  try {
-    client = await api();
-    me = await client.GET("/auth/me");
-  } catch {
-    return <ReadFailure />;
-  }
-  if (me.response.status === 401) redirect("/sign-in?next=/dispatcher");
-  if (me.error || !me.data) return <ReadFailure />;
-  if (me.data.role !== "DISPATCHER") redirect(HOME_FOR_ROLE[me.data.role]);
-  if (!me.data.depotCode) return <ReadFailure detail="This dispatcher account is not assigned to a depot." />;
-
+  const user = await requireRole("DISPATCHER", "/dispatcher");
   const query = await searchParams;
-  const dateOverride = typeof query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(query.date) ? query.date : null;
-  const date = dateOverride ?? todayInColombo();
-  const depotCode = me.data.depotCode;
-  let days;
-  let orders;
-  let plans;
-  let fleet;
-  try {
-    [days, orders, plans, fleet] = await Promise.all([
-      // Server derives depot from the signed-in dispatcher (see
-      // apps/api/src/routes/planning.ts); the contract names a `depot` query
-      // but the server rejects it as an additional property. Omit it until
-      // the two agree.
-      client.GET("/planning-days", { params: { query: { date } } }),
-      client.GET("/orders", { params: { query: { date } } }),
-      client.GET("/plans", { params: { query: { date } } }),
-      client.GET("/fleet/status", { params: { query: { date } } }),
-    ]);
-  } catch {
-    return <ReadFailure />;
-  }
-  if ([days, orders, plans].some((result) => result.response.status === 401)) {
-    redirect("/sign-in?next=/dispatcher");
-  }
-  if (days.error || orders.error || plans.error || !days.data || !orders.data || !plans.data) {
-    return <ReadFailure />;
+  const date = dateParam(query.date);
+  const withDate = (path: string) => `${path}?date=${date}`;
+
+  const loaded = await loadDay(date, "/dispatcher");
+  if (!loaded.ok) {
+    return (
+      <PageBody>
+        <PageHeader title="Delivery operations" subtitle={`${user.depotCode ?? "Depot"} · ${longDate(date)}`} aside={<DateControl date={date} path="/dispatcher" />} />
+        <ErrorPanel
+          {...loaded.failure}
+          action={
+            <ButtonLink href={withDate("/dispatcher")} variant="secondary">
+              Try again
+            </ButtonLink>
+          }
+        />
+      </PageBody>
+    );
   }
 
-  const planRequestId = validUuid(query.retry) ? query.retry! : crypto.randomUUID();
-  const day = days.data[0];
-  const plan = day?.status === "PUBLISHED"
-    ? plans.data.find((item) => item.status === "PUBLISHED") ?? plans.data[0]
-    : plans.data.find((item) => item.status === "DRAFT") ?? plans.data[0];
-  const chilled = orders.data.filter((order) => order.tempRequirement === "chilled").length;
-  const waiting = orders.data.filter((order) => order.status === "QUEUED" || order.status === "PLACED").length;
-  const totalVolume = orders.data.reduce((sum, order) => sum + (order.volumeM3 ?? 0), 0);
-  const totalWeight = orders.data.reduce((sum, order) => sum + (order.weightKg ?? 0), 0);
-  const deferredCount = orders.data.filter((order) => order.status === "DEFERRED").length;
-  const cancelledCount = orders.data.filter((order) => order.status === "CANCELLED").length;
-  const attentionCount = deferredCount + cancelledCount;
-  const allocated = plan?.stats.served ?? 0;
-  const allocatedPct = orders.data.length > 0 ? Math.round((allocated / orders.data.length) * 100) : 0;
+  const { day, orders, plan } = loaded.data;
+  const client = await api();
+  // Each of these is a side panel: if one cannot load, the dashboard says so in
+  // that panel and the rest still works.
+  const [exceptions, vehicles, planDetail] = await Promise.all([
+    client.GET("/exceptions", { params: { query: { date, status: "open" } } }).catch(() => null),
+    client.GET("/vehicles", { params: { query: { date } } }).catch(() => null),
+    plan ? client.GET("/plans/{planId}", { params: { path: { planId: plan.planId } } }).catch(() => null) : Promise.resolve(null),
+  ]);
+  const exceptionList = exceptions?.data ?? null;
+  const fleet = vehicles?.data ?? null;
+  const detail = planDetail?.data ?? null;
+
+  const counts = groupCounts(orders);
+  const chilled = orders.filter((o) => o.tempRequirement === "chilled").length;
+  const served = plan?.stats.served;
+  const deferred = plan?.stats.deferred ?? counts.deferred;
+  const pendingDeferrals = detail ? detail.deferrals.filter((d) => !d.reasonCode).length : 0;
+  const attentionFirst = [...orders].sort((a, b) => Number(inGroup(b.status, "attention")) - Number(inGroup(a.status, "attention")));
+  const shown = attentionFirst.slice(0, SHOWN);
+  const requestId = validRetry(query.retry) ?? crypto.randomUUID();
+
+  const attentionBits = [
+    counts.deferred ? plural(counts.deferred, "deferred order") : null,
+    orders.filter((o) => o.status === "FAILED").length ? plural(orders.filter((o) => o.status === "FAILED").length, "failed delivery", "failed deliveries") : null,
+    orders.filter((o) => o.status === "PART_DELIVERED").length ? `${orders.filter((o) => o.status === "PART_DELIVERED").length} part delivered` : null,
+  ].filter(Boolean);
+  const openExceptions = exceptionList?.summary.open ?? 0;
 
   return (
-    <main className="mx-auto w-full max-w-7xl p-4 sm:p-6 lg:p-8">
-      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">{depotCode} depot</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">Delivery operations</h1>
-          <p className="mt-2 flex items-center gap-2 text-sm text-muted">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
-              <rect x="3" y="4" width="18" height="17" rx="2" /><path d="M8 2v4M16 2v4M3 10h18" />
-            </svg>
-            {longDate(date)}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <form method="get" className="flex items-center gap-2">
-            <label htmlFor="desk-date" className="sr-only">Planning date</label>
-            <input
-              id="desk-date"
-              name="date"
-              type="date"
-              defaultValue={date}
-              className="min-h-11 rounded-[var(--radius-control)] border border-line bg-surface px-3 text-sm text-ink"
-            />
-            <button
-              type="submit"
-              className="min-h-11 rounded-[var(--radius-control)] bg-[color:var(--c-navy)] px-3 text-sm font-semibold text-white hover:brightness-110"
-            >
-              Go
-            </button>
-          </form>
-          {day ? <StatusPill status={day.status} /> : null}
-          {day?.status === "CLOSED" ? (
-            <form action={createPlan}>
-              <input type="hidden" name="date" value={day.date} />
-              <input type="hidden" name="depotCode" value={day.depotCode} />
-              <input type="hidden" name="requestId" value={planRequestId} />
-              <button type="submit" className="inline-flex min-h-11 items-center gap-2 rounded-[var(--radius-control)] bg-action px-4 font-semibold text-ink hover:brightness-95">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
-                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                </svg>
-                Generate plan
-              </button>
-            </form>
-          ) : null}
-        </div>
-      </header>
+    <PageBody>
+      <PageHeader
+        title="Delivery operations"
+        subtitle={`${user.depotCode ?? "Depot"} depot · ${longDate(date)}`}
+        aside={
+          <>
+            <span className="tabular text-xs text-muted">Page loaded {clockTime(new Date().toISOString())}</span>
+            <DateControl date={date} path="/dispatcher" />
+          </>
+        }
+      />
 
-      {query.notice ? <Notice kind={query.notice} /> : null}
-      {query.error ? <ErrorBanner code={query.error} /> : null}
+      <Flash notice={query.notice} error={query.error} context={{ pendingDeferrals }} />
 
-      {attentionCount > 0 && (
-        <section className="mt-5 flex items-start gap-3 rounded-[var(--radius-card)] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 h-5 w-5 shrink-0 text-action" aria-hidden>
-            <path d="M12 9v4M12 17v.01" /><path d="M10.3 3.7L2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0z" />
-          </svg>
-          <div>
-            <p className="font-semibold">
-              {attentionCount} order{attentionCount === 1 ? "" : "s"} need{attentionCount === 1 ? "s" : ""} your attention
-            </p>
-            <p className="mt-0.5 text-amber-900/80">
-              {[deferredCount && `${deferredCount} deferred`, cancelledCount && `${cancelledCount} cancelled`]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          </div>
+      {attentionBits.length > 0 || openExceptions > 0 ? (
+        <section aria-label="Needs your attention" className="rounded-card border border-warn/30 bg-warn-surface p-4">
+          <p className="font-semibold text-warn-ink">Needs your attention</p>
+          <ul className="mt-2 flex flex-col gap-1 text-sm">
+            {attentionBits.length > 0 ? (
+              <li>
+                <Link href={`/dispatcher/orders?date=${date}&status=attention`} className="font-semibold text-link underline-offset-2 hover:underline">
+                  {plural(counts.attention, "order")} to look at
+                </Link>
+                <span className="text-muted"> · {attentionBits.join(" · ")}</span>
+              </li>
+            ) : null}
+            {openExceptions > 0 ? (
+              <li>
+                <Link href={withDate("/dispatcher/exceptions")} className="font-semibold text-link underline-offset-2 hover:underline">
+                  {plural(openExceptions, "open exception")}
+                </Link>
+                <span className="text-muted">
+                  {exceptionList && exceptionList.summary.critical > 0 ? ` · ${exceptionList.summary.critical} critical` : ""}
+                </span>
+              </li>
+            ) : null}
+          </ul>
         </section>
+      ) : null}
+
+      <section aria-label="Today at a glance" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <StatCard
+          icon={<Glyph kind="orders" />}
+          value={orders.length}
+          label="Total orders"
+          foot={orders.length ? `${chilled} chilled · ${orders.length - chilled} ambient` : "None in the queue"}
+        />
+        <StatCard
+          icon={<Glyph kind="check" />}
+          value={served ?? "—"}
+          label="Allocated"
+          foot={plan ? `${percent(plan.stats.served, plan.stats.orders)}% of ${plural(plan.stats.orders, "order")} in the plan` : "No plan built yet"}
+          footTone={plan ? "good" : "neutral"}
+        />
+        <StatCard
+          icon={<Glyph kind="alert" />}
+          value={deferred}
+          label="Deferred"
+          foot={deferred ? (pendingDeferrals ? `${pendingDeferrals} need a reason` : "Each has a reason") : "None"}
+          footTone={deferred ? "bad" : "neutral"}
+        />
+        <StatCard
+          icon={<Glyph kind="alert" />}
+          value={exceptionList ? exceptionList.summary.open : "—"}
+          label="Open exceptions"
+          foot={exceptionList ? (exceptionList.summary.critical ? `${exceptionList.summary.critical} critical` : "None critical") : "Could not be loaded"}
+          footTone={exceptionList && exceptionList.summary.critical ? "bad" : "neutral"}
+        />
+        <StatCard
+          icon={<Glyph kind="truck" />}
+          value={fleet ? `${fleet.summary.available} of ${fleet.summary.total}` : "—"}
+          label="Vehicles available"
+          foot={fleet ? `${fleet.summary.refrigerated} refrigerated${fleet.summary.inWorkshop ? ` · ${fleet.summary.inWorkshop} in workshop` : ""}` : "Could not be loaded"}
+          footTone={fleet && fleet.summary.inWorkshop ? "warn" : "neutral"}
+        />
+      </section>
+
+      {day ? (
+        <NextStep day={day} plan={plan} orderCount={orders.length} pendingDeferrals={pendingDeferrals} from="dashboard" requestId={requestId} />
+      ) : (
+        <EmptyState
+          title={`No planning day for ${longDate(date)}`}
+          detail="There is no operating day for this depot on that date. Pick another date to plan."
+        />
       )}
 
-      <section aria-label="Queue summary" className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <KpiCard
-          icon="orders"
-          value={orders.data.length}
-          label="Total orders"
-          detail={`${waiting} waiting · ${orders.data.length - waiting} progressed`}
-          accent="brand"
-        />
-        <KpiCard
-          icon="check"
-          value={allocated}
-          label="Allocated"
-          detail={plan ? `${allocatedPct}% of today's queue` : "Build a plan to allocate"}
-          accent="success"
-        />
-        <KpiCard
-          icon="alert"
-          value={plan?.stats.deferred ?? deferredCount}
-          label="Deferred"
-          detail={plan?.stats.deferred ? "Need a reason before publish" : deferredCount ? "Returned to the queue" : "None today"}
-          accent="danger"
-        />
-        <KpiCard
-          icon="snow"
-          value={chilled}
-          label="Chilled"
-          detail="Require refrigerated capacity"
-          accent="info"
-        />
-        <KpiCard
-          icon="box"
-          value={`${totalVolume.toFixed(1)} m³`}
-          label="Volume"
-          detail={`${(totalWeight / 1000).toFixed(1)} t total weight`}
-          accent="muted"
-        />
-      </section>
-
-      <section className="mt-6 rounded-[var(--radius-card)] border border-line bg-surface p-5 sm:p-6">
-        {!day ? (
-          <div>
-            <h2 className="text-xl font-semibold">No planning day found</h2>
-            <p className="mt-2 text-muted">There is no operating day for this depot on {date}.</p>
-          </div>
-        ) : day.status === "OPEN" ? (
-          <div className="flex flex-wrap items-center justify-between gap-5">
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <section aria-labelledby="orders-heading" className="flex min-w-0 flex-col gap-3">
+          <div className="flex flex-wrap items-end justify-between gap-2">
             <div>
-              <p className="text-sm font-semibold text-muted">Next step</p>
-              <h2 className="mt-1 text-xl font-semibold">Close today&apos;s order queue</h2>
-              <p className="mt-2 max-w-2xl text-muted">Review the orders below. Closing at {day.cutoffAt} fixes the input used to build the plan.</p>
+              <h2 id="orders-heading" className="text-lg font-bold text-ink">
+                Orders
+              </h2>
+              <p className="text-sm text-muted">
+                {orders.length > shown.length ? `Showing ${shown.length} of ${orders.length}; ones that need attention come first.` : `${plural(orders.length, "order")} for the day.`}
+              </p>
             </div>
-            <form action={closeQueue}>
-              <input type="hidden" name="planningDayId" value={day.id} />
-              <input type="hidden" name="date" value={day.date} />
-              <button type="submit" className="min-h-12 rounded-[var(--radius-control)] bg-action px-5 font-semibold text-ink hover:brightness-95">Close order queue</button>
-            </form>
+            <Link href={withDate("/dispatcher/orders")} className="text-sm font-semibold text-link underline-offset-2 hover:underline">
+              All orders
+            </Link>
           </div>
-        ) : day.status === "CLOSED" ? (
-          <div className="flex flex-wrap items-center justify-between gap-5">
-            <div>
-              <p className="text-sm font-semibold text-muted">Next step</p>
-              <h2 className="mt-1 text-xl font-semibold">Build the delivery plan</h2>
-              <p className="mt-2 max-w-2xl text-muted">The allocator will assign compatible vehicles, delivery windows, and depot capacity.</p>
-            </div>
-            <form action={createPlan}>
-              <input type="hidden" name="date" value={day.date} />
-              <input type="hidden" name="depotCode" value={day.depotCode} />
-              <input type="hidden" name="requestId" value={planRequestId} />
-              <button type="submit" className="min-h-12 rounded-[var(--radius-control)] bg-action px-5 font-semibold text-ink hover:brightness-95">Run auto-plan</button>
-            </form>
-          </div>
-        ) : day.status === "PLANNING" ? (
-          <div className="flex flex-wrap items-center justify-between gap-5">
-            <div>
-              <p className="text-sm font-semibold text-muted">Draft plan</p>
-              <h2 className="mt-1 text-xl font-semibold">Review allocation results</h2>
-              <p className="mt-2 max-w-2xl text-muted">{plan ? `${plan.stats.tripsBuilt} trips serve ${plan.stats.served} of ${plan.stats.orders} orders; ${plan.stats.deferred} ${plan.stats.deferred === 1 ? "requires a deferral decision" : "require deferral decisions"}.` : "The draft is still being prepared."}</p>
-              <p className="mt-2 text-sm text-muted">Running auto-plan again replaces the current draft.</p>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              {plan ? <Link href={`/dispatcher/plans/${encodeURIComponent(plan.planId)}`} className="inline-flex min-h-12 items-center rounded-[var(--radius-control)] bg-action px-5 font-semibold text-ink hover:brightness-95">Review draft plan</Link> : null}
-              <form action={createPlan}>
-                <input type="hidden" name="date" value={day.date} />
-                <input type="hidden" name="depotCode" value={day.depotCode} />
-                <input type="hidden" name="requestId" value={planRequestId} />
-                <button type="submit" className="min-h-12 rounded-[var(--radius-control)] border border-line bg-surface px-5 font-semibold text-ink hover:bg-raised">Re-run auto-plan</button>
-              </form>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-wrap items-center justify-between gap-5">
-            <div>
-              <p className="text-sm font-semibold text-muted">Current plan</p>
-              <h2 className="mt-1 text-xl font-semibold">{day.status === "PUBLISHED" ? "Plan published to the dock" : "Draft plan ready for review"}</h2>
-              <p className="mt-2 text-muted">{plan ? `${plan.stats.tripsBuilt} trips serve ${plan.stats.served} of ${plan.stats.orders} orders; ${plan.stats.deferred} ${plan.stats.deferred === 1 ? "requires a deferral decision" : "require deferral decisions"}.` : "Refresh when the plan has finished building."}</p>
-            </div>
-            {plan ? <Link href={`/dispatcher/plans/${encodeURIComponent(plan.planId)}`} className="inline-flex min-h-12 items-center rounded-[var(--radius-control)] border border-line bg-surface px-5 font-semibold text-ink hover:bg-raised">Open published plan</Link> : null}
-          </div>
-        )}
-      </section>
+          <OrdersGlance orders={shown} date={date} />
+          {orders.length > 0 ? (
+            <p className="tabular text-xs text-muted">
+              {sumVolume(orders).toFixed(1)} m³ · {(sumWeight(orders) / 1000).toFixed(1)} t across all {orders.length} orders
+            </p>
+          ) : null}
+        </section>
 
-      {/* Fleet status is supplementary: if it can't load, the desk still works. */}
-      {day && fleet.data ? <FleetPanel fleet={fleet.data} /> : null}
-
-      <section className="mt-6">
-        <div className="flex flex-wrap items-end justify-between gap-3 pb-2">
-          <div>
-            <h2 id="daily-orders" className="text-lg font-semibold">Today&apos;s orders</h2>
-            <p className="mt-0.5 text-sm text-muted">{orders.data.length} orders across every brand</p>
-          </div>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-raised px-3 py-1 text-xs font-semibold text-muted">
-            <span aria-hidden className="size-2 rounded-full bg-link" />
-            Live from /orders
-          </span>
-        </div>
-        <div className="mt-3 grid gap-3 md:hidden">
-          {orders.data.map((order) => (
-            <article key={order.id} className="rounded-[var(--radius-card)] border border-line bg-surface p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-mono font-semibold">{order.ref}</p>
-                  <p className="mt-1 text-sm text-muted">{order.outletId} · {order.districtName ?? "District pending"}</p>
-                </div>
-                <OrderStatus status={order.status} />
-              </div>
-              <dl className="mt-4 grid grid-cols-3 gap-3 border-t border-line pt-4 text-sm">
-                <div><dt className="text-muted">Brand</dt><dd className="mt-1"><BrandChip brand={order.brand} /></dd></div>
-                <div><dt className="text-muted">Load</dt><dd className="mt-1 font-semibold capitalize">{order.tempRequirement}</dd></div>
-                <div className="border-l border-line pl-3"><dt className="text-muted">Units</dt><dd className="tabular mt-1 font-semibold">{order.units}</dd></div>
-              </dl>
-            </article>
-          ))}
-        </div>
-        <div aria-labelledby="daily-orders" className="mt-3 hidden overflow-x-auto rounded-[var(--radius-card)] border border-line bg-surface md:block">
-          <table className="w-full min-w-[900px] text-left text-sm">
-            <caption className="sr-only">Orders for {depotCode} on {date}</caption>
-            <thead className="border-b border-line bg-raised text-xs uppercase tracking-wide text-muted">
-              <tr>
-                <th className="px-4 py-2.5">Order ref</th>
-                <th className="px-4 py-2.5">Outlet</th>
-                <th className="px-4 py-2.5">Brand</th>
-                <th className="px-4 py-2.5 text-right">Items</th>
-                <th className="px-4 py-2.5 text-right">Volume</th>
-                <th className="px-4 py-2.5 text-right">Weight</th>
-                <th className="px-4 py-2.5">Window</th>
-                <th className="px-4 py-2.5">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.data.map((order) => (
-                <tr key={order.id} className="border-b border-line last:border-0 transition-colors hover:bg-raised">
-                  <td className="px-4 py-3 font-mono font-semibold">{order.ref}</td>
-                  <td className="px-4 py-3">
-                    <span className="font-semibold text-ink">{order.outletId}</span>
-                    <span className="mt-0.5 block text-xs text-muted">{order.districtName ?? "District pending"}</span>
-                  </td>
-                  <td className="px-4 py-3"><BrandChip brand={order.brand} /></td>
-                  <td className="tabular px-4 py-3 text-right font-semibold">{order.units}</td>
-                  <td className="tabular px-4 py-3 text-right text-muted">
-                    {order.volumeM3 != null ? `${order.volumeM3.toFixed(1)} m³` : "—"}
-                  </td>
-                  <td className="tabular px-4 py-3 text-right text-muted">
-                    {order.weightKg != null ? `${order.weightKg.toFixed(0)} kg` : "—"}
-                  </td>
-                  <td className="tabular px-4 py-3">
-                    {order.windowOpen && order.windowClose ? `${order.windowOpen}–${order.windowClose}` : <span className="text-muted">Unassigned</span>}
-                  </td>
-                  <td className="px-4 py-3"><OrderStatus status={order.status} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </main>
-  );
-}
-
-function KpiIcon({ kind }: { kind: "orders" | "check" | "alert" | "snow" | "box" }) {
-  const common = "h-5 w-5";
-  if (kind === "orders")
-    return (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={common} aria-hidden>
-        <rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 7h8M8 11h8M8 15h5" />
-      </svg>
-    );
-  if (kind === "check")
-    return (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={common} aria-hidden>
-        <circle cx="12" cy="12" r="9" /><path d="M8 12l3 3 5-6" />
-      </svg>
-    );
-  if (kind === "alert")
-    return (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={common} aria-hidden>
-        <circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16v.01" />
-      </svg>
-    );
-  if (kind === "snow")
-    return (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={common} aria-hidden>
-        <path d="M12 2v20M4 6l16 12M20 6L4 18M2 12h20" />
-      </svg>
-    );
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={common} aria-hidden>
-      <path d="M12 3l9 5v8l-9 5-9-5V8z" /><path d="M3 8l9 5 9-5M12 13v10" />
-    </svg>
-  );
-}
-
-function KpiCard({
-  icon,
-  value,
-  label,
-  detail,
-  accent = "brand",
-}: {
-  icon: "orders" | "check" | "alert" | "snow" | "box";
-  value: number | string;
-  label: string;
-  detail: string;
-  accent?: "brand" | "success" | "danger" | "info" | "muted";
-}) {
-  const iconBg =
-    accent === "success"
-      ? "bg-emerald-50 text-emerald-700"
-      : accent === "danger"
-        ? "bg-red-50 text-[color:var(--c-ruby)]"
-        : accent === "info"
-          ? "bg-blue-50 text-link"
-          : accent === "muted"
-            ? "bg-raised text-muted"
-            : "bg-action/15 text-[color:var(--c-navy)]";
-  return (
-    <article className="rounded-[var(--radius-card)] border border-line bg-surface p-4">
-      <div className="flex items-start gap-3">
-        <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md ${iconBg}`}>
-          <KpiIcon kind={icon} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="tabular text-2xl font-semibold text-ink">{value}</p>
-          <p className="text-sm text-muted">{label}</p>
+        <div className="flex min-w-0 flex-col gap-4">
+          <ExceptionsPanel list={exceptionList} date={date} />
+          <VehiclesPanel fleet={fleet} date={date} />
+          <TripsPanel detail={detail} />
         </div>
       </div>
-      <p className="mt-3 text-xs text-muted">{detail}</p>
-    </article>
+    </PageBody>
   );
 }
 
-function BrandChip({ brand }: { brand: string }) {
-  const label = brand.charAt(0).toUpperCase() + brand.slice(1).toLowerCase();
-  const style =
-    brand.toLowerCase() === "fresh"
-      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-      : brand.toLowerCase() === "style"
-        ? "bg-red-50 text-[color:var(--c-ruby)] border-red-200"
-        : brand.toLowerCase() === "tech"
-          ? "bg-blue-50 text-link border-blue-200"
-          : "bg-raised text-muted border-line";
+function validRetry(value: string | undefined) {
+  return value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value : null;
+}
+
+function OrdersGlance({ orders, date }: { orders: Order[]; date: string }) {
+  const href = (order: Order) => `/dispatcher/orders?date=${date}&order=${encodeURIComponent(order.id)}`;
   return (
-    <span className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-semibold ${style}`}>{label}</span>
+    <DataTable
+      caption="Orders for the day"
+      empty={orders.length === 0 ? <EmptyState title="No orders for this day" detail="Orders appear here as outlets place them." /> : undefined}
+      head={
+        <tr>
+          <Th>Order</Th>
+          <Th>Outlet</Th>
+          <Th>Brand</Th>
+          <Th numeric>Items</Th>
+          <Th numeric>Volume</Th>
+          <Th>Window</Th>
+          <Th>Status</Th>
+        </tr>
+      }
+      cards={orders.map((order) => (
+        <RowCard key={order.id}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <Link href={href(order)} className="font-mono font-semibold text-link underline-offset-2 hover:underline">
+                {order.ref}
+              </Link>
+              <p className="mt-0.5 text-sm text-muted">
+                {order.outletId} · {order.districtName ?? "District not set"}
+              </p>
+            </div>
+            <StatusPill {...ORDER_STATUS[order.status]} />
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
+            <BrandPill brand={order.brand} />
+            <span className="tabular">{order.units} items</span>
+            <span className="tabular">{order.volumeM3 != null ? `${order.volumeM3.toFixed(1)} m³` : "—"}</span>
+            <span className="tabular">{order.windowOpen && order.windowClose ? `${order.windowOpen}–${order.windowClose}` : "No window"}</span>
+          </div>
+        </RowCard>
+      ))}
+    >
+      {orders.map((order) => (
+        <Tr key={order.id}>
+          <Td>
+            <Link href={href(order)} className="font-mono font-semibold text-link underline-offset-2 hover:underline">
+              {order.ref}
+            </Link>
+          </Td>
+          <Td>
+            <span className="font-semibold text-ink">{order.outletId}</span>
+            <span className="block text-xs text-muted">{order.districtName ?? "District not set"}</span>
+          </Td>
+          <Td>
+            <BrandPill brand={order.brand} />
+          </Td>
+          <Td numeric>{order.units}</Td>
+          <Td numeric>{order.volumeM3 != null ? `${order.volumeM3.toFixed(1)} m³` : "—"}</Td>
+          <Td>
+            <span className="whitespace-nowrap">{order.windowOpen && order.windowClose ? `${order.windowOpen}–${order.windowClose}` : "—"}</span>
+          </Td>
+          <Td>
+            <StatusPill {...ORDER_STATUS[order.status]} />
+          </Td>
+        </Tr>
+      ))}
+    </DataTable>
   );
 }
 
-function StatusPill({ status }: { status: string }) {
-  return <span className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-semibold ${STATUS_STYLE[status] ?? "bg-raised text-muted"}`}><span aria-hidden className="size-2 rounded-full bg-current" />Queue {status.toLowerCase()}</span>;
+const SEVERITY: Record<string, Tone> = { critical: "bad", warning: "warn", info: "info" };
+
+function Panel({ title, href, linkLabel, children }: { title: string; href?: string; linkLabel?: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-card border border-line bg-surface p-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="font-bold text-ink">{title}</h2>
+        {href ? (
+          <Link href={href} className="text-sm font-semibold text-link underline-offset-2 hover:underline">
+            {linkLabel}
+          </Link>
+        ) : null}
+      </div>
+      <div className="mt-3">{children}</div>
+    </section>
+  );
 }
 
-function OrderStatus({ status }: { status: string }) {
-  const style = status === "QUEUED" || status === "PLACED" ? "bg-blue-50 text-blue-700" : status === "DEFERRED" || status === "CANCELLED" ? "bg-red-50 text-critical" : status === "DELIVERED" ? "bg-emerald-50 text-emerald-700" : "bg-raised text-muted";
-  return <span className={`inline-flex rounded-md px-2 py-1 text-xs font-semibold ${style}`}>{status.toLowerCase().replaceAll("_", " ")}</span>;
+function ExceptionsPanel({ list, date }: { list: components["schemas"]["ExceptionList"] | null; date: string }) {
+  const failure = readFailure(0, "the exceptions");
+  return (
+    <Panel title="Exceptions" href={`/dispatcher/exceptions?date=${date}`} linkLabel="Open exceptions">
+      {!list ? (
+        <p className="text-sm text-muted">{failure.title}. {failure.detail}</p>
+      ) : list.exceptions.length === 0 ? (
+        <p className="text-sm text-muted">Nothing open. Loading, the road and the stores are all quiet.</p>
+      ) : (
+        <ul className="flex flex-col divide-y divide-line">
+          {list.exceptions.slice(0, 3).map((item) => (
+            <li key={item.id} className="flex items-start gap-3 py-2 first:pt-0 last:pb-0">
+              <span className="mt-0.5 shrink-0">
+                <StatusPill label={item.severity === "critical" ? "Critical" : item.severity === "warning" ? "Warning" : "Info"} tone={SEVERITY[item.severity] ?? "neutral"} dot={false} />
+              </span>
+              <div className="min-w-0 text-sm">
+                <p className="font-semibold text-ink">{item.title}</p>
+                <p className="truncate text-xs text-muted">{item.subtitle}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {list && list.exceptions.length > 3 ? <p className="mt-2 text-xs text-muted">and {list.exceptions.length - 3} more</p> : null}
+    </Panel>
+  );
 }
 
-const NOTICES: Record<string, string> = {
-  queue_closed: "Order queue closed. The delivery plan can now be built.",
-  plan_created: "Draft plan built. Review its trips, deferrals, and validation before publishing.",
-  fleet_updated: "Vehicle status saved. The next auto-plan run uses the updated fleet.",
-  fleet_updated_draft: "Vehicle status saved. Re-run auto-plan so the draft uses the updated fleet.",
+function VehiclesPanel({ fleet, date }: { fleet: components["schemas"]["VehicleList"] | null; date: string }) {
+  const rows = fleet
+    ? [
+        ["On route", fleet.summary.onRoute],
+        ["Loading", fleet.summary.loading],
+        ["Idle", fleet.summary.idle],
+        ["Back at the depot", fleet.summary.returned],
+        ["In the workshop", fleet.summary.inWorkshop],
+      ]
+    : [];
+  return (
+    <Panel title="Vehicles" href={`/dispatcher/vehicles?date=${date}`} linkLabel="All vehicles">
+      {!fleet ? (
+        <p className="text-sm text-muted">The vehicle list could not be loaded. Check the connection and reload.</p>
+      ) : (
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+          {rows.map(([label, value]) => (
+            <div key={label} className="flex items-baseline justify-between gap-2 border-b border-line pb-1.5">
+              <dt className="text-muted">{label}</dt>
+              <dd className="tabular font-bold text-ink">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </Panel>
+  );
+}
+
+const TRIP_ORDER = ["PLANNED", "LOADING", "READY", "DEPARTED", "COMPLETED", "CANCELLED"] as const;
+const TRIP_LABEL: Record<(typeof TRIP_ORDER)[number], string> = {
+  PLANNED: "Planned",
+  LOADING: "Loading",
+  READY: "Ready",
+  DEPARTED: "On the road",
+  COMPLETED: "Completed",
+  CANCELLED: "Cancelled",
 };
 
-function Notice({ kind }: { kind: string }) {
-  const message = NOTICES[kind] ?? NOTICES.plan_created;
-  return <div role="status" className="mt-5 rounded-[var(--radius-card)] border border-emerald-200 bg-emerald-50 p-4 text-emerald-800"><p className="font-semibold">Planning updated</p><p className="mt-1 text-sm">{message}</p></div>;
-}
-
-function ErrorBanner({ code }: { code: string }) {
-  return <div role="alert" className="mt-5 rounded-[var(--radius-card)] border border-red-200 bg-red-50 p-4 text-critical"><p className="font-semibold">Planning needs attention</p><p className="mt-1 text-sm text-muted">{ERRORS[code] ?? "The request could not be completed. Reload and try again."}</p></div>;
-}
-
-function ReadFailure({ detail = "Today’s planning data could not be loaded. No planning state was changed." }: { detail?: string }) {
-  return <main className="mx-auto max-w-3xl p-4 sm:p-6"><section className="rounded-[var(--radius-card)] border border-red-200 bg-red-50 p-5"><h1 className="text-xl font-semibold text-critical">Planning desk unavailable</h1><p className="mt-2 text-muted">{detail}</p><a href="/dispatcher" className="mt-4 inline-flex min-h-11 items-center rounded-[var(--radius-control)] bg-action px-4 font-semibold text-ink">Try again</a></section></main>;
+function TripsPanel({ detail }: { detail: { planId: string; status: string; trips: { status: (typeof TRIP_ORDER)[number] }[] } | null }) {
+  if (!detail) return null;
+  const counts = TRIP_ORDER.map((status) => [status, detail.trips.filter((t) => t.status === status).length] as const).filter(([, n]) => n > 0);
+  return (
+    <Panel title="Trips" href={`/dispatcher/plans/${encodeURIComponent(detail.planId)}`} linkLabel={detail.status === "DRAFT" ? "Review draft" : "Open plan"}>
+      {detail.trips.length === 0 ? (
+        <p className="text-sm text-muted">The plan has no trips.</p>
+      ) : (
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+          {counts.map(([status, n]) => (
+            <div key={status} className="flex items-baseline justify-between gap-2 border-b border-line pb-1.5">
+              <dt className="text-muted">{TRIP_LABEL[status]}</dt>
+              <dd className="tabular font-bold text-ink">{n}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </Panel>
+  );
 }

@@ -2,8 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { HOME_FOR_ROLE } from "@katapatha/core/domain/authPaths";
-import { api } from "@/lib/api";
+import { dispatcherSession } from "../../session";
+
+const DESK = "/dispatcher/planning";
 
 function field(formData: FormData, name: string) {
   const value = formData.get(name);
@@ -18,10 +19,24 @@ function planPath(planId: string) {
   return `/dispatcher/plans/${encodeURIComponent(planId)}`;
 }
 
+/** The day's screens all read what a plan decision changes. */
+function revalidatePlan(home: string) {
+  revalidatePath("/dispatcher");
+  revalidatePath(DESK);
+  revalidatePath("/dispatcher/orders");
+  revalidatePath(home);
+}
+
+/** The server's own error code, when it sent one: `{ error: { code } }`. */
+function errorCode(error: unknown): string | undefined {
+  const code = (error as { error?: { code?: unknown } } | undefined)?.error?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
 export async function confirmDeferrals(formData: FormData) {
   const planId = field(formData, "planId");
   const home = planPath(planId);
-  if (!planId || planId.length > 128) redirect("/dispatcher?error=invalid_request");
+  if (!planId || planId.length > 128) redirect(`${DESK}?error=invalid_request`);
 
   // Collect reasonCode:<assignmentId> entries from the form. The page emits
   // one hidden input per deferral so we know the full set we're confirming,
@@ -47,36 +62,29 @@ export async function confirmDeferrals(formData: FormData) {
     redirect(back("deferrals_empty"));
   }
 
-  let client;
-  let me;
-  try {
-    client = await api();
-    me = await client.GET("/auth/me");
-  } catch {
-    redirect(`${home}?error=unreachable`);
-  }
-  if (me.response.status === 401) redirect(`/sign-in?next=${encodeURIComponent(home)}`);
-  if (me.error || !me.data) redirect(`${home}?error=session`);
-  if (me.data.role !== "DISPATCHER") redirect(HOME_FOR_ROLE[me.data.role]);
+  const context = await dispatcherSession(home);
+  if (!("client" in context)) redirect(back(context.error));
 
+  // Saving reasons is a PUT of the whole decision, so repeating it is safe;
+  // that is why an unanswered request can say "check, then save again" rather
+  // than "failed".
   let result;
   try {
-    result = await client.PUT("/plans/{planId}/deferrals", {
+    result = await context.client.PUT("/plans/{planId}/deferrals", {
       params: { path: { planId } },
       body: { decisions },
     });
   } catch {
-    redirect(`${home}?error=unreachable`);
+    redirect(back("deferrals_outcome_unknown"));
   }
   if (result.error || !result.data) {
     if (result.response.status === 401) redirect(`/sign-in?next=${encodeURIComponent(home)}`);
-    if (result.response.status === 403) redirect("/dispatcher?error=forbidden");
+    if (result.response.status === 403) redirect(`${DESK}?error=forbidden`);
     if (result.response.status === 422) redirect(back("deferrals_rejected"));
-    redirect(`${home}?error=unreachable`);
+    redirect(back("deferrals_outcome_unknown"));
   }
 
-  revalidatePath("/dispatcher");
-  revalidatePath(home);
+  revalidatePlan(home);
   redirect(`${home}?notice=deferrals_saved`);
 }
 
@@ -84,20 +92,14 @@ export async function publishPlan(formData: FormData) {
   const planId = field(formData, "planId");
   const requestId = field(formData, "requestId");
   const home = planPath(planId);
-  if (!planId || planId.length > 128 || !validRequestId(requestId)) redirect("/dispatcher?error=invalid_request");
+  if (!planId || planId.length > 128 || !validRequestId(requestId)) redirect(`${DESK}?error=invalid_request`);
 
-  let client;
-  let me;
-  try {
-    client = await api();
-    me = await client.GET("/auth/me");
-  } catch {
-    redirect(`${home}?error=unreachable`);
-  }
-  if (me.response.status === 401) redirect(`/sign-in?next=${encodeURIComponent(home)}`);
-  if (me.error || !me.data) redirect(`${home}?error=session`);
-  if (me.data.role !== "DISPATCHER") redirect(HOME_FOR_ROLE[me.data.role]);
+  const context = await dispatcherSession(home);
+  if (!("client" in context)) redirect(`${home}?error=${context.error}`);
+  const { client } = context;
 
+  // Re-read before committing: the dispatcher confirmed against a page that may
+  // be minutes old, and publication cannot be taken back.
   let plan;
   let validation;
   try {
@@ -109,11 +111,13 @@ export async function publishPlan(formData: FormData) {
     redirect(`${home}?error=unreachable`);
   }
   if (plan.response.status === 401 || validation.response.status === 401) redirect(`/sign-in?next=${encodeURIComponent(home)}`);
-  if (plan.response.status === 403 || validation.response.status === 403) redirect("/dispatcher?error=forbidden");
+  if (plan.response.status === 403 || validation.response.status === 403) redirect(`${DESK}?error=forbidden`);
   if (plan.error || !plan.data || validation.error || !validation.data) redirect(`${home}?error=stale`);
   if (plan.data.status !== "DRAFT") redirect(`${home}?error=already_published`);
   if (validation.data.blocking) redirect(`${home}?error=validation_blocked`);
 
+  // The idempotency key belongs to this click, so a retry after a lost
+  // response replays the first publication instead of racing it.
   let result;
   try {
     result = await client.POST("/plans/{planId}/publication", {
@@ -124,13 +128,14 @@ export async function publishPlan(formData: FormData) {
   }
   if (result.error || !result.data) {
     if (result.response.status === 401) redirect(`/sign-in?next=${encodeURIComponent(home)}`);
-    if (result.response.status === 403) redirect("/dispatcher?error=forbidden");
+    if (result.response.status === 403) redirect(`${DESK}?error=forbidden`);
     if (result.response.status === 409) redirect(`${home}?error=already_published`);
-    if (result.response.status === 422) redirect(`${home}?error=validation_blocked`);
+    if (result.response.status === 422) {
+      redirect(`${home}?error=${errorCode(result.error) === "DEFERRALS_UNCONFIRMED" ? "deferrals_unconfirmed" : "validation_blocked"}`);
+    }
     redirect(`${home}?error=publish_outcome_unknown&retry=${requestId}`);
   }
 
-  revalidatePath("/dispatcher");
-  revalidatePath(home);
+  revalidatePlan(home);
   redirect(`${home}?notice=published`);
 }
