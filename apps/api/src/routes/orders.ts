@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Brand, OrderStatus, Prisma, TempRequirement } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { recordDecisions } from "../lib/audit.js";
@@ -210,9 +210,26 @@ function isUniqueViolation(error: unknown): boolean {
   );
 }
 
+/** How many times placement re-allocates refs after losing the ref index to another order. */
+const MAX_PLACEMENT_ATTEMPTS = 3;
+
+/**
+ * A calendar date, or undefined. The schema's pattern alone passes dates that
+ * are not on the calendar: "2026-02-30" parses to 2 March, so an order would be
+ * placed for a day nobody asked for, and "2026-13-01" is an Invalid Date that
+ * is truthy, sails past every `if (!date)` and reaches Prisma as a 500. The
+ * round trip rejects both.
+ */
 function parseDate(value: unknown): Date | undefined {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
-  return new Date(`${value}T00:00:00.000Z`);
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value ? undefined : date;
+}
+
+function badDate(reply: FastifyReply, field: string) {
+  return reply.status(422).send({
+    error: { code: "VALIDATION_FAILED", message: `${field} must be a calendar date, YYYY-MM-DD.` },
+  });
 }
 
 /**
@@ -296,13 +313,15 @@ export default async function (fastify: FastifyInstance) {
         },
         response: {
           200: { type: "array", items: ORDER_RESPONSE_ITEM },
+          422: ERROR_RESPONSE,
         },
       },
     },
-    async (request) => {
+    async (request, reply) => {
       const user = request.requireRole("STORE_MANAGER", "DISPATCHER");
       const query = request.query as { date?: string };
       const date = parseDate(query.date);
+      if (query.date && !date) return badDate(reply, "date");
       const orders = await fetchOrdersFor(user, { date });
       return orders.map(toOrderResponse);
     },
@@ -444,7 +463,8 @@ export default async function (fastify: FastifyInstance) {
         });
       }
 
-      const requestedDate = new Date(`${body.forDate}T00:00:00.000Z`);
+      const requestedDate = parseDate(body.forDate);
+      if (!requestedDate) return badDate(reply, "forDate");
       // Store managers can order for today, tomorrow, or any later operating
       // day, never for a past date.
       const minimum = await nextOperatingDate(new Date(Date.now() - 24 * 60 * 60 * 1000));
@@ -489,9 +509,15 @@ export default async function (fastify: FastifyInstance) {
       // index (P2002). That is the index doing its job, but the caller should get
       // the first result, not a server error -- so on P2002 we re-read and return
       // 200, which is the same answer a sequential retry would have received.
-      let created;
-      try {
-        created = await prisma.$transaction(async (tx) => {
+      //
+      // A P2002 that leaves nothing under this request's key is a different
+      // collision: another outlet allocated the same ORD- number in the same
+      // instant and took the (ref, requestedDate) index. Nothing was written (the
+      // transaction rolled back), so allocate again from the new maximum rather
+      // than hand the store a 500 for an order that is perfectly placeable. This
+      // is likeliest in the minutes before the cutoff, when every outlet orders.
+      const placeOnce = () =>
+        prisma.$transaction(async (tx) => {
           // Allocate per-line sequential refs under the same requestedDate to
           // keep the (ref, requestedDate) unique index happy, and to leave an
           // operations-readable number on the dock card.
@@ -532,14 +558,20 @@ export default async function (fastify: FastifyInstance) {
           }
           return rows;
         });
-      } catch (error) {
-        if (isUniqueViolation(error)) {
+
+      let created;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          created = await placeOnce();
+          break;
+        } catch (error) {
+          if (!isUniqueViolation(error)) throw error;
           const raced = await findPrior();
           if (raced.length > 0) {
             return reply.status(200).send(raced.map(toOrderResponse));
           }
+          if (attempt >= MAX_PLACEMENT_ATTEMPTS) throw error;
         }
-        throw error;
       }
 
       const withLinkage = await prisma.order.findMany({

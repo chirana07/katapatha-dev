@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { validatePlan } from "@katapatha/core/validation/rules";
 import type { PlanStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
@@ -6,6 +6,7 @@ import { recordDecision, recordDecisions } from "../lib/audit.js";
 import { loadDayContext, loadPlan, runAutoPlan } from "../services/plans.js";
 import { describeDeferrals, laneAlternatives, nextRunDate } from "../services/deferrals.js";
 import { deferralMessage, shortDay } from "@katapatha/core/domain/deferral";
+import { DEFERRAL_REASONS } from "@katapatha/core/domain/reasons";
 import { snapshotFromPlan } from "../services/snapshot.js";
 import type { DepotCode } from "@katapatha/core/domain/types";
 
@@ -314,6 +315,8 @@ function metersOf(objectiveSummary: unknown) {
   return Array.isArray(raw) ? raw : [];
 }
 
+const DEFERRAL_REASON_CODES: ReadonlySet<string> = new Set(DEFERRAL_REASONS.map((r) => r.code));
+
 function asUtcDate(iso: string): Date {
   return new Date(`${iso}T00:00:00.000Z`);
 }
@@ -326,9 +329,21 @@ function isPermanent(explanation: unknown): boolean {
   );
 }
 
+/**
+ * A calendar date, or undefined. The pattern alone passes dates that are not on
+ * the calendar: "2026-02-30" parses to 2 March and "2026-13-01" to an Invalid
+ * Date that is truthy and reaches Prisma as a 500. The round trip rejects both.
+ */
 function parseDate(value: unknown): Date | undefined {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
-  return new Date(`${value}T00:00:00.000Z`);
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value ? undefined : date;
+}
+
+function badDate(reply: FastifyReply) {
+  return reply.status(422).send({
+    error: { code: "VALIDATION_FAILED", message: "date must be a calendar date, YYYY-MM-DD." },
+  });
 }
 
 export default async function (fastify: FastifyInstance) {
@@ -346,13 +361,15 @@ export default async function (fastify: FastifyInstance) {
         },
         response: {
           200: { type: "array", items: PLANNING_DAY },
+          422: ERROR_RESPONSE,
         },
       },
     },
-    async (request) => {
+    async (request, reply) => {
       const user = request.requireRole("DISPATCHER");
       const query = request.query as { date?: string; depotCode?: string };
       const date = parseDate(query.date);
+      if (query.date && !date) return badDate(reply);
 
       const where: Record<string, unknown> = {};
       // Dispatchers are scoped to their depot regardless of the query. Trusting
@@ -390,14 +407,16 @@ export default async function (fastify: FastifyInstance) {
         },
         response: {
           200: { type: "array", items: PLAN_SUMMARY },
+          422: ERROR_RESPONSE,
         },
       },
     },
-    async (request) => {
+    async (request, reply) => {
       const user = request.requireRole("DISPATCHER");
       if (!user.depotCode) return [];
       const query = request.query as { date?: string };
       const date = parseDate(query.date);
+      if (query.date && !date) return badDate(reply);
 
       const where: Record<string, unknown> = {
         planningDay: { depotCode: user.depotCode, ...(date ? { date } : {}) },
@@ -525,6 +544,7 @@ export default async function (fastify: FastifyInstance) {
           201: PLAN_SUMMARY,
           403: ERROR_RESPONSE,
           404: ERROR_RESPONSE,
+          409: ERROR_RESPONSE,
           422: ERROR_RESPONSE,
         },
       },
@@ -546,6 +566,30 @@ export default async function (fastify: FastifyInstance) {
       if (!date) {
         return reply.status(422).send({
           error: { code: "VALIDATION_FAILED", message: "date must be YYYY-MM-DD." },
+        });
+      }
+
+      // The contract allows the allocator only on a CLOSED or PLANNING day, and
+      // the desk maps this 409 to "close the queue first". Without the check an
+      // open queue could be planned while orders were still arriving, and a
+      // PUBLISHED day could be re-run: runAutoPlan would put a second DRAFT
+      // beside the live plan and set the day back to PLANNING, after which that
+      // draft could be published over vehicles that are already loading.
+      const day = await prisma.planningDay.findUnique({
+        where: { date_depotCode: { date, depotCode: body.depotCode } },
+        select: { status: true },
+      });
+      if (day?.status === "OPEN") {
+        return reply.status(409).send({
+          error: { code: "QUEUE_OPEN", message: "Close the order queue before building a plan." },
+        });
+      }
+      if (day?.status === "PUBLISHED") {
+        return reply.status(409).send({
+          error: {
+            code: "ALREADY_PUBLISHED",
+            message: "This day's plan is already published, so the allocator can no longer be re-run.",
+          },
         });
       }
 
@@ -810,6 +854,21 @@ export default async function (fastify: FastifyInstance) {
         decisions: Array<{ assignmentId: string; reasonCode: string; note?: string | null }>;
       };
 
+      // The reason is a code from the fixed list, never free text: it is what
+      // the store reads in its notification and what the decision log is
+      // searched by. The contract types it as a plain string, so the list is
+      // enforced here, and before anything is written so a batch is all or nothing.
+      const unknown = body.decisions.find((d) => !DEFERRAL_REASON_CODES.has(d.reasonCode));
+      if (unknown) {
+        return reply.status(422).send({
+          error: {
+            code: "VALIDATION_FAILED",
+            message: `"${unknown.reasonCode}" is not a deferral reason code.`,
+            details: { reasonCode: unknown.reasonCode, allowed: [...DEFERRAL_REASON_CODES] },
+          },
+        });
+      }
+
       const plan = await prisma.plan.findFirst({
         where: { id: planId, planningDay: { depotCode: user.depotCode ?? "" } },
         select: { id: true, status: true },
@@ -1028,7 +1087,7 @@ export default async function (fastify: FastifyInstance) {
                     movesTo,
                     isPermanent(assignment.explanation),
                   ),
-                  payload: { orderId: assignment.orderId, planId: plan.id, rolledToDate: movesTo },
+                  payload: { orderId: assignment.orderId, planId: plan.id, rolledToDate: rolledTo ? movesTo : null },
                 },
               });
             }
