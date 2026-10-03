@@ -38,10 +38,16 @@ Katapatha presents one delivery operation through four role-specific workspaces.
 - Role-specific dispatcher, loader, driver, and store workflows.
 - CSV import and submission export paths used by the challenge workflow.
 - Responsive desktop, tablet, and phone shells.
+- A verified offline outbox on the native driver app, idempotent on replay by client-minted ULID.
+- Driver-reported vehicle position, surfaced with the age of the last report and a Lamp Mode state when that age makes a single arrival time unsupportable.
+- A dispatcher exceptions console over shortfalls, driver problems, deferrals and plan violations, each decision carrying its reason.
+- Delivery, fleet and outlet reporting, and a capacity forecast with recommended actions.
 
 ## Constraints and Boundaries
 
-- Offline synchronization and a durable driver outbox are incomplete. Connectivity messaging must describe current browser reachability only.
+- The native driver app has a verified offline outbox; the web driver PWA does not and must not claim one. Connectivity messaging reports verified reachability (`Checking`, `Connected`, `Offline`) from a real request to `/v1/health`.
+- Vehicle position is reported by the driver's phone, never tracked continuously. It is always shown with the age of the last report, and an arrival time becomes a range once that age makes a single time unsupportable. See `DOMAIN.md`.
+- Chiller temperatures are human readings attributed to the person who took them, not a sensor feed.
 - Temporary development accounts belong on `/access` and must be unavailable in production unless an operator explicitly enables them.
 - Dataset-derived values and exported derivatives are confidential. The committed fixture must remain synthetic.
 - Operational state, estimates, and locally recorded actions must be distinguishable in the interface.

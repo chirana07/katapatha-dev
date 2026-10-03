@@ -10,7 +10,7 @@ The product should feel like a calm control surface used during a real delivery 
 
 ## Brand Assets
 
-- Use the supplied Katapatha lockups and marks from `prototype-shakil/public/logo/`.
+- Use the supplied Katapatha lockups and marks from `apps/web/public/logo/` (`katapatha-lockup-light.png` on dark surfaces, `katapatha-lockup-dark.png` on light).
 - Use the light lockup on the dark navigation rail and dark lockup on light surfaces.
 - Preserve the logo aspect ratio and clear space. Do not redraw, recolour, or place it inside a decorative tile.
 - The public landing page may use restrained route-line and mirror motifs derived from the visual identity. Avoid generic logistics stock imagery.
@@ -31,7 +31,21 @@ The product should feel like a calm control surface used during a real delivery 
 | Surface | `#FFFFFF` | Cards and forms |
 | Link | `#2563EB` | Text links and information actions |
 
-Action yellow is reserved for the dominant action and progress. Status colours always appear with a label or icon. Palette selection is not part of the product.
+Action yellow is reserved for the dominant action and progress. Status colours always appear with a label or icon.
+
+### Night theme
+
+There is exactly one palette. There is also exactly one **night rendering** of
+it, for the driver, because a predawn run starts at 03:30 in a dark cab and a
+full-brightness white screen is a safety problem rather than a preference.
+
+- Night is the same palette re-mapped onto dark surfaces, not a second palette.
+  Flame stays the dominant action; status hues keep their meaning.
+- It is defined once, in `packages/tokens`, under
+  `@media (prefers-color-scheme: dark)` with a `[data-theme="dark"]` override so
+  the driver can pin it. The `tokens.css` and `tokens.ts` mirrors stay in step.
+- It applies to the driver surfaces only. Dispatcher, loader and store stay
+  light; choosing a theme for them is still not part of the product.
 
 ## Typography
 
@@ -67,7 +81,10 @@ Action yellow is reserved for the dominant action and progress. Status colours a
 
 - Pair status colour with text and an icon or shape where space allows.
 - Connectivity labels report verified browser and server reachability: `Checking`, `Connected`, or `Offline`.
-- Never imply background sync, live vehicle location, or durable offline storage unless that capability is active and verified.
+- Never imply background sync. The native driver app drains its outbox in the foreground only; no screen may suggest work moves while the app is closed.
+- Durable offline storage may be claimed on the native driver app, where it is verified, and never on the web PWA. Route the wording through `apps/mobile/src/outbox/claims.ts` rather than writing it per screen.
+- A vehicle position is always rendered with the age of the report behind it. A position without its age is not an acceptable component.
+- An estimated arrival is visibly distinct from an observed one, and becomes a range rather than a time once the last report is too old to support a single figure.
 
 ## Content
 

@@ -115,17 +115,38 @@ A shortfall resolves one of four ways, and each has a real operational meaning:
 `SEND_SHORT` (go now, rest next run), `MOVE_TO_TRIP_2`, `HOLD_ORDER` (order
 becomes DEFERRED), `CANCEL_LINE` (order becomes CANCELLED).
 
-## What the product must not claim
+## What the product may claim, and how
 
-From `PRODUCT.md`, which is binding:
+From `PRODUCT.md`, which is binding. Each of these is a claim the product is
+allowed to make *because* something real backs it. The wording matters: the
+limit is never hidden, it is stated beside the number.
 
-- **No live vehicle position.** There is no GPS. The store sees five fixed
-  delivery steps and "how many stops before mine", which is the honest
-  substitute. A countdown is shown only when it is positive and under four
-  hours — a wrong countdown is worse than none.
-- **No offline durability until it is built and verified.** Connectivity labels
-  are `Checking`, `Connected`, `Offline`, based on a real request to
-  `/v1/health`, not on `navigator.onLine` alone.
-- **The map is schematic.** The dataset has no coordinates, so a stop is drawn
-  at its district centre and lines are straight depot-to-district legs, not
-  roads. Do not present them as routes.
+- **Position is reported by the driver's phone, not tracked.** There is no
+  telematics hardware and the datasets carry no coordinates. A vehicle's
+  position is whatever its driver's phone last sent — attached to a stop event,
+  or a light periodic ping while the app is open. So the honest unit is the
+  **age of the last report**, not a live dot: "last reliable update · 22 min
+  ago". Never imply continuous tracking, and never show a position without its
+  age. When the age grows past the point of usefulness the vehicle is in **Lamp
+  Mode** — the driver keeps working and recording, and the UI says the arrival
+  time is estimated from the last known position rather than observed.
+- **An arrival time is a range once it is uncertain.** A single clock time is
+  shown only while a fresh report supports it. Under Lamp Mode the store sees a
+  range, and a countdown appears only when it is positive and under four hours —
+  a wrong countdown is worse than none. The five fixed delivery steps and "how
+  many stops before mine" remain the floor the store can always rely on.
+- **Offline durability is verified on the native driver app.** The outbox in
+  `apps/mobile` holds work on the phone and replays it idempotently; its
+  acceptance test is the release gate. Copy for it is gated behind
+  `OFFLINE_DURABILITY_VERIFIED` in `apps/mobile/src/outbox/claims.ts` — route
+  wording through that module rather than writing it per screen. The web driver
+  PWA has no outbox and must not claim one. Connectivity labels are `Checking`,
+  `Connected`, `Offline`, based on a real request to `/v1/health`, never on
+  `navigator.onLine` alone.
+- **The map is schematic, and says so.** Stops are drawn at their district
+  centre, not the outlet's address, and legs are straight depot-to-district
+  lines rather than roads. Reported positions are plotted as reported. Do not
+  present any of it as a road route.
+- **A chiller reading is a reading, not a sensor feed.** Temperature is entered
+  by a loader at the bay or a driver on arrival, and carries who read it and
+  when. Never present it as live telemetry.
