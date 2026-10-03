@@ -3,6 +3,8 @@ import { validatePlan } from "@katapatha/core/validation/rules";
 import type { PlanStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { loadDayContext, loadPlan, runAutoPlan } from "../services/plans.js";
+import { describeDeferrals, laneAlternatives, nextRunDate } from "../services/deferrals.js";
+import { deferralMessage, shortDay } from "@katapatha/core/domain/deferral";
 import { snapshotFromPlan } from "../services/snapshot.js";
 import type { DepotCode } from "@katapatha/core/domain/types";
 
@@ -105,6 +107,152 @@ const TRIP = {
   },
 } as const;
 
+const CLOCK = { type: "string", pattern: "^([01]\\d|2[0-3]):[0-5]\\d$" } as const;
+const NULLABLE_STRING = { oneOf: [{ type: "string" }, { type: "null" }] } as const;
+
+/**
+ * One row of `deferrals[]` on GET /plans/{planId}. Everything past `reasonCode`
+ * is additive (CONVENTIONS.md rule 8) and feeds the Figma D-05 drawer.
+ */
+const DEFERRAL_ROW = {
+  type: "object",
+  additionalProperties: false,
+  required: ["assignmentId", "orderId", "orderRef"],
+  properties: {
+    assignmentId: { type: "string" },
+    orderId: { type: "string" },
+    orderRef: { type: "string" },
+    reasonCode: NULLABLE_STRING,
+    note: NULLABLE_STRING,
+    order: {
+      type: "object",
+      additionalProperties: false,
+      required: ["outletId", "brand", "districtName", "units", "volumeM3", "windowOpen", "windowClose"],
+      properties: {
+        outletId: { type: "string" },
+        outletName: NULLABLE_STRING,
+        brand: { type: "string" },
+        districtName: { type: "string" },
+        tempRequirement: { type: "string" },
+        units: { type: "integer" },
+        volumeM3: { type: "number" },
+        windowOpen: CLOCK,
+        windowClose: CLOCK,
+        deferredYesterday: { type: "boolean" },
+      },
+    },
+    cause: {
+      oneOf: [
+        { type: "null" },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["rejectionCode", "permanent", "explanation"],
+          properties: {
+            rejectionCode: { type: "string" },
+            permanent: { type: "boolean" },
+            explanation: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["code", "count"],
+                properties: {
+                  code: { type: "string" },
+                  count: { type: "integer" },
+                  sample: NULLABLE_STRING,
+                },
+              },
+            },
+            nearMiss: {
+              oneOf: [
+                { type: "null" },
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["vehicleId", "metric", "short", "unit"],
+                  properties: {
+                    vehicleId: { type: "string" },
+                    metric: { type: "string" },
+                    short: { type: "number" },
+                    unit: { type: "string" },
+                  },
+                },
+              ],
+            },
+            suggestion: NULLABLE_STRING,
+          },
+        },
+      ],
+    },
+    suggestedReasonCode: NULLABLE_STRING,
+    movesTo: {
+      oneOf: [
+        { type: "null" },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["date", "windowOpen", "windowClose", "firstOnRun"],
+          properties: {
+            date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+            windowOpen: CLOCK,
+            windowClose: CLOCK,
+            firstOnRun: { type: "boolean" },
+          },
+        },
+      ],
+    },
+    notifyRecipient: {
+      oneOf: [
+        { type: "null" },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["name", "outletId"],
+          properties: { name: { type: "string" }, outletId: { type: "string" } },
+        },
+      ],
+    },
+  },
+} as const;
+
+const LANE_ALTERNATIVES = {
+  type: "object",
+  additionalProperties: false,
+  required: ["lane", "items"],
+  properties: {
+    lane: {
+      type: "object",
+      additionalProperties: false,
+      required: ["brand", "districtName"],
+      properties: {
+        brand: { type: "string" },
+        districtName: { type: "string" },
+        resource: { type: "string", enum: ["refrigerated vehicle", "van", "vehicle"] },
+        competing: { type: "integer" },
+      },
+    },
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["orderRef", "outletId", "isThisOrder", "decision", "rank", "impact", "why"],
+        properties: {
+          orderRef: { type: "string" },
+          outletId: { type: "string" },
+          outletName: NULLABLE_STRING,
+          isThisOrder: { type: "boolean" },
+          decision: { type: "string", enum: ["SERVED", "DEFERRED"] },
+          rank: { type: "integer" },
+          impact: { type: "string", enum: ["lowest", "protected", "skipped_twice", "high"] },
+          why: { type: "string" },
+        },
+      },
+    },
+  },
+} as const;
+
 type AssignmentWithPlan = {
   decision: string;
   plan: { status: string };
@@ -128,6 +276,18 @@ function statsFor(plan: PlanWithChildren) {
     tripsBuilt: plan.trips.length,
     hash: plan.allocatorVersion ?? "",
   };
+}
+
+function asUtcDate(iso: string): Date {
+  return new Date(`${iso}T00:00:00.000Z`);
+}
+
+function isPermanent(explanation: unknown): boolean {
+  return Boolean(
+    explanation &&
+      typeof explanation === "object" &&
+      (explanation as { permanent?: unknown }).permanent === true,
+  );
 }
 
 function parseDate(value: unknown): Date | undefined {
@@ -246,6 +406,9 @@ export default async function (fastify: FastifyInstance) {
             required: ["planId", "status", "stats", "trips", "deferrals"],
             properties: {
               planId: { type: "string" },
+              // Additive: the planning day this plan belongs to, so the board
+              // can link back to the right day on the desk.
+              date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
               status: { type: "string", enum: ["DRAFT", "PUBLISHED", "SUPERSEDED"] },
               stats: PLAN_STATS,
               trips: { type: "array", items: TRIP },
@@ -255,17 +418,7 @@ export default async function (fastify: FastifyInstance) {
                 // confirm each one before the publication gate opens. Added
                 // as an additive field per CONVENTIONS.md rule 8.
                 type: "array",
-                items: {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["assignmentId", "orderId", "orderRef"],
-                  properties: {
-                    assignmentId: { type: "string" },
-                    orderId: { type: "string" },
-                    orderRef: { type: "string" },
-                    reasonCode: { oneOf: [{ type: "string" }, { type: "null" }] },
-                  },
-                },
+                items: DEFERRAL_ROW,
               },
             },
           },
@@ -282,17 +435,11 @@ export default async function (fastify: FastifyInstance) {
         return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Plan not found." } });
       }
 
-      const deferrals = plan.assignments
-        .filter((a) => a.decision === "DEFERRED")
-        .map((a) => ({
-          assignmentId: a.id,
-          orderId: a.orderId,
-          orderRef: a.order.ref,
-          reasonCode: a.reasonCode ?? null,
-        }));
+      const deferrals = await describeDeferrals(plan);
 
       return {
         planId: plan.id,
+        date: plan.planningDay.date.toISOString().slice(0, 10),
         status: plan.status,
         stats: statsFor({
           id: plan.id,
@@ -452,6 +599,39 @@ export default async function (fastify: FastifyInstance) {
   );
 
   fastify.get(
+    "/plans/:planId/deferrals/:assignmentId/alternatives",
+    {
+      schema: {
+        params: {
+          type: "object",
+          required: ["planId", "assignmentId"],
+          properties: {
+            planId: { type: "string", minLength: 1 },
+            assignmentId: { type: "string", minLength: 1 },
+          },
+        },
+        response: { 200: LANE_ALTERNATIVES, 404: ERROR_RESPONSE },
+      },
+    },
+    async (request, reply) => {
+      const user = request.requireRole("DISPATCHER");
+      const { planId, assignmentId } = request.params as { planId: string; assignmentId: string };
+
+      const plan = await loadPlan(planId);
+      if (!plan || plan.planningDay.depotCode !== user.depotCode) {
+        return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Plan not found." } });
+      }
+      const result = await laneAlternatives(plan, assignmentId);
+      if (!result) {
+        return reply
+          .status(404)
+          .send({ error: { code: "NOT_FOUND", message: "No such deferral on this plan." } });
+      }
+      return result;
+    },
+  );
+
+  fastify.get(
     "/plans/:planId/validation",
     {
       schema: {
@@ -596,7 +776,10 @@ export default async function (fastify: FastifyInstance) {
             planId: plan.id,
             decision: "DEFERRED",
           },
-          data: { reasonCode: decision.reasonCode },
+          data: {
+            reasonCode: decision.reasonCode,
+            note: decision.note?.trim() ? decision.note.trim().slice(0, 500) : null,
+          },
         });
         confirmed += result.count;
       }
@@ -630,7 +813,15 @@ export default async function (fastify: FastifyInstance) {
         include: {
           planningDay: true,
           assignments: {
-            select: { id: true, orderId: true, decision: true, reasonCode: true },
+            select: {
+              id: true,
+              orderId: true,
+              decision: true,
+              reasonCode: true,
+              note: true,
+              explanation: true,
+              order: { select: { ref: true, outletId: true, windowOpen: true, windowClose: true } },
+            },
           },
         },
       });
@@ -673,6 +864,8 @@ export default async function (fastify: FastifyInstance) {
       // "PUBLISHED", so a driver would get a run for orders the store still saw
       // as QUEUED. Publication is the spine of the demo, so it is the one
       // operation that must not have an unrecoverable half-state.
+      const movesTo = await nextRunDate(plan.planningDay.date);
+
       try {
         await prisma.$transaction(async (tx) => {
           const claimed = await tx.plan.updateMany({
@@ -705,20 +898,48 @@ export default async function (fastify: FastifyInstance) {
               where: { id: { in: deferredAssignments.map((a) => a.orderId) } },
               data: { status: "DEFERRED" },
             });
-            // Audit-trail row per deferral so the store can see why.
+            // Audit-trail row per deferral so the store can see why, and
+            // when the order moves to. The store hears about it here — the
+            // contract has always said publishing notifies deferred outlets.
+            const now = new Date();
             for (const assignment of deferredAssignments) {
+              const reasonCode = assignment.reasonCode ?? "UNCONFIRMED";
+              // A permanent cause has no next run to move to.
+              const rolledTo = isPermanent(assignment.explanation) ? null : asUtcDate(movesTo);
               await tx.deferral.upsert({
                 where: { planId_orderId: { planId: plan.id, orderId: assignment.orderId } },
                 create: {
                   planId: plan.id,
                   orderId: assignment.orderId,
-                  reasonCode: assignment.reasonCode ?? "UNCONFIRMED",
+                  reasonCode,
+                  note: assignment.note,
+                  rolledToDate: rolledTo,
                   decidedByUserId: user.id,
+                  storeNotifiedAt: now,
                 },
                 update: {
-                  reasonCode: assignment.reasonCode ?? "UNCONFIRMED",
+                  reasonCode,
+                  note: assignment.note,
+                  rolledToDate: rolledTo,
                   decidedByUserId: user.id,
-                  decidedAt: new Date(),
+                  decidedAt: now,
+                  storeNotifiedAt: now,
+                },
+              });
+              await tx.notification.create({
+                data: {
+                  outletId: assignment.order.outletId,
+                  kind: "deferred",
+                  title: isPermanent(assignment.explanation)
+                    ? `Order ${assignment.order.ref} could not be delivered`
+                    : `Order ${assignment.order.ref} moves to ${shortDay(movesTo)}`,
+                  body: deferralMessage(
+                    assignment.order,
+                    reasonCode,
+                    movesTo,
+                    isPermanent(assignment.explanation),
+                  ),
+                  payload: { orderId: assignment.orderId, planId: plan.id, rolledToDate: movesTo },
                 },
               });
             }

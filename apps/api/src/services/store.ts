@@ -1,5 +1,6 @@
 
 
+import { nextOperatingDate as coreNextOperatingDate } from "@katapatha/core/domain/deferral";
 import { prisma } from "../lib/db";
 
 /**
@@ -152,14 +153,29 @@ export async function unitSizeFor(
   return { kgPerUnit: kg, m3PerUnit: m3, sample: usable.length };
 }
 
-/** The next day this outlet's depot actually operates. */
+/**
+ * The next day this outlet's depot actually operates.
+ *
+ * The reference calendar decides while it has rows. Past its last row it used
+ * to return null, and every caller turned that into a 500 — so once the real
+ * date passed the end of the seeded calendar, no store could place an order.
+ * Beyond the calendar the shared rule applies instead: Monday to Saturday.
+ */
 export async function nextOperatingDate(after: Date): Promise<Date | null> {
   const row = await prisma.calendarDay.findFirst({
     where: { date: { gt: after }, isOperating: true },
     orderBy: { date: "asc" },
     select: { date: true },
   });
-  return row?.date ?? null;
+  if (row) return row.date;
+
+  const known = await prisma.calendarDay.findMany({
+    where: { date: { gt: after } },
+    select: { date: true, isOperating: true },
+  });
+  const operating = new Map(known.map((d) => [d.date.toISOString().slice(0, 10), d.isOperating]));
+  const iso = coreNextOperatingDate(after.toISOString().slice(0, 10), (d) => operating.get(d));
+  return new Date(`${iso}T00:00:00.000Z`);
 }
 
 /* ---------------------------------------------------------------------------

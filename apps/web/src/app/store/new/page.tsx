@@ -7,7 +7,11 @@ export const dynamic = "force-dynamic";
 
 export default async function NewStoreOrderPage() {
   const client = await api();
-  const result = await client.GET("/reference/calendar/next-operating-day");
+  const [result, limits] = await Promise.all([
+    client.GET("/reference/calendar/next-operating-day"),
+    // Optional: the form only uses it to preview size. The server enforces it.
+    client.GET("/orders/limits").catch(() => null),
+  ]);
 
   if (result.error || !result.data) {
     return (
@@ -42,7 +46,7 @@ export default async function NewStoreOrderPage() {
           Request ambient and chilled goods for the next operating day. Your outlet and brand come from your signed-in account.
         </p>
       </header>
-      <OrderForm forDate={result.data.date} requestId={newIdempotencyKey()} />
+      <OrderForm forDate={result.data.date} requestId={newIdempotencyKey()} limits={limits?.data ?? null} />
     </main>
   );
 }

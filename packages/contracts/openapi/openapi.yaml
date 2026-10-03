@@ -63,6 +63,8 @@ tags:
     description: Driver run execution.
   - name: sync
     description: Offline outbox drain and pull.
+  - name: fleet
+    description: Which vehicles can run on a day.
 
 components:
   securitySchemes:
@@ -90,6 +92,7 @@ paths:
 
   # ---- orders / store (owner BE2) ----
   /orders:                                    { $ref: "./paths/orders.yaml#/collection" }
+  /orders/limits:                             { $ref: "./paths/orders.yaml#/limits" }
   /orders/{orderId}:                          { $ref: "./paths/orders.yaml#/item" }
   /orders/{orderId}/receipt:                  { $ref: "./paths/orders.yaml#/receipt" }
   /store/today:                               { $ref: "./paths/store.yaml#/today" }
@@ -97,10 +100,13 @@ paths:
   # ---- planning (owner BE2) ----
   /planning-days:                             { $ref: "./paths/planning.yaml#/planningDays" }
   /planning-days/{planningDayId}/closure:     { $ref: "./paths/planning.yaml#/closure" }
+  /fleet/status:                              { $ref: "./paths/fleet.yaml#/fleetStatus" }
+  /fleet/status/{vehicleId}:                  { $ref: "./paths/fleet.yaml#/vehicleStatus" }
   /plans:                                     { $ref: "./paths/planning.yaml#/plans" }
   /plans/{planId}:                            { $ref: "./paths/planning.yaml#/planItem" }
   /plans/{planId}/validation:                 { $ref: "./paths/planning.yaml#/planValidation" }
   /plans/{planId}/deferrals:                  { $ref: "./paths/planning.yaml#/planDeferrals" }
+  /plans/{planId}/deferrals/{assignmentId}/alternatives: { $ref: "./paths/planning.yaml#/planDeferralAlternatives" }
   /plans/{planId}/publication:                { $ref: "./paths/planning.yaml#/planPublication" }
 
   # ---- loading / driver / sync (owner BE3) ----

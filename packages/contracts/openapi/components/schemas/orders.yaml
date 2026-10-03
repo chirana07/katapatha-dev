@@ -46,6 +46,22 @@ Order:
       type: string
       description: The narrower projection a store manager sees.
       enum: [queued, planned, on_the_way, delivered, deferred, cancelled]
+    deferral:
+      description: >
+        Present once a plan that deferred this order is published: the
+        dispatcher's reason and the operating day it moves to. `rolledToDate`
+        is null when no vehicle in the fleet could carry the order as it
+        stands, so no next run is promised. Additive (CONVENTIONS.md rule 8).
+      oneOf:
+        - type: "null"
+        - type: object
+          required: [reasonCode, rolledToDate]
+          properties:
+            reasonCode: { type: string, examples: ["REEFER_FULL"] }
+            rolledToDate:
+              oneOf:
+                - type: "null"
+                - $ref: "./common.yaml#/DateOnly"
 
 ReceiptRequest:
   type: object
@@ -67,3 +83,21 @@ Receipt:
     confirmedAt: { type: string, format: date-time, examples: ["2026-09-30T05:41:00Z"] }
     unitsReceived: { type: integer, examples: [120] }
     matches: { type: boolean, examples: [true] }
+
+OrderLimit:
+  type: object
+  required: [m3PerUnit, kgPerUnit, maxUnitsPerOrder]
+  properties:
+    m3PerUnit: { type: number, examples: [0.1125] }
+    kgPerUnit: { type: number, examples: [8] }
+    maxUnitsPerOrder:
+      type: integer
+      description: 0 when no vehicle at the depot can carry this temperature to the outlet.
+      examples: [302]
+
+OrderLimits:
+  type: object
+  required: [chilled, ambient]
+  properties:
+    chilled: { $ref: "./orders.yaml#/OrderLimit" }
+    ambient: { $ref: "./orders.yaml#/OrderLimit" }

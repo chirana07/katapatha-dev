@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import type { Brand, OrderStatus, TempRequirement } from "@prisma/client";
+import type { Brand, OrderStatus, Prisma, TempRequirement } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import type { SessionUser } from "../lib/auth.js";
+import { maxUnitsPerOrder, type FleetVehicle } from "@katapatha/core/domain/orderSize";
 import { nextOperatingDate, unitSizeFor } from "../services/store.js";
 
 /**
@@ -82,6 +83,24 @@ const ORDER_RESPONSE_ITEM = {
       type: "string",
       enum: ["queued", "planned", "on_the_way", "delivered", "deferred", "cancelled"],
     },
+    // Additive: the published deferral's reason and moves-to day, so the
+    // store sees what the dispatcher told them (Figma D-05 store preview).
+    deferral: {
+      oneOf: [
+        { type: "null" },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["reasonCode", "rolledToDate"],
+          properties: {
+            reasonCode: { type: "string" },
+            rolledToDate: {
+              oneOf: [{ type: "null" }, { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }],
+            },
+          },
+        },
+      ],
+    },
   },
 } as const;
 
@@ -103,7 +122,26 @@ function storeStateOf(
   return "queued";
 }
 
-type OrderWithTripLinkage = Awaited<ReturnType<typeof fetchOrdersFor>>[number];
+/**
+ * What every order read needs: the trip linkage for `storeState`, and the
+ * latest published deferral for the additive `deferral` field.
+ */
+const ORDER_INCLUDE = {
+  assignments: {
+    select: {
+      plan: { select: { status: true } },
+      tripStop: { select: { trip: { select: { status: true } } } },
+    },
+  },
+  deferrals: {
+    where: { plan: { status: "PUBLISHED" } },
+    orderBy: { decidedAt: "desc" },
+    take: 1,
+    select: { reasonCode: true, rolledToDate: true },
+  },
+} satisfies Prisma.OrderInclude;
+
+type OrderWithTripLinkage = Prisma.OrderGetPayload<{ include: typeof ORDER_INCLUDE }>;
 
 async function fetchOrdersFor(user: SessionUser, args: { date?: Date }) {
   const where: Record<string, unknown> = {};
@@ -120,14 +158,7 @@ async function fetchOrdersFor(user: SessionUser, args: { date?: Date }) {
     where,
     orderBy: [{ requestedDate: "desc" }, { ref: "asc" }],
     take: 100,
-    include: {
-      assignments: {
-        select: {
-          plan: { select: { status: true } },
-          tripStop: { select: { trip: { select: { status: true } } } },
-        },
-      },
-    },
+    include: ORDER_INCLUDE,
   });
 }
 
@@ -150,6 +181,18 @@ function toOrderResponse(order: OrderWithTripLinkage) {
     requestedDate: order.requestedDate.toISOString().slice(0, 10),
     status: order.status,
     storeState: storeStateOf(order.status, Boolean(published), departed),
+    deferral: deferralOf(order),
+  };
+}
+
+function deferralOf(order: OrderWithTripLinkage) {
+  // Only while the order is actually deferred — a later plan that serves it
+  // supersedes the old decision.
+  const latest = order.status === "DEFERRED" ? order.deferrals[0] : undefined;
+  if (!latest) return null;
+  return {
+    reasonCode: latest.reasonCode,
+    rolledToDate: latest.rolledToDate?.toISOString().slice(0, 10) ?? null,
   };
 }
 
@@ -171,7 +214,74 @@ function parseDate(value: unknown): Date | undefined {
   return new Date(`${value}T00:00:00.000Z`);
 }
 
+/**
+ * How big one order can be for this outlet, per temperature: the outlet's own
+ * unit-size estimate against the roomiest vehicle allowed to carry it (Rule 5:
+ * an order travels whole). The whole depot fleet counts, workshop or not —
+ * this is about whether any day could ever plan it.
+ */
+async function orderLimitsFor(outlet: { id: string; depotCode: string; parkingConstraint: string }) {
+  const vehicles: FleetVehicle[] = await prisma.vehicle.findMany({
+    where: { depotCode: outlet.depotCode },
+    select: { type: true, temp: true, volumeCapM3: true, weightCapKg: true },
+  });
+  const vanOnly = outlet.parkingConstraint === "van_only";
+  const limits = {} as Record<
+    TempRequirement,
+    { m3PerUnit: number; kgPerUnit: number; maxUnitsPerOrder: number }
+  >;
+  for (const temp of ["chilled", "ambient"] as const) {
+    const size = await unitSizeFor(outlet.id, temp);
+    limits[temp as TempRequirement] = {
+      m3PerUnit: size.m3PerUnit,
+      kgPerUnit: size.kgPerUnit,
+      maxUnitsPerOrder: maxUnitsPerOrder(vehicles, { tempRequirement: temp, vanOnly }, size),
+    };
+  }
+  return limits;
+}
+
+const LIMIT = {
+  type: "object",
+  additionalProperties: false,
+  required: ["m3PerUnit", "kgPerUnit", "maxUnitsPerOrder"],
+  properties: {
+    m3PerUnit: { type: "number" },
+    kgPerUnit: { type: "number" },
+    maxUnitsPerOrder: { type: "integer" },
+  },
+} as const;
+
 export default async function (fastify: FastifyInstance) {
+  fastify.get(
+    "/orders/limits",
+    {
+      schema: {
+        response: {
+          200: {
+            type: "object",
+            additionalProperties: false,
+            required: ["chilled", "ambient"],
+            properties: { chilled: LIMIT, ambient: LIMIT },
+          },
+          403: ERROR_RESPONSE,
+        },
+      },
+    },
+    async (request, reply) => {
+      const user = request.requireRole("STORE_MANAGER");
+      const outlet = user.outletId
+        ? await prisma.outlet.findUnique({ where: { id: user.outletId } })
+        : null;
+      if (!outlet) {
+        return reply
+          .status(403)
+          .send({ error: { code: "FORBIDDEN", message: "This account is not bound to an outlet." } });
+      }
+      return orderLimitsFor(outlet);
+    },
+  );
+
   fastify.get(
     "/orders",
     {
@@ -227,14 +337,7 @@ export default async function (fastify: FastifyInstance) {
 
       const order = await prisma.order.findFirst({
         where,
-        include: {
-          assignments: {
-            select: {
-              plan: { select: { status: true } },
-              tripStop: { select: { trip: { select: { status: true } } } },
-            },
-          },
-        },
+        include: ORDER_INCLUDE,
       });
       if (!order) {
         return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Order not found." } });
@@ -320,14 +423,7 @@ export default async function (fastify: FastifyInstance) {
             outletId,
             clientRequestId: { startsWith: requestKeyPrefix },
           },
-          include: {
-            assignments: {
-              select: {
-                plan: { select: { status: true } },
-                tripStop: { select: { trip: { select: { status: true } } } },
-              },
-            },
-          },
+          include: ORDER_INCLUDE,
         });
         return rows.sort((a, b) => lineIndexOf(a.clientRequestId) - lineIndexOf(b.clientRequestId));
       }
@@ -360,9 +456,29 @@ export default async function (fastify: FastifyInstance) {
         });
       }
 
-      const sizeByTemp = new Map<TempRequirement, { kgPerUnit: number; m3PerUnit: number }>();
-      for (const temp of ["chilled", "ambient"] as const) {
-        sizeByTemp.set(temp as TempRequirement, await unitSizeFor(user.outletId, temp));
+      // Per-unit size estimates double as the Rule 5 check: an order travels
+      // whole, so a line no vehicle could ever carry would be deferred every
+      // morning. Refuse it here and say how big an order can be — the store
+      // raises it as several lines instead.
+      const limits = await orderLimitsFor(outlet);
+      const sizeByTemp = new Map<TempRequirement, { kgPerUnit: number; m3PerUnit: number }>(
+        (["chilled", "ambient"] as const).map((temp) => [temp as TempRequirement, limits[temp as TempRequirement]]),
+      );
+      const tooLarge = body.lines.find(
+        (line) => line.units > limits[line.tempRequirement as TempRequirement].maxUnitsPerOrder,
+      );
+      if (tooLarge) {
+        const max = limits[tooLarge.tempRequirement as TempRequirement].maxUnitsPerOrder;
+        return reply.status(422).send({
+          error: {
+            code: "ORDER_TOO_LARGE",
+            message:
+              max > 0
+                ? `${tooLarge.units} ${tooLarge.tempRequirement} units won't fit on any vehicle that can reach this outlet. One order can hold at most ${max} units — place it as several orders.`
+                : `No vehicle at this depot can carry ${tooLarge.tempRequirement} goods to this outlet.`,
+            details: { tempRequirement: tooLarge.tempRequirement, units: tooLarge.units, maxUnitsPerOrder: max },
+          },
+        });
       }
 
       // Wrapped so the double-submit this idempotency key exists for cannot
@@ -427,14 +543,7 @@ export default async function (fastify: FastifyInstance) {
 
       const withLinkage = await prisma.order.findMany({
         where: { id: { in: created.map((o) => o.id) } },
-        include: {
-          assignments: {
-            select: {
-              plan: { select: { status: true } },
-              tripStop: { select: { trip: { select: { status: true } } } },
-            },
-          },
-        },
+        include: ORDER_INCLUDE,
       });
 
       return reply.status(201).send(withLinkage.map(toOrderResponse));

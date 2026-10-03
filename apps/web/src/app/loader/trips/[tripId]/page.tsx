@@ -135,18 +135,44 @@ export default async function TripLoadListPage({ params }: { params: Params }) {
         <>
           <section aria-labelledby="line-heading" className="mt-6">
             <h2 id="line-heading" className="sr-only">
-              Load lines in reverse delivery order
+              Load lines grouped by outlet, in reverse delivery order
             </h2>
-            <ol className="flex flex-col gap-3">
-              {lines.map((line, index) => (
-                <LineRow
-                  key={line.orderId}
-                  tripId={tripId}
-                  line={line}
-                  reasons={reasons}
-                  isLastStop={index === 0}
-                />
-              ))}
+            <ol className="flex flex-col gap-5">
+              {groupByOutlet(lines).map((group, groupIndex) => {
+                const groupTotal = group.lines.reduce((s, l) => s + l.expectedUnits, 0);
+                const groupLoaded = group.lines.reduce(
+                  (s, l) => s + (l.loadedUnits ?? 0),
+                  0,
+                );
+                const allChecked = group.lines.every(
+                  (l) => l.loadedUnits != null && l.condition != null,
+                );
+                return (
+                  <li key={group.outletId}>
+                    <OutletGroup
+                      index={groupIndex + 1}
+                      outletId={group.outletId}
+                      lineCount={group.lines.length}
+                      loaded={groupLoaded}
+                      expected={groupTotal}
+                      allChecked={allChecked}
+                      isLastStop={groupIndex === 0}
+                    >
+                      <ol className="flex flex-col gap-3">
+                        {group.lines.map((line) => (
+                          <LineRow
+                            key={line.orderId}
+                            tripId={tripId}
+                            line={line}
+                            reasons={reasons}
+                            isLastStop={false}
+                          />
+                        ))}
+                      </ol>
+                    </OutletGroup>
+                  </li>
+                );
+              })}
             </ol>
           </section>
 
@@ -159,6 +185,75 @@ export default async function TripLoadListPage({ params }: { params: Params }) {
         </>
       )}
     </main>
+  );
+}
+
+type GroupedOutlet = { outletId: string; lines: Line[] };
+
+function groupByOutlet(lines: Line[]): GroupedOutlet[] {
+  const map = new Map<string, Line[]>();
+  for (const line of lines) {
+    if (!map.has(line.outletId)) map.set(line.outletId, []);
+    map.get(line.outletId)!.push(line);
+  }
+  // Insertion order of Map is the order of first occurrence, which preserves
+  // the reverse-delivery order the API already applied (first group = last
+  // stop = load first).
+  return Array.from(map.entries()).map(([outletId, items]) => ({ outletId, lines: items }));
+}
+
+function OutletGroup({
+  index,
+  outletId,
+  lineCount,
+  loaded,
+  expected,
+  allChecked,
+  isLastStop,
+  children,
+}: {
+  index: number;
+  outletId: string;
+  lineCount: number;
+  loaded: number;
+  expected: number;
+  allChecked: boolean;
+  isLastStop: boolean;
+  children: React.ReactNode;
+}) {
+  const pct = expected > 0 ? Math.round((loaded / expected) * 100) : 0;
+  return (
+    <section className={`rounded-[var(--radius-card)] border bg-surface p-4 sm:p-5 ${isLastStop ? "border-[color:var(--c-navy)]" : "border-line"}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3">
+        <div className="flex items-start gap-3">
+          <span className={`tabular inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${isLastStop ? "bg-[color:var(--c-navy)] text-white" : "bg-raised text-ink"}`}>
+            {index}
+          </span>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-base font-semibold text-ink">{outletId}</h3>
+              {isLastStop && (
+                <span className="inline-flex items-center rounded-md bg-[color:var(--c-navy)] px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                  Load first · last stop
+                </span>
+              )}
+            </div>
+            <p className="mt-0.5 text-xs text-muted">
+              {lineCount} {lineCount === 1 ? "order" : "orders"} · {expected} units
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <span className={`tabular inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold ${allChecked ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "bg-amber-50 text-amber-900 border border-amber-200"}`}>
+            {allChecked ? "✓ Loaded" : "In progress"} {loaded} / {expected}
+          </span>
+          <div className="h-1 w-28 overflow-hidden rounded-full bg-raised">
+            <div className="h-full rounded-full bg-action" style={{ width: `${Math.min(pct, 100)}%` }} />
+          </div>
+        </div>
+      </div>
+      <div className="mt-4">{children}</div>
+    </section>
   );
 }
 
@@ -199,7 +294,7 @@ function LineRow({
                 Load first · last stop
               </span>
             )}
-            <span>Delivery seq {line.seq} · {line.outletId}</span>
+            <span>Delivery stop {line.seq + 1} · {line.outletId}</span>
           </p>
           <p className="truncate text-lg font-semibold text-ink">{line.orderRef}</p>
           <p className="tabular text-sm text-muted">

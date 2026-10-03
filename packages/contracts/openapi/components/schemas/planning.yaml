@@ -81,3 +81,145 @@ ConfirmDeferralsRequest:
           assignmentId: { type: string, examples: ["clx0asg1a2b3c4d5e6f7g8h"] }
           reasonCode: { type: string, examples: ["REEFER_FULL"] }
           note: { type: [string, "null"], examples: [null] }
+
+DeferralRow:
+  type: object
+  description: >
+    A DEFERRED assignment on a plan. Everything after `reasonCode` is additive
+    and feeds the dispatcher's "Defer order" drawer (Figma D-05).
+  required: [assignmentId, orderId, orderRef]
+  properties:
+    assignmentId: { type: string, examples: ["clx0asg1a2b3c4d5e6f7g8h"] }
+    orderId: { type: string, examples: ["clx0ord1a2b3c4d5e6f7g8h9"] }
+    orderRef: { type: string, examples: ["ORD-004312"] }
+    reasonCode:
+      type: [string, "null"]
+      description: The dispatcher's confirmed reason; null while still pending.
+      examples: ["REEFER_FULL"]
+    note:
+      type: [string, "null"]
+      description: Free-text note recorded with the reason ("Other · add a note").
+      examples: [null]
+    order:
+      type: object
+      required: [outletId, brand, districtName, units, volumeM3, windowOpen, windowClose]
+      properties:
+        outletId: { type: string, examples: ["OUT074"] }
+        outletName: { type: [string, "null"], examples: ["Puttalam"] }
+        brand: { type: string, examples: ["Fresh"] }
+        districtName: { type: string, examples: ["Puttalam"] }
+        tempRequirement: { type: string, examples: ["CHILLED"] }
+        units: { type: integer, examples: [205] }
+        volumeM3: { type: number, examples: [2.6] }
+        windowOpen: { $ref: "./common.yaml#/ClockTime" }
+        windowClose: { $ref: "./common.yaml#/ClockTime" }
+        deferredYesterday: { type: boolean, examples: [false] }
+    cause:
+      description: The allocator's own finding — why no vehicle could take the order.
+      oneOf:
+        - type: "null"
+        - type: object
+          required: [rejectionCode, permanent, explanation]
+          properties:
+            rejectionCode: { type: string, examples: ["NO_REEFER_AVAILABLE"] }
+            permanent:
+              type: boolean
+              description: True when no plan on any day could serve the order as it stands.
+              examples: [false]
+            explanation:
+              type: array
+              items:
+                type: object
+                required: [code, count]
+                properties:
+                  code: { type: string, examples: ["NO_REEFER_AVAILABLE"] }
+                  count: { type: integer, examples: [14] }
+                  sample: { type: [string, "null"], examples: ["VEH025"] }
+            nearMiss:
+              oneOf:
+                - type: "null"
+                - type: object
+                  required: [vehicleId, metric, short, unit]
+                  properties:
+                    vehicleId: { type: string, examples: ["VEH014"] }
+                    metric: { type: string, examples: ["volume"] }
+                    short: { type: number, examples: [1.4] }
+                    unit: { type: string, examples: ["m3"] }
+            suggestion: { type: [string, "null"], examples: ["fits if VEH003 returns from the workshop"] }
+    suggestedReasonCode:
+      type: [string, "null"]
+      description: >
+        The deferral reason the allocator's finding points at, from the fixed
+        list. Null when the order yielded to a higher-priority one and there is
+        no capacity reason to suggest.
+      examples: ["REEFER_FULL"]
+    movesTo:
+      oneOf:
+        - type: "null"
+        - type: object
+          required: [date, windowOpen, windowClose, firstOnRun]
+          properties:
+            date:
+              $ref: "./common.yaml#/DateOnly"
+            windowOpen: { $ref: "./common.yaml#/ClockTime" }
+            windowClose: { $ref: "./common.yaml#/ClockTime" }
+            firstOnRun:
+              type: boolean
+              description: >
+                Allocator priority rule 1 — an order deferred yesterday is
+                planned ahead of everything else. First, not guaranteed.
+              examples: [true]
+    notifyRecipient:
+      oneOf:
+        - type: "null"
+        - type: object
+          required: [name, outletId]
+          properties:
+            name: { type: string, examples: ["Fathima Rizvi"] }
+            outletId: { type: string, examples: ["OUT074"] }
+
+LaneAlternatives:
+  type: object
+  required: [lane, items]
+  properties:
+    lane:
+      type: object
+      required: [brand, districtName]
+      properties:
+        brand: { type: string, examples: ["Fresh"] }
+        districtName: { type: string, examples: ["Puttalam"] }
+        resource:
+          type: string
+          enum: [refrigerated vehicle, van, vehicle]
+          description: The kind of vehicle this order needed — what it competed for.
+        competing:
+          type: integer
+          description: >
+            This order plus every served order, depot-wide, that rode a vehicle
+            this order could also have used. 1 means nothing was swappable.
+          examples: [4]
+    items:
+      type: array
+      description: >
+        The deferred order first, then up to four competitors: orders served on
+        a vehicle this order could have used, lowest priority (most swappable)
+        shown. Only the deferred order when nothing was swappable.
+      items:
+        type: object
+        required: [orderRef, outletId, isThisOrder, decision, rank, impact, why]
+        properties:
+          orderRef: { type: string, examples: ["ORD-004312"] }
+          outletId: { type: string, examples: ["OUT074"] }
+          outletName: { type: [string, "null"], examples: ["Puttalam"] }
+          isThisOrder: { type: boolean, examples: [true] }
+          decision: { type: string, enum: [SERVED, DEFERRED] }
+          rank: { type: integer, description: "1 = highest priority in the lane", examples: [3] }
+          impact:
+            type: string
+            enum: [lowest, protected, skipped_twice, high]
+            description: >
+              protected — deferred yesterday and served today;
+              skipped_twice — deferred yesterday and deferred again (the
+              HIGH_PRIORITY_DEFERRED warning); lowest — the lowest priority
+              score in the lane; high — the rest.
+          why: { type: string, examples: ["deferred yesterday, window shuts 08:00"] }

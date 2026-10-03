@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { readError } from "../../api-errors";
-import { colomboToday, formatClock, formatWindow } from "../../format";
+import { colomboToday, formatClock, formatWindow, stopNumber } from "../../format";
 import { fetchProblemReasons } from "../../reasons.server";
 import {
   STOP_STATUS_HINT,
@@ -79,14 +79,14 @@ export default async function StopDetailPage({ params }: { params: Params }) {
           Today&apos;s run
         </Link>
         <span aria-hidden> › </span>
-        <span className="text-ink">Stop {stop.seq}</span>
+        <span className="text-ink">Stop {stopNumber(stop.seq)}</span>
       </nav>
 
       <header className="mt-3 border-b border-line pb-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-              Stop {stop.seq} · Trip {tripNo}
+              Stop {stopNumber(stop.seq)} · Trip {tripNo}
             </p>
             <h1 className="mt-1 truncate text-2xl font-semibold text-ink">
               {stop.outletName ?? stop.outletId}
@@ -189,7 +189,7 @@ export default async function StopDetailPage({ params }: { params: Params }) {
             href={`/driver/stops/${encodeURIComponent(previous.stop.id)}`}
             className="inline-flex min-h-11 items-center rounded-[var(--radius-control)] border border-line bg-surface px-4 font-semibold text-ink hover:bg-raised"
           >
-            ← Stop {previous.stop.seq}
+            ← Stop {stopNumber(previous.stop.seq)}
           </Link>
         ) : (
           <span />
@@ -199,7 +199,7 @@ export default async function StopDetailPage({ params }: { params: Params }) {
             href={`/driver/stops/${encodeURIComponent(next.stop.id)}`}
             className="ml-auto inline-flex min-h-11 items-center rounded-[var(--radius-control)] border border-line bg-surface px-4 font-semibold text-ink hover:bg-raised"
           >
-            Stop {next.stop.seq} →
+            Stop {stopNumber(next.stop.seq)} →
           </Link>
         ) : (
           <span className="ml-auto" />

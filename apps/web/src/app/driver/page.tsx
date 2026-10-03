@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { readError } from "./api-errors";
-import { colomboToday, formatClock, formatWindow } from "./format";
+import { colomboToday, formatClock, formatWindow, stopNumber } from "./format";
 import { ReleaseButton } from "./release-button";
 import {
   STOP_STATUS_LABEL,
@@ -28,8 +28,14 @@ type Stop = {
   orders?: Array<{ orderId: string; orderRef: string; expectedUnits: number }>;
 };
 
-export default async function DriverRunPage() {
-  const date = colomboToday();
+export default async function DriverRunPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ date?: string }>;
+}) {
+  const query = searchParams ? await searchParams : {};
+  const dateOverride = typeof query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(query.date) ? query.date : null;
+  const date = dateOverride ?? colomboToday();
   const client = await api();
   const result = await client.GET("/drivers/me/run", {
     params: { query: { date } },
@@ -82,20 +88,33 @@ export default async function DriverRunPage() {
 
       <section
         aria-label="Run progress"
-        className="mt-4 flex items-center justify-between gap-3 rounded-[var(--radius-card)] border border-line bg-surface p-4"
+        className="mt-4 rounded-[var(--radius-card)] border border-line bg-surface p-4"
       >
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted">Stops</p>
-          <p className="tabular mt-1 text-2xl font-semibold text-ink">
-            {progress.done} / {progress.total}
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="tabular text-sm font-semibold text-ink">
+            {progress.done} of {progress.total} stops completed
+          </p>
+          <p className="tabular text-sm font-semibold text-[color:var(--c-navy)]">
+            {progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0}%
           </p>
         </div>
-        <p className="max-w-[14rem] text-right text-sm text-muted">
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-raised">
+          <div
+            className="h-full rounded-full bg-action transition-[width]"
+            style={{ width: `${progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0}%` }}
+            aria-hidden
+          />
+        </div>
+        <p className="mt-2 text-xs text-muted">
           {progress.remaining === 0
             ? "Every stop is closed. The vehicle can be released."
             : `${progress.remaining} ${progress.remaining === 1 ? "stop" : "stops"} to work through.`}
         </p>
       </section>
+
+      {progress.nextIndex != null && allStops[progress.nextIndex] ? (
+        <NextStopCallout stop={allStops[progress.nextIndex].stop} />
+      ) : null}
 
       {allStops.length === 0 ? (
         <EmptyRun />
@@ -124,7 +143,7 @@ export default async function DriverRunPage() {
                             </span>
                           )}
                           <span>
-                            Stop {stop.seq} · Trip {trip.tripNo}
+                            Stop {stopNumber(stop.seq)} · Trip {trip.tripNo}
                           </span>
                         </p>
                         <p className="truncate text-base font-semibold text-ink">
@@ -147,6 +166,43 @@ export default async function DriverRunPage() {
         </section>
       )}
     </main>
+  );
+}
+
+function NextStopCallout({ stop }: { stop: Stop }) {
+  return (
+    <section
+      aria-label="Next stop"
+      className="mt-4 rounded-[var(--radius-card)] border border-[color:var(--c-navy)] bg-emerald-50/50 p-4"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white text-[color:var(--c-navy)]">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5" aria-hidden>
+              <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
+            </svg>
+          </span>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted">Next stop</p>
+            <p className="truncate text-base font-semibold text-ink">
+              {stop.outletName ?? stop.outletId}
+            </p>
+            <p className="tabular mt-0.5 text-sm text-muted">
+              Arrive {formatClock(stop.plannedArrivalAt)} · window {formatWindow(stop.windowOpen, stop.windowClose)}
+            </p>
+          </div>
+        </div>
+        <Link
+          href={`/driver/stops/${encodeURIComponent(stop.id)}`}
+          className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-[var(--radius-control)] bg-[color:var(--c-navy)] px-4 text-sm font-semibold text-white hover:brightness-110"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
+            <path d="M21 3L4 11l7 2 2 7z" />
+          </svg>
+          Open
+        </Link>
+      </div>
+    </section>
   );
 }
 

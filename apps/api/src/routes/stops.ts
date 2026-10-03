@@ -1,7 +1,13 @@
 import type { FastifyInstance } from "fastify";
-import type { ProblemKind } from "@prisma/client";
+import type { ConflictState, ProblemKind } from "@prisma/client";
 import { prisma } from "../lib/db.js";
-import { requireDriverStop } from "../lib/authorization.js";
+import {
+  detectConflict,
+  loadConflictContexts,
+  recordConflictedEvent,
+  resolveStopAccess,
+  type StopConflictContext,
+} from "../services/conflicts.js";
 import {
   arriveAtStop,
   completeStop,
@@ -43,6 +49,12 @@ function toProblemKind(code: string | null | undefined): ProblemKind {
  * re-applying. The underlying services also no-op if the stop is
  * already past the state the event would advance it to, so a replay
  * from a flaky driver phone is always safe.
+ *
+ * Conflicts: a stop can move to another vehicle, or be delivered by one,
+ * between the moment the device recorded a fact and the moment it reaches
+ * here. Such an event is recorded with its `ConflictState` and NOT applied —
+ * see services/conflicts.ts for why that is neither an acceptance nor an
+ * error.
  */
 
 const ERROR_RESPONSE = {
@@ -174,29 +186,41 @@ export default async function (fastify: FastifyInstance) {
       const { stopId } = request.params as { stopId: string };
       const body = request.body as { deviceId: string; events: IncomingEvent[] };
 
-      try {
-        await requireDriverStop(user, stopId);
-      } catch {
+      // A stop that is not on this run may still have been on it when the
+      // device recorded these events, which is a conflict rather than a 404.
+      const access = await resolveStopAccess(user, stopId);
+      if (access === "DENIED") {
         return reply
           .status(404)
           .send({ error: { code: "NOT_FOUND", message: "Stop not on this driver's run." } });
       }
+      const actor = { userId: user.id, vehicleId: user.defaultVehicleId, deviceId: body.deviceId };
 
-      // Dedup first: any event id already recorded is a duplicate.
+      // Dedup first: any event id already recorded is a duplicate. The stored
+      // conflictState comes back with it so a replayed conflict can be reported
+      // as the conflict it was rather than as a plain duplicate.
       const incomingIds = body.events.map((e) => e.id);
       const existing = await prisma.stopEvent.findMany({
         where: { id: { in: incomingIds } },
-        select: { id: true },
+        select: { id: true, conflictState: true },
       });
-      const duplicateIds = new Set(existing.map((e) => e.id));
+      const recordedState = new Map(existing.map((e) => [e.id, e.conflictState]));
+
+      // Ownership history, but only when something here would be applied: a
+      // request that is entirely a replay decides nothing with it.
+      const hasNewWork = body.events.some((e) => !recordedState.has(e.id));
+      const conflictContexts: Map<string, StopConflictContext> = hasNewWork
+        ? await loadConflictContexts([stopId])
+        : new Map();
 
       const results: Array<{
         id: string;
         status: "accepted" | "duplicate" | "conflict";
-        conflictState: "NONE" | null;
+        conflictState: ConflictState | null;
       }> = [];
       let accepted = 0;
       let duplicates = 0;
+      let conflicts = 0;
 
       // Group completion events (DELIVERED/PART_DELIVERED + POD_CAPTURED) so
       // we can call completeStop once with the right line list — the service
@@ -218,9 +242,43 @@ export default async function (fastify: FastifyInstance) {
       const expectedById = new Map(stopOrders.map((row) => [row.order.id, row.order.units]));
 
       for (const event of body.events) {
-        if (duplicateIds.has(event.id)) {
+        const alreadyRecorded = recordedState.get(event.id);
+        if (alreadyRecorded !== undefined) {
+          // A duplicate either way — the row exists and nothing is re-applied.
+          // But a replay of a conflicted event is still reported as a conflict,
+          // with the state the server stored, so the device settles the row
+          // terminally instead of retrying it forever. It is counted under
+          // `duplicates`: the conflict was counted when it was first detected,
+          // and counting it again on every replay would be a lie about how many
+          // conflicts happened.
           duplicates += 1;
-          results.push({ id: event.id, status: "duplicate", conflictState: "NONE" });
+          results.push(
+            alreadyRecorded === "NONE"
+              ? { id: event.id, status: "duplicate", conflictState: "NONE" }
+              : { id: event.id, status: "conflict", conflictState: alreadyRecorded },
+          );
+          continue;
+        }
+
+        const occurredAt = new Date(event.occurredAt);
+        // Access granted only on the strength of a reassignment means the stop
+        // is someone else's now, so the event cannot apply to it whatever its
+        // timing: their assignment is stale by definition.
+        const conflictState: ConflictState =
+          access === "REASSIGNED_AWAY"
+            ? "STALE_ASSIGNMENT"
+            : detectConflict(conflictContexts.get(stopId), { occurredAt }, actor);
+
+        if (conflictState !== "NONE") {
+          await recordConflictedEvent({
+            stopId,
+            conflictState,
+            fact: { ...event, occurredAt },
+            orderOnStop: event.orderId != null && expectedById.has(event.orderId),
+            actor,
+          });
+          conflicts += 1;
+          results.push({ id: event.id, status: "conflict", conflictState });
           continue;
         }
 
@@ -231,11 +289,7 @@ export default async function (fastify: FastifyInstance) {
         // the contract calls "a success, not an error" -- could never be returned.
         // occurredAt is the DEVICE clock; the server's receipt time is recorded
         // separately by StopEvent.recordedAt.
-        const meta = {
-          id: event.id,
-          occurredAt: new Date(event.occurredAt),
-          deviceId: body.deviceId,
-        };
+        const meta = { id: event.id, occurredAt, deviceId: body.deviceId };
 
         try {
           if (event.type === "ARRIVED") {
@@ -352,7 +406,7 @@ export default async function (fastify: FastifyInstance) {
       return reply.status(200).send({
         accepted,
         duplicates,
-        conflicts: 0,
+        conflicts,
         results,
       });
     },

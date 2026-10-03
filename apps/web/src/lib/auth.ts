@@ -39,9 +39,12 @@ export class WorkspaceUnavailableError extends Error {
  * it. So this only ever reacts to 401 and to the role not matching.
  */
 export async function requireRole(role: Role, next: string): Promise<SessionUser> {
+  // Outside the try: api() reads cookies(), and Next signals "this render is
+  // dynamic" by throwing from it. Catching that turns a static page under a
+  // guarded layout into a build-time WorkspaceUnavailableError.
+  const client = await api();
   let result;
   try {
-    const client = await api();
     result = await client.GET("/auth/me");
   } catch {
     throw new WorkspaceUnavailableError();

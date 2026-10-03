@@ -2,24 +2,30 @@ import Link from "next/link";
 import Image from "next/image";
 import type { ReactNode } from "react";
 import type { Role } from "@katapatha/core/domain/roles";
-import { NAV } from "./nav";
+import { NAV, initialsOf } from "./nav";
+import { NavIcon } from "./nav-icon";
 import { MobileNav, RailNav } from "./rail-nav";
-import { signOut } from "@/app/(shell)/sign-out";
 
 /**
  * The workspace shell, for every role that has one.
  *
- * The previous version was hardcoded to DISPATCHER — it redirected any other
- * role away and rendered a single nav item. Meanwhile the loader and driver
- * hand-rolled their own navy top bars and the store console had no shell at
- * all. This is the one rail, driven by `NAV`.
+ * There were three. The dispatcher used a shell hardcoded to DISPATCHER — it
+ * redirected every other role away and rendered a single nav item — while the
+ * loader and store each got their own sidebar in the Figma visual pass, byte
+ * for byte identical to each other apart from the nav items and the labels.
+ * This is those three, folded into one, keeping the visual treatment they
+ * arrived with: the chip, the icons, the white active state and the avatar
+ * footer.
  *
- * Session and role checking are deliberately NOT here any more. They live in
- * `requireRole()` so that server actions can run the same check; a layout
- * cannot guard an action. The layout calls `requireRole` and passes the result
- * in, which also means the shell makes no network call of its own.
+ * Session and role checking are deliberately NOT here. They live in
+ * `requireRole()` so a server action can run the same check; a layout cannot
+ * guard an action. The layout calls it and passes the result in, so the shell
+ * makes no network call of its own — the sidebars it replaces each fetched
+ * /auth/me themselves and swallowed the failure, which is why a signed-out
+ * user still saw the store and loader consoles.
  *
- * DESIGN.md: "persistent 212px rail".
+ * Width is 212px, per DESIGN.md's "persistent 212px rail". The sidebars this
+ * replaces had drifted to w-64.
  */
 export function AppShell({
   role,
@@ -35,10 +41,11 @@ export function AppShell({
   children: ReactNode;
 }) {
   const nav = NAV[role];
-  const navLabel = `${nav.title} sections`;
+  const navLabel = `${nav.title} workspace`;
+  const initials = initialsOf(name, nav.fallbackInitials);
 
   return (
-    <div className="min-h-screen bg-canvas text-ink md:grid md:grid-cols-[212px_minmax(0,1fr)]">
+    <div className="flex min-h-screen bg-canvas text-ink">
       <a
         href="#workspace"
         className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-control focus:bg-surface focus:px-4 focus:py-3"
@@ -46,87 +53,88 @@ export function AppShell({
         Skip to workspace
       </a>
 
-      <aside className="hidden min-h-screen flex-col bg-rail px-4 py-5 text-white md:flex">
-        <Link href={nav.home} className="flex min-h-11 items-center px-2">
-          <Image
-            src="/logo/katapatha-lockup-dark.png"
-            alt="Katapatha"
-            width={1600}
-            height={417}
-            className="h-auto w-36"
-            priority
-          />
-        </Link>
+      <aside className="hidden h-screen w-53 shrink-0 flex-col justify-between bg-rail p-4 text-white lg:sticky lg:top-0 lg:flex">
+        <div className="flex flex-col gap-5">
+          <Link href={nav.home} className="flex items-center">
+            <Image
+              src="/logo/katapatha-lockup-light.png"
+              alt="Katapatha"
+              width={1600}
+              height={409}
+              className="h-auto w-32"
+              priority
+            />
+          </Link>
 
-        {/* The scope chip. Which depot, dock or outlet this session acts on —
-            the same scope the API's authorization predicates enforce. */}
-        <div className="mt-5 rounded-control bg-action px-3 py-2 text-ink">
-          <p className="font-bold leading-tight">{nav.title}</p>
-          <p className="truncate text-xs font-medium opacity-80">{scope}</p>
+          {/* Which depot, dock or outlet this session acts on — the same scope
+              the API's authorization predicates enforce. */}
+          <div className="rounded-card bg-white/10 px-3 py-2.5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-white/70">{nav.title}</p>
+            <p className="mt-0.5 truncate text-sm font-semibold text-white">{scope}</p>
+          </div>
+
+          <RailNav items={nav.items} label={navLabel} />
         </div>
 
-        <RailNav items={nav.items} label={navLabel} />
-
-        {nav.quickActions?.length ? (
-          <div className="mt-6 border-t border-white/15 pt-4">
-            <p className="px-3 text-xs font-semibold uppercase tracking-wide text-white/50">Quick actions</p>
-            <nav aria-label="Quick actions" className="mt-2 flex flex-col gap-1">
-              {nav.quickActions.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="flex min-h-11 items-center rounded-control px-3 text-sm font-medium text-white/80 hover:bg-white/10 hover:text-white"
-                >
-                  {item.label}
-                </Link>
-              ))}
-            </nav>
+        <div className="flex items-center justify-between gap-3 rounded-card bg-white/5 p-3 text-sm">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-white text-xs font-semibold text-rail">
+              {initials}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-white">{name}</p>
+              <p className="truncate text-xs text-white/60">{nav.title}</p>
+            </div>
           </div>
-        ) : null}
-
-        <div className="mt-auto border-t border-white/15 pt-4">
-          <p className="truncate px-2 font-semibold">{name}</p>
-          <p className="mt-0.5 truncate px-2 text-xs text-white/65">{nav.title}</p>
-          <form action={signOut} className="mt-3">
-            <button
-              type="submit"
-              className="min-h-11 w-full rounded-control border border-white/20 px-3 text-left text-sm font-semibold hover:bg-white/10"
-            >
-              Sign out
-            </button>
-          </form>
+          <SignOutLink />
         </div>
       </aside>
 
-      <div className="min-w-0">
-        <header className="border-b border-line bg-rail text-white md:hidden">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="bg-rail text-white lg:hidden">
           <div className="flex min-h-16 items-center justify-between gap-3 px-4">
             <Link href={nav.home} className="flex items-center">
               <Image
-                src="/logo/katapatha-lockup-dark.png"
+                src="/logo/katapatha-lockup-light.png"
                 alt="Katapatha"
                 width={1600}
-                height={417}
+                height={409}
                 className="h-auto w-28"
               />
             </Link>
-            <div className="flex items-center gap-2">
-              <span className="hidden truncate text-xs text-white/70 min-[420px]:inline">{scope}</span>
-              <form action={signOut}>
-                <button type="submit" className="min-h-11 rounded-control border border-white/20 px-3 text-sm font-semibold">
-                  Sign out
-                </button>
-              </form>
+            <div className="flex items-center gap-3">
+              <span className="truncate text-xs text-white/70">{scope}</span>
+              <SignOutLink />
             </div>
           </div>
           <span className="sr-only">Signed in as {name}</span>
           <MobileNav items={nav.items} label={navLabel} />
         </header>
 
-        <div id="workspace" tabIndex={-1}>
+        <div id="workspace" tabIndex={-1} className="min-w-0 flex-1">
           {children}
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * A link, not a form.
+ *
+ * /sign-out is a GET route handler that invalidates the session server-side and
+ * clears the cookie, so the control works without JavaScript and without a
+ * <form> in the middle of the rail's flex layout.
+ */
+function SignOutLink() {
+  return (
+    <Link
+      href="/sign-out"
+      aria-label="Sign out"
+      prefetch={false}
+      className="inline-flex size-11 items-center justify-center rounded-control text-white/70 hover:bg-white/10 hover:text-white"
+    >
+      <NavIcon kind="sign-out" />
+    </Link>
   );
 }

@@ -1,0 +1,51 @@
+# Owner: BE2
+VehicleDay:
+  type: object
+  required: [vehicleId, type, temp, volumeCapM3, weightCapKg, status]
+  properties:
+    vehicleId: { type: string, examples: ["VEH101"] }
+    type: { type: string, enum: [truck, van] }
+    temp: { type: string, enum: [reefer, ambient] }
+    volumeCapM3: { type: number, examples: [30] }
+    weightCapKg: { type: number, examples: [5000] }
+    status:
+      type: string
+      enum: [AVAILABLE, IN_WORKSHOP]
+      description: No recorded status means AVAILABLE — the same default the allocator uses.
+    note: { type: [string, "null"], examples: ["Compressor fault"] }
+    setAt: { type: [string, "null"], format: date-time, examples: [null] }
+    setBy: { type: [string, "null"], examples: ["Nimal Perera"] }
+
+FleetDay:
+  type: object
+  required: [date, depotCode, editable, vehicles]
+  properties:
+    date: { $ref: "./common.yaml#/DateOnly" }
+    depotCode: { type: string, examples: ["Peliyagoda"] }
+    editable:
+      type: boolean
+      description: False once the day's plan is published.
+      examples: [true]
+    lockedReason: { type: [string, "null"], examples: [null] }
+    hasDraft:
+      type: boolean
+      description: A draft plan exists for the day.
+      examples: [false]
+    draftStale:
+      type: boolean
+      description: >
+        A vehicle's status changed after the draft was built, so the draft no
+        longer reflects the fleet — re-run auto-plan.
+      examples: [false]
+    vehicles:
+      type: array
+      items: { $ref: "./fleet.yaml#/VehicleDay" }
+
+SetVehicleStatusRequest:
+  type: object
+  required: [date, status]
+  additionalProperties: false
+  properties:
+    date: { $ref: "./common.yaml#/DateOnly" }
+    status: { type: string, enum: [AVAILABLE, IN_WORKSHOP] }
+    note: { type: [string, "null"], maxLength: 200, examples: ["Compressor fault"] }

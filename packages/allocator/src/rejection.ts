@@ -140,6 +140,26 @@ function findNearMiss(rejections: readonly Rejection[]): NearMiss | undefined {
   };
 }
 
+/** Capacity-type rejections: the vehicle exists and runs, it's just used up. */
+const BUSY = new Set<RejectionCode>([
+  "VOLUME_CAP_EXCEEDED",
+  "WEIGHT_CAP_EXCEEDED",
+  "NO_TRIP_SLOT",
+  "PREDAWN_BUDGET_EXCEEDED",
+  "DAYTIME_BUDGET_EXCEEDED",
+  "FUEL_QUOTA_EXCEEDED",
+]);
+
+/** "VEH101", "VEH101 and VEH103", "VEH101, VEH102 and VEH103". */
+function list(items: readonly string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+function fmt(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
 function suggest(
   code: RejectionCode,
   order: OrderRef,
@@ -150,10 +170,39 @@ function suggest(
       rejections.filter((r) => r.code === "VEHICLE_IN_WORKSHOP").map((r) => r.vehicleId),
     ),
   ].filter(Boolean) as string[];
+  // Vehicles that could have taken it but were already full, out of trips or
+  // out of time — "busy", as opposed to off the road.
+  const busyVehicles = [
+    ...new Set(
+      rejections
+        .filter((r) => r.vehicleId && BUSY.has(r.code) && !workshopVehicles.includes(r.vehicleId))
+        .map((r) => r.vehicleId),
+    ),
+  ] as string[];
+
+  /** Why the right kind of vehicle wasn't there, from what the ledger saw. */
+  const unavailable = (kind: string, fallback: string) => {
+    if (workshopVehicles.length === 0) return fallback;
+    const out = `${list(workshopVehicles)} ${workshopVehicles.length === 1 ? "is" : "are"} in the workshop`;
+    if (busyVehicles.length === 0) {
+      return `No ${kind} is free today — ${out}. It fits as soon as ${workshopVehicles.length === 1 ? "it returns" : "one returns"}.`;
+    }
+    return `No ${kind} is free today — ${out}, and ${list(busyVehicles)} ${busyVehicles.length === 1 ? "is" : "are"} already fully booked.`;
+  };
 
   switch (code) {
-    case "ORDER_EXCEEDS_FLEET_CAPACITY":
-      return `No vehicle is large enough for ${order.volumeM3} m3. Rule 5 forbids splitting an order, so this needs the brand to raise it as two orders.`;
+    case "ORDER_EXCEEDS_FLEET_CAPACITY": {
+      // Plain words for the dispatcher: what doesn't fit, by how much, and
+      // who can fix it. Rule 5 (an order travels whole) is why dispatch can't
+      // split it themselves.
+      const metric = rejections.find((r) => r.code === code)?.metric;
+      if (metric?.name === "weight") {
+        return `No vehicle can carry ${fmt(metric.have)} kg in one trip — the largest that can take it holds ${fmt(metric.limit)} kg. An order travels whole on one vehicle, so the store needs to place it as smaller orders.`;
+      }
+      const have = metric?.have ?? order.volumeM3;
+      const largest = metric ? ` — the largest that can take it holds ${fmt(metric.limit)} m³` : "";
+      return `No vehicle can carry ${fmt(have)} m³ in one trip${largest}. An order travels whole on one vehicle, so the store needs to place it as smaller orders.`;
+    }
     case "NO_REEFER_IN_FLEET":
       return "This depot has no refrigerated vehicle at all. The order has to move to a depot that does.";
     case "NO_VAN_IN_FLEET":
@@ -161,11 +210,12 @@ function suggest(
     case "DISTRICT_UNREACHABLE_IN_BUDGET":
       return `${order.district} cannot be reached and served inside the operating window, even on an empty vehicle.`;
     case "NO_REEFER_AVAILABLE":
-      return workshopVehicles.length > 0
-        ? `Every refrigerated vehicle is committed. This fits if ${workshopVehicles[0]} returns from the workshop.`
-        : "Every refrigerated vehicle is already committed today.";
+      return unavailable("refrigerated vehicle", "Every refrigerated vehicle is already full today.");
     case "NO_VAN_AVAILABLE":
-      return "Every van is already committed, and this outlet cannot take a truck.";
+      return unavailable(
+        "van",
+        "Every van is already full today, and this outlet can only be reached by van.",
+      );
     case "VOLUME_CAP_EXCEEDED":
     case "WEIGHT_CAP_EXCEEDED":
       return "No committed vehicle has room left. Freeing a smaller order from one of them would let this on.";
@@ -174,7 +224,7 @@ function suggest(
     case "DAYTIME_BUDGET_EXCEEDED":
       return `Adding this stop pushes a vehicle past the trading day on ${order.district}.`;
     case "NO_TRIP_SLOT":
-      return "Every compatible vehicle has already used both its trips.";
+      return unavailable("suitable vehicle", "Every vehicle that could take it has already used both its trips.");
     case "FUEL_QUOTA_EXCEEDED":
       return "The vehicles that could take this have no weekly fuel left. Raising the quota or spreading the long runs would free it.";
     case "WINDOW_UNREACHABLE":

@@ -148,9 +148,29 @@ export interface paths {
         put?: never;
         /**
          * Place orders for the next operating day
-         * @description Units only. Outlet, brand, district and depot come from the session, never the body. Idempotent on `requestId`, so a retry over a flaky connection cannot double-order.
+         * @description Units only. Outlet, brand, district and depot come from the session, never the body. Idempotent on `requestId`, so a retry over a flaky connection cannot double-order. Each line becomes its own order. A line bigger than any vehicle allowed to carry it (Rule 5: an order travels whole) is rejected with 422 `ORDER_TOO_LARGE`; see GET /orders/limits and raise it as several lines.
          */
         post: operations["placeOrders"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How big one order can be for the signed-in store
+         * @description Per temperature: the outlet's unit-size estimate and the most units one order can hold on the roomiest vehicle allowed to carry it (reefers for chilled, vans for a van-only outlet). The whole depot fleet counts, workshop or not. Store manager only.
+         */
+        get: operations["getOrderLimits"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -259,6 +279,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/fleet/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Which of the depot's vehicles can run on a day */
+        get: operations["getFleetStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/fleet/status/{vehicleId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vehicleId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Mark a vehicle in the workshop, or back in service, for a day
+         * @description Dispatcher only, own depot, and only until the day's plan is published. An existing draft is left alone — re-run auto-plan; the publish validator rejects a draft that still uses a vehicle now in the workshop. Every change is written to the decision log.
+         */
+        put: operations["setVehicleStatus"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plans": {
         parameters: {
             query?: never;
@@ -336,6 +395,29 @@ export interface paths {
          * @description Every deferral carries a reason. Publication is blocked while any deferred order lacks one.
          */
         put: operations["confirmDeferrals"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/{planId}/deferrals/{assignmentId}/alternatives": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                planId: string;
+                assignmentId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * The other orders competing for a deferred order's lane
+         * @description "Why this order and not another." The orders sharing the deferred order's lane (brand + district, the allocator's own grouping), ranked by the same priority policy the allocator used. Read-only; feeds the dispatcher's "Defer order" drawer.
+         */
+        get: operations["getDeferralAlternatives"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -730,6 +812,12 @@ export interface components {
              * @enum {string}
              */
             storeState?: "queued" | "planned" | "on_the_way" | "delivered" | "deferred" | "cancelled";
+            /** @description Present once a plan that deferred this order is published: the dispatcher's reason and the operating day it moves to. `rolledToDate` is null when no vehicle in the fleet could carry the order as it stands, so no next run is promised. Additive (CONVENTIONS.md rule 8). */
+            deferral?: null | {
+                /** @example REEFER_FULL */
+                reasonCode: string;
+                rolledToDate: null | components["schemas"]["DateOnly"];
+            };
         };
         /** @description The store manager supplies units only. Outlet, brand, district and depot are derived server-side from the session — never trusted from the body. Weight and volume are estimated from the outlet's own history. */
         PlaceOrdersRequest: {
@@ -745,6 +833,21 @@ export interface components {
                 /** @example 120 */
                 units: number;
             }[];
+        };
+        OrderLimit: {
+            /** @example 0.1125 */
+            m3PerUnit: number;
+            /** @example 8 */
+            kgPerUnit: number;
+            /**
+             * @description 0 when no vehicle at the depot can carry this temperature to the outlet.
+             * @example 302
+             */
+            maxUnitsPerOrder: number;
+        };
+        OrderLimits: {
+            chilled: components["schemas"]["OrderLimit"];
+            ambient: components["schemas"]["OrderLimit"];
         };
         ReceiptRequest: {
             /** @example 120 */
@@ -897,6 +1000,62 @@ export interface components {
             status: "OPEN" | "CLOSED" | "PLANNING" | "PUBLISHED";
             cutoffAt: components["schemas"]["ClockTime"];
         };
+        VehicleDay: {
+            /** @example VEH101 */
+            vehicleId: string;
+            /** @enum {string} */
+            type: "truck" | "van";
+            /** @enum {string} */
+            temp: "reefer" | "ambient";
+            /** @example 30 */
+            volumeCapM3: number;
+            /** @example 5000 */
+            weightCapKg: number;
+            /**
+             * @description No recorded status means AVAILABLE — the same default the allocator uses.
+             * @enum {string}
+             */
+            status: "AVAILABLE" | "IN_WORKSHOP";
+            /** @example Compressor fault */
+            note?: string | null;
+            /**
+             * Format: date-time
+             * @example null
+             */
+            setAt?: string | null;
+            /** @example Nimal Perera */
+            setBy?: string | null;
+        };
+        FleetDay: {
+            date: components["schemas"]["DateOnly"];
+            /** @example Peliyagoda */
+            depotCode: string;
+            /**
+             * @description False once the day's plan is published.
+             * @example true
+             */
+            editable: boolean;
+            /** @example null */
+            lockedReason?: string | null;
+            /**
+             * @description A draft plan exists for the day.
+             * @example false
+             */
+            hasDraft?: boolean;
+            /**
+             * @description A vehicle's status changed after the draft was built, so the draft no longer reflects the fleet — re-run auto-plan.
+             * @example false
+             */
+            draftStale?: boolean;
+            vehicles: components["schemas"]["VehicleDay"][];
+        };
+        SetVehicleStatusRequest: {
+            date: components["schemas"]["DateOnly"];
+            /** @enum {string} */
+            status: "AVAILABLE" | "IN_WORKSHOP";
+            /** @example Compressor fault */
+            note?: string | null;
+        };
         PlanStats: {
             /** @example 85 */
             orders: number;
@@ -951,6 +1110,96 @@ export interface components {
             /** @example 16.8 */
             sumVolumeM3?: number;
         };
+        /** @description A DEFERRED assignment on a plan. Everything after `reasonCode` is additive and feeds the dispatcher's "Defer order" drawer (Figma D-05). */
+        DeferralRow: {
+            /** @example clx0asg1a2b3c4d5e6f7g8h */
+            assignmentId: string;
+            /** @example clx0ord1a2b3c4d5e6f7g8h9 */
+            orderId: string;
+            /** @example ORD-004312 */
+            orderRef: string;
+            /**
+             * @description The dispatcher's confirmed reason; null while still pending.
+             * @example REEFER_FULL
+             */
+            reasonCode?: string | null;
+            /**
+             * @description Free-text note recorded with the reason ("Other · add a note").
+             * @example null
+             */
+            note?: string | null;
+            order?: {
+                /** @example OUT074 */
+                outletId: string;
+                /** @example Puttalam */
+                outletName?: string | null;
+                /** @example Fresh */
+                brand: string;
+                /** @example Puttalam */
+                districtName: string;
+                /** @example CHILLED */
+                tempRequirement?: string;
+                /** @example 205 */
+                units: number;
+                /** @example 2.6 */
+                volumeM3: number;
+                windowOpen: components["schemas"]["ClockTime"];
+                windowClose: components["schemas"]["ClockTime"];
+                /** @example false */
+                deferredYesterday?: boolean;
+            };
+            /** @description The allocator's own finding — why no vehicle could take the order. */
+            cause?: null | {
+                /** @example NO_REEFER_AVAILABLE */
+                rejectionCode: string;
+                /**
+                 * @description True when no plan on any day could serve the order as it stands.
+                 * @example false
+                 */
+                permanent: boolean;
+                explanation: {
+                    /** @example NO_REEFER_AVAILABLE */
+                    code: string;
+                    /** @example 14 */
+                    count: number;
+                    /** @example VEH025 */
+                    sample?: string | null;
+                }[];
+                nearMiss?: null | {
+                    /** @example VEH014 */
+                    vehicleId: string;
+                    /** @example volume */
+                    metric: string;
+                    /** @example 1.4 */
+                    short: number;
+                    /** @example m3 */
+                    unit: string;
+                };
+                /** @example fits if VEH003 returns from the workshop */
+                suggestion?: string | null;
+            };
+            /**
+             * @description The deferral reason the allocator's finding points at, from the fixed list. Null when the order yielded to a higher-priority one and there is no capacity reason to suggest.
+             * @example REEFER_FULL
+             */
+            suggestedReasonCode?: string | null;
+            movesTo?: null | {
+                date: components["schemas"]["DateOnly"];
+                windowOpen: components["schemas"]["ClockTime"];
+                windowClose: components["schemas"]["ClockTime"];
+                /**
+                 * @description Allocator priority rule 1 — an order deferred yesterday is planned ahead of everything else. First, not guaranteed.
+                 * @example true
+                 */
+                firstOnRun: boolean;
+            };
+            notifyRecipient?: null | {
+                /** @example Fathima Rizvi */
+                name: string;
+                /** @example OUT074 */
+                outletId: string;
+            };
+        };
         Violation: {
             /** @example VOLUME_CAP_EXCEEDED */
             code: string;
@@ -983,6 +1232,49 @@ export interface components {
                 reasonCode: string;
                 /** @example null */
                 note?: string | null;
+            }[];
+        };
+        LaneAlternatives: {
+            lane: {
+                /** @example Fresh */
+                brand: string;
+                /** @example Puttalam */
+                districtName: string;
+                /**
+                 * @description The kind of vehicle this order needed — what it competed for.
+                 * @enum {string}
+                 */
+                resource?: "refrigerated vehicle" | "van" | "vehicle";
+                /**
+                 * @description This order plus every served order, depot-wide, that rode a vehicle this order could also have used. 1 means nothing was swappable.
+                 * @example 4
+                 */
+                competing?: number;
+            };
+            /** @description The deferred order first, then up to four competitors: orders served on a vehicle this order could have used, lowest priority (most swappable) shown. Only the deferred order when nothing was swappable. */
+            items: {
+                /** @example ORD-004312 */
+                orderRef: string;
+                /** @example OUT074 */
+                outletId: string;
+                /** @example Puttalam */
+                outletName?: string | null;
+                /** @example true */
+                isThisOrder: boolean;
+                /** @enum {string} */
+                decision: "SERVED" | "DEFERRED";
+                /**
+                 * @description 1 = highest priority in the lane
+                 * @example 3
+                 */
+                rank: number;
+                /**
+                 * @description protected — deferred yesterday and served today; skipped_twice — deferred yesterday and deferred again (the HIGH_PRIORITY_DEFERRED warning); lowest — the lowest priority score in the lane; high — the rest.
+                 * @enum {string}
+                 */
+                impact: "lowest" | "protected" | "skipped_twice" | "high";
+                /** @example deferred yesterday, window shuts 08:00 */
+                why: string;
             }[];
         };
         /** @description Stops are returned in REVERSE delivery order. The driver unloads from the back, so the loader must load the last stop first. This ordering is part of the contract, not a client concern. */
@@ -1689,6 +1981,41 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
         };
     };
+    getOrderLimits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Order size limits. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "chilled": {
+                     *         "m3PerUnit": 0.09,
+                     *         "kgPerUnit": 8,
+                     *         "maxUnitsPerOrder": 333
+                     *       },
+                     *       "ambient": {
+                     *         "m3PerUnit": 0.1125,
+                     *         "kgPerUnit": 8,
+                     *         "maxUnitsPerOrder": 302
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OrderLimits"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
     getOrder: {
         parameters: {
             query?: never;
@@ -1977,6 +2304,91 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    getFleetStatus: {
+        parameters: {
+            query: {
+                date: components["schemas"]["DateOnly"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The depot's fleet for the day. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "date": "2026-04-09",
+                     *       "depotCode": "Peliyagoda",
+                     *       "editable": true,
+                     *       "lockedReason": null,
+                     *       "hasDraft": false,
+                     *       "vehicles": [
+                     *         {
+                     *           "vehicleId": "VEH101",
+                     *           "type": "truck",
+                     *           "temp": "reefer",
+                     *           "volumeCapM3": 30,
+                     *           "weightCapKg": 5000,
+                     *           "status": "AVAILABLE",
+                     *           "note": null,
+                     *           "setAt": null,
+                     *           "setBy": null
+                     *         },
+                     *         {
+                     *           "vehicleId": "VEH104",
+                     *           "type": "van",
+                     *           "temp": "ambient",
+                     *           "volumeCapM3": 12,
+                     *           "weightCapKg": 1400,
+                     *           "status": "IN_WORKSHOP",
+                     *           "note": "In the workshop on the scenario day",
+                     *           "setAt": null,
+                     *           "setBy": null
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["FleetDay"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    setVehicleStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vehicleId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetVehicleStatusRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated fleet for the day. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetDay"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     listPlans: {
         parameters: {
             query: {
@@ -2081,6 +2493,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "planId": "clx0pln1a2b3c4d5e6f7g8h",
+                     *       "date": "2026-04-09",
                      *       "status": "DRAFT",
                      *       "stats": {
                      *         "orders": 85,
@@ -2109,28 +2522,58 @@ export interface operations {
                      *           "assignmentId": "clx0asg1a2b3c4d5e6f7g8h",
                      *           "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
                      *           "orderRef": "ORD-004312",
-                     *           "reasonCode": null
+                     *           "reasonCode": null,
+                     *           "note": null,
+                     *           "order": {
+                     *             "outletId": "OUT074",
+                     *             "outletName": "Puttalam",
+                     *             "brand": "Fresh",
+                     *             "districtName": "Puttalam",
+                     *             "tempRequirement": "CHILLED",
+                     *             "units": 205,
+                     *             "volumeM3": 2.6,
+                     *             "windowOpen": "05:30",
+                     *             "windowClose": "08:00",
+                     *             "deferredYesterday": false
+                     *           },
+                     *           "cause": {
+                     *             "rejectionCode": "NO_REEFER_AVAILABLE",
+                     *             "permanent": false,
+                     *             "explanation": [
+                     *               {
+                     *                 "code": "NO_REEFER_AVAILABLE",
+                     *                 "count": 14,
+                     *                 "sample": "VEH025"
+                     *               }
+                     *             ],
+                     *             "nearMiss": null,
+                     *             "suggestion": "fits if VEH003 returns from the workshop"
+                     *           },
+                     *           "suggestedReasonCode": "REEFER_FULL",
+                     *           "movesTo": {
+                     *             "date": "2026-04-10",
+                     *             "windowOpen": "05:30",
+                     *             "windowClose": "08:00",
+                     *             "firstOnRun": true
+                     *           },
+                     *           "notifyRecipient": {
+                     *             "name": "Fathima Rizvi",
+                     *             "outletId": "OUT074"
+                     *           }
                      *         }
                      *       ]
                      *     }
                      */
                     "application/json": {
                         planId: string;
+                        /** @description The planning day this plan belongs to. Additive. */
+                        date?: components["schemas"]["DateOnly"];
                         /** @enum {string} */
                         status: "DRAFT" | "PUBLISHED" | "SUPERSEDED";
                         stats: components["schemas"]["PlanStats"];
                         trips: components["schemas"]["Trip"][];
                         /** @description The DEFERRED assignments on this plan, each with the reason code the dispatcher has attached (null when still pending). The dispatcher UI confirms every pending deferral through PUT /plans/{planId}/deferrals before the publication gate opens. */
-                        deferrals: {
-                            /** @example clx0asg1a2b3c4d5e6f7g8h */
-                            assignmentId: string;
-                            /** @example clx0ord1a2b3c4d5e6f7g8h9 */
-                            orderId: string;
-                            /** @example ORD-004312 */
-                            orderRef: string;
-                            /** @example REEFER_FULL */
-                            reasonCode?: string | null;
-                        }[];
+                        deferrals: components["schemas"]["DeferralRow"][];
                     };
                 };
             };
@@ -2213,6 +2656,63 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getDeferralAlternatives: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                planId: string;
+                assignmentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The deferred order and its competitors. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "lane": {
+                     *         "brand": "Fresh",
+                     *         "districtName": "Puttalam",
+                     *         "resource": "refrigerated vehicle",
+                     *         "competing": 2
+                     *       },
+                     *       "items": [
+                     *         {
+                     *           "orderRef": "ORD-004312",
+                     *           "outletId": "OUT074",
+                     *           "outletName": "Puttalam",
+                     *           "isThisOrder": true,
+                     *           "decision": "DEFERRED",
+                     *           "rank": 3,
+                     *           "impact": "lowest",
+                     *           "why": "window shuts 08:00"
+                     *         },
+                     *         {
+                     *           "orderRef": "ORD-004298",
+                     *           "outletId": "OUT033",
+                     *           "outletName": null,
+                     *           "isThisOrder": false,
+                     *           "decision": "SERVED",
+                     *           "rank": 1,
+                     *           "impact": "protected",
+                     *           "why": "deferred yesterday, window shuts 08:00"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["LaneAlternatives"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     publishPlan: {
