@@ -135,16 +135,7 @@ planItem:
                     still pending). The dispatcher UI confirms every
                     pending deferral through PUT /plans/{planId}/deferrals
                     before the publication gate opens.
-                  items:
-                    type: object
-                    required: [assignmentId, orderId, orderRef]
-                    properties:
-                      assignmentId: { type: string, examples: ["clx0asg1a2b3c4d5e6f7g8h"] }
-                      orderId: { type: string, examples: ["clx0ord1a2b3c4d5e6f7g8h9"] }
-                      orderRef: { type: string, examples: ["ORD-004312"] }
-                      reasonCode:
-                        type: [string, "null"]
-                        examples: ["REEFER_FULL"]
+                  items: { $ref: "../components/schemas/planning.yaml#/DeferralRow" }
             example:
               planId: "clx0pln1a2b3c4d5e6f7g8h"
               status: DRAFT
@@ -166,6 +157,28 @@ planItem:
                   orderId: "clx0ord1a2b3c4d5e6f7g8h9"
                   orderRef: "ORD-004312"
                   reasonCode: null
+                  note: null
+                  order:
+                    outletId: "OUT074"
+                    outletName: "Puttalam"
+                    brand: Fresh
+                    districtName: "Puttalam"
+                    tempRequirement: CHILLED
+                    units: 205
+                    volumeM3: 2.6
+                    windowOpen: "05:30"
+                    windowClose: "08:00"
+                    deferredYesterday: false
+                  cause:
+                    rejectionCode: NO_REEFER_AVAILABLE
+                    permanent: false
+                    explanation:
+                      - { code: NO_REEFER_AVAILABLE, count: 14, sample: "VEH025" }
+                    nearMiss: null
+                    suggestion: "fits if VEH003 returns from the workshop"
+                  suggestedReasonCode: REEFER_FULL
+                  movesTo: { date: "2026-04-10", windowOpen: "05:30", windowClose: "08:00", firstOnRun: true }
+                  notifyRecipient: { name: "Fathima Rizvi", outletId: "OUT074" }
       "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
       "404": { $ref: "../components/responses/common.yaml#/NotFound" }
 
@@ -238,6 +251,39 @@ planDeferrals:
             example: { confirmed: 7 }
       "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
       "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+planDeferralAlternatives:
+  parameters:
+    - name: planId
+      in: path
+      required: true
+      schema: { type: string }
+    - name: assignmentId
+      in: path
+      required: true
+      schema: { type: string }
+  get:
+    operationId: getDeferralAlternatives
+    summary: The other orders competing for a deferred order's lane
+    description: >
+      "Why this order and not another." The orders sharing the deferred
+      order's lane (brand + district, the allocator's own grouping), ranked by
+      the same priority policy the allocator used. Read-only; feeds the
+      dispatcher's "Defer order" drawer.
+    tags: [planning]
+    responses:
+      "200":
+        description: The deferred order and its competitors.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/planning.yaml#/LaneAlternatives" }
+            example:
+              lane: { brand: Fresh, districtName: "Puttalam" }
+              items:
+                - { orderRef: "ORD-004312", outletId: "OUT074", outletName: "Puttalam", isThisOrder: true, decision: DEFERRED, rank: 3, impact: lowest, why: "window shuts 08:00" }
+                - { orderRef: "ORD-004298", outletId: "OUT033", outletName: null, isThisOrder: false, decision: SERVED, rank: 1, impact: protected, why: "deferred yesterday, window shuts 08:00" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
 
 planPublication:
   parameters:

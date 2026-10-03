@@ -321,6 +321,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plans/{planId}/deferrals/{assignmentId}/alternatives": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                planId: string;
+                assignmentId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * The other orders competing for a deferred order's lane
+         * @description "Why this order and not another." The orders sharing the deferred order's lane (brand + district, the allocator's own grouping), ranked by the same priority policy the allocator used. Read-only; feeds the dispatcher's "Defer order" drawer.
+         */
+        get: operations["getDeferralAlternatives"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plans/{planId}/publication": {
         parameters: {
             query?: never;
@@ -811,6 +834,96 @@ export interface components {
             /** @example 16.8 */
             sumVolumeM3?: number;
         };
+        /** @description A DEFERRED assignment on a plan. Everything after `reasonCode` is additive and feeds the dispatcher's "Defer order" drawer (Figma D-05). */
+        DeferralRow: {
+            /** @example clx0asg1a2b3c4d5e6f7g8h */
+            assignmentId: string;
+            /** @example clx0ord1a2b3c4d5e6f7g8h9 */
+            orderId: string;
+            /** @example ORD-004312 */
+            orderRef: string;
+            /**
+             * @description The dispatcher's confirmed reason; null while still pending.
+             * @example REEFER_FULL
+             */
+            reasonCode?: string | null;
+            /**
+             * @description Free-text note recorded with the reason ("Other · add a note").
+             * @example null
+             */
+            note?: string | null;
+            order?: {
+                /** @example OUT074 */
+                outletId: string;
+                /** @example Puttalam */
+                outletName?: string | null;
+                /** @example Fresh */
+                brand: string;
+                /** @example Puttalam */
+                districtName: string;
+                /** @example CHILLED */
+                tempRequirement?: string;
+                /** @example 205 */
+                units: number;
+                /** @example 2.6 */
+                volumeM3: number;
+                windowOpen: components["schemas"]["ClockTime"];
+                windowClose: components["schemas"]["ClockTime"];
+                /** @example false */
+                deferredYesterday?: boolean;
+            };
+            /** @description The allocator's own finding — why no vehicle could take the order. */
+            cause?: null | {
+                /** @example NO_REEFER_AVAILABLE */
+                rejectionCode: string;
+                /**
+                 * @description True when no plan on any day could serve the order as it stands.
+                 * @example false
+                 */
+                permanent: boolean;
+                explanation: {
+                    /** @example NO_REEFER_AVAILABLE */
+                    code: string;
+                    /** @example 14 */
+                    count: number;
+                    /** @example VEH025 */
+                    sample?: string | null;
+                }[];
+                nearMiss?: null | {
+                    /** @example VEH014 */
+                    vehicleId: string;
+                    /** @example volume */
+                    metric: string;
+                    /** @example 1.4 */
+                    short: number;
+                    /** @example m3 */
+                    unit: string;
+                };
+                /** @example fits if VEH003 returns from the workshop */
+                suggestion?: string | null;
+            };
+            /**
+             * @description The deferral reason the allocator's finding points at, from the fixed list. Null when the order yielded to a higher-priority one and there is no capacity reason to suggest.
+             * @example REEFER_FULL
+             */
+            suggestedReasonCode?: string | null;
+            movesTo?: null | {
+                date: components["schemas"]["DateOnly"];
+                windowOpen: components["schemas"]["ClockTime"];
+                windowClose: components["schemas"]["ClockTime"];
+                /**
+                 * @description Allocator priority rule 1 — an order deferred yesterday is planned ahead of everything else. First, not guaranteed.
+                 * @example true
+                 */
+                firstOnRun: boolean;
+            };
+            notifyRecipient?: null | {
+                /** @example Fathima Rizvi */
+                name: string;
+                /** @example OUT074 */
+                outletId: string;
+            };
+        };
         Violation: {
             /** @example VOLUME_CAP_EXCEEDED */
             code: string;
@@ -843,6 +956,39 @@ export interface components {
                 reasonCode: string;
                 /** @example null */
                 note?: string | null;
+            }[];
+        };
+        LaneAlternatives: {
+            lane: {
+                /** @example Fresh */
+                brand: string;
+                /** @example Puttalam */
+                districtName: string;
+            };
+            /** @description The deferred order first, then up to four competitors by priority rank. */
+            items: {
+                /** @example ORD-004312 */
+                orderRef: string;
+                /** @example OUT074 */
+                outletId: string;
+                /** @example Puttalam */
+                outletName?: string | null;
+                /** @example true */
+                isThisOrder: boolean;
+                /** @enum {string} */
+                decision: "SERVED" | "DEFERRED";
+                /**
+                 * @description 1 = highest priority in the lane
+                 * @example 3
+                 */
+                rank: number;
+                /**
+                 * @description protected — deferred yesterday, cannot be skipped twice; lowest — the lowest priority score in the lane; high — the rest.
+                 * @enum {string}
+                 */
+                impact: "lowest" | "protected" | "high";
+                /** @example deferred yesterday, window shuts 08:00 */
+                why: string;
             }[];
         };
         /** @description Stops are returned in REVERSE delivery order. The driver unloads from the back, so the loader must load the last stop first. This ordering is part of the contract, not a client concern. */
@@ -1830,7 +1976,44 @@ export interface operations {
                      *           "assignmentId": "clx0asg1a2b3c4d5e6f7g8h",
                      *           "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
                      *           "orderRef": "ORD-004312",
-                     *           "reasonCode": null
+                     *           "reasonCode": null,
+                     *           "note": null,
+                     *           "order": {
+                     *             "outletId": "OUT074",
+                     *             "outletName": "Puttalam",
+                     *             "brand": "Fresh",
+                     *             "districtName": "Puttalam",
+                     *             "tempRequirement": "CHILLED",
+                     *             "units": 205,
+                     *             "volumeM3": 2.6,
+                     *             "windowOpen": "05:30",
+                     *             "windowClose": "08:00",
+                     *             "deferredYesterday": false
+                     *           },
+                     *           "cause": {
+                     *             "rejectionCode": "NO_REEFER_AVAILABLE",
+                     *             "permanent": false,
+                     *             "explanation": [
+                     *               {
+                     *                 "code": "NO_REEFER_AVAILABLE",
+                     *                 "count": 14,
+                     *                 "sample": "VEH025"
+                     *               }
+                     *             ],
+                     *             "nearMiss": null,
+                     *             "suggestion": "fits if VEH003 returns from the workshop"
+                     *           },
+                     *           "suggestedReasonCode": "REEFER_FULL",
+                     *           "movesTo": {
+                     *             "date": "2026-04-10",
+                     *             "windowOpen": "05:30",
+                     *             "windowClose": "08:00",
+                     *             "firstOnRun": true
+                     *           },
+                     *           "notifyRecipient": {
+                     *             "name": "Fathima Rizvi",
+                     *             "outletId": "OUT074"
+                     *           }
                      *         }
                      *       ]
                      *     }
@@ -1842,16 +2025,7 @@ export interface operations {
                         stats: components["schemas"]["PlanStats"];
                         trips: components["schemas"]["Trip"][];
                         /** @description The DEFERRED assignments on this plan, each with the reason code the dispatcher has attached (null when still pending). The dispatcher UI confirms every pending deferral through PUT /plans/{planId}/deferrals before the publication gate opens. */
-                        deferrals: {
-                            /** @example clx0asg1a2b3c4d5e6f7g8h */
-                            assignmentId: string;
-                            /** @example clx0ord1a2b3c4d5e6f7g8h9 */
-                            orderId: string;
-                            /** @example ORD-004312 */
-                            orderRef: string;
-                            /** @example REEFER_FULL */
-                            reasonCode?: string | null;
-                        }[];
+                        deferrals: components["schemas"]["DeferralRow"][];
                     };
                 };
             };
@@ -1934,6 +2108,61 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getDeferralAlternatives: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                planId: string;
+                assignmentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The deferred order and its competitors. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "lane": {
+                     *         "brand": "Fresh",
+                     *         "districtName": "Puttalam"
+                     *       },
+                     *       "items": [
+                     *         {
+                     *           "orderRef": "ORD-004312",
+                     *           "outletId": "OUT074",
+                     *           "outletName": "Puttalam",
+                     *           "isThisOrder": true,
+                     *           "decision": "DEFERRED",
+                     *           "rank": 3,
+                     *           "impact": "lowest",
+                     *           "why": "window shuts 08:00"
+                     *         },
+                     *         {
+                     *           "orderRef": "ORD-004298",
+                     *           "outletId": "OUT033",
+                     *           "outletName": null,
+                     *           "isThisOrder": false,
+                     *           "decision": "SERVED",
+                     *           "rank": 1,
+                     *           "impact": "protected",
+                     *           "why": "deferred yesterday, window shuts 08:00"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["LaneAlternatives"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     publishPlan: {
