@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import { mutationError, readError } from "./api-errors";
 import { formatMinutes, formatVolume, formatWeight, isIsoDate } from "./format";
 import { canMarkReady, lineState, readinessDisabledReason } from "./line-state";
