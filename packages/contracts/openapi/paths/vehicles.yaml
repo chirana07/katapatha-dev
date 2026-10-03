@@ -1,0 +1,160 @@
+# Owner: Slice V
+#
+# The dispatcher's fleet views. Scoped to the dispatcher's own depot: the
+# Vehicles design shows an "All depots" filter, but a dispatcher is
+# depot-scoped by the product's rules, so there is no depot parameter and
+# another depot's vehicles never appear.
+
+collection:
+  get:
+    operationId: listFleetVehicles
+    summary: The depot's vehicles for a day
+    description: >
+      Dispatcher only, own depot only. One row per vehicle with its capacity,
+      driver, trips for the day, utilisation and a derived status, plus the
+      counts above the list.
+
+      Status is derived, not stored: see VehicleDayState for the table.
+      Utilisation is the mean fill of the day's published-plan trips — see
+      VehicleRow.utilisationPct. There is no compliance, make, model or
+      registration data, because the system does not hold any.
+    tags: [vehicles]
+    parameters:
+      - name: date
+        in: query
+        required: false
+        description: Defaults to today in Asia/Colombo.
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+    responses:
+      "200":
+        description: The depot's fleet for the day.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/vehicles.yaml#/VehicleList" }
+            example:
+              date: "2026-09-29"
+              depotCode: Peliyagoda
+              summary: { total: 6, refrigerated: 2, ambient: 4, available: 5, idle: 2, onRoute: 1, loading: 1, returned: 1, inWorkshop: 1 }
+              vehicles:
+                - { vehicleId: VEH014, type: truck, temp: reefer, depotCode: Peliyagoda, volumeCapM3: 15, weightCapKg: 4800, driverName: "Sunil Fernando", tripsToday: 2, utilisationPct: 82, status: ON_ROUTE, note: null }
+                - { vehicleId: VEH017, type: truck, temp: ambient, depotCode: Peliyagoda, volumeCapM3: 18, weightCapKg: 5000, driverName: "Priya Kumara", tripsToday: 2, utilisationPct: 35, status: LOADING, note: null }
+                - { vehicleId: VEH011, type: van, temp: ambient, depotCode: Peliyagoda, volumeCapM3: 8, weightCapKg: 1500, driverName: null, tripsToday: 1, utilisationPct: 100, status: RETURNED, note: null }
+                - { vehicleId: VEH040, type: van, temp: ambient, depotCode: Peliyagoda, volumeCapM3: 8, weightCapKg: 1500, driverName: null, tripsToday: 0, utilisationPct: 0, status: AVAILABLE, note: null }
+                - { vehicleId: VEH038, type: truck, temp: reefer, depotCode: Peliyagoda, volumeCapM3: 15, weightCapKg: 4800, driverName: null, tripsToday: 0, utilisationPct: 0, status: IN_WORKSHOP, note: "Compressor fault, back Thursday" }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+
+item:
+  parameters:
+    - name: vehicleId
+      in: path
+      required: true
+      schema: { type: string }
+  get:
+    operationId: getVehicle
+    summary: One vehicle, with its day
+    description: >
+      Dispatcher only. The vehicle row plus the day's trips, the driver, the
+      latest chiller reading (refrigerated vehicles only) and the last
+      position the driver's phone reported.
+
+      The chiller figure is a person's reading of a gauge and carries who read
+      it and how long ago — it is not a sensor feed. The position is the last
+      report with its age — it is not a live position.
+
+      A vehicle at another depot answers 403, the same as one that does not
+      exist.
+    tags: [vehicles]
+    parameters:
+      - name: date
+        in: query
+        required: false
+        description: Defaults to today in Asia/Colombo.
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+    responses:
+      "200":
+        description: The vehicle.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/vehicles.yaml#/VehicleDetail" }
+            example:
+              date: "2026-09-29"
+              vehicleId: VEH014
+              type: truck
+              temp: reefer
+              depotCode: Peliyagoda
+              volumeCapM3: 15
+              weightCapKg: 4800
+              driverName: "Sunil Fernando"
+              tripsToday: 2
+              utilisationPct: 82
+              status: ON_ROUTE
+              note: null
+              trips:
+                - { tripId: "clx0trp1a2b3c4d5e6f7g8h9", tripNo: 1, route: "Peliyagoda → Colombo", plannedDepartAt: "06:00", stops: 12, orders: 28, status: DEPARTED, wave: DAYTIME }
+                - { tripId: "clx0trp2a2b3c4d5e6f7g8h9", tripNo: 2, route: "Peliyagoda → Dehiwala", plannedDepartAt: "12:30", stops: 6, orders: 11, status: PLANNED, wave: DAYTIME }
+              chiller: { tempC: 3.8, targetMinC: 2, targetMaxC: 5, inRange: true, source: LOADER_AT_BAY, recordedByName: "Ranjith Silva", recordedAt: "2026-09-29T00:21:00.000Z", ageSeconds: 3660 }
+              position: { lat: 6.9402, lng: 79.8641, accuracyM: 18, recordedAt: "2026-09-29T01:20:00.000Z", ageSeconds: 60, lamp: false }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+
+positions:
+  get:
+    operationId: getFleetPositions
+    summary: The map's vehicles for a day
+    description: >
+      Dispatcher only, own depot only. One entry per vehicle that has a
+      DEPARTED trip, or one that is READY or LOADING, on the day's published
+      plan — and a departed trip whose stops are all finished (RETURNING). A
+      vehicle with both a departed and a waiting trip is shown on the departed
+      one.
+
+      Positions are whatever the driver's phone last reported, with their age.
+      This is not live tracking: a vehicle that has never reported has a null
+      position, and none is invented for it. The map is schematic — stops are
+      drawn at their district centre and legs are straight lines, not roads.
+
+      State precedence, strongest first: LAMP > LATE > RETURNING > ON_TIME;
+      a trip not yet departed is NOT_STARTED. See MapState.
+    tags: [vehicles]
+    parameters:
+      - name: date
+        in: query
+        required: false
+        description: Defaults to today in Asia/Colombo.
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+    responses:
+      "200":
+        description: The vehicles on the map.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/vehicles.yaml#/FleetPositions" }
+            example:
+              date: "2026-09-29"
+              depotCode: Peliyagoda
+              updatedAt: "2026-09-29T01:12:00.000Z"
+              summary: { all: 3, late: 1, lamp: 1 }
+              vehicles:
+                - vehicleId: VEH025
+                  driverName: "K. Fernando"
+                  state: ON_TIME
+                  lateMinutes: 0
+                  trip: { tripId: "clx0trp3a2b3c4d5e6f7g8h9", tripNo: 1, districtName: Puttalam }
+                  position: { lat: 7.62, lng: 79.84, accuracyM: 12, recordedAt: "2026-09-29T01:11:00.000Z", ageSeconds: 60, lamp: false }
+                  nextStop: { outletId: OUT074, outletName: "Fresh Puttalam", stopNumber: 2, totalStops: 4, deliveredStops: 1, eta: "07:21", windowOpen: "05:30", windowClose: "08:00" }
+                - vehicleId: VEH018
+                  driverName: "R. Dias"
+                  state: LATE
+                  lateMinutes: 12
+                  trip: { tripId: "clx0trp4a2b3c4d5e6f7g8h9", tripNo: 1, districtName: Kalutara }
+                  position: { lat: 6.62, lng: 79.97, accuracyM: 25, recordedAt: "2026-09-29T01:11:00.000Z", ageSeconds: 60, lamp: false }
+                  nextStop: { outletId: OUT031, outletName: "Style Kalutara", stopNumber: 3, totalStops: 9, deliveredStops: 2, eta: "07:48", windowOpen: "06:00", windowClose: "09:00" }
+                - vehicleId: VEH043
+                  driverName: "S. Perera"
+                  state: LAMP
+                  lateMinutes: 0
+                  trip: { tripId: "clx0trp5a2b3c4d5e6f7g8h9", tripNo: 1, districtName: "Nuwara Eliya" }
+                  position: { lat: 6.97, lng: 80.77, accuracyM: null, recordedAt: "2026-09-29T00:58:00.000Z", ageSeconds: 840, lamp: true }
+                  nextStop: { outletId: OUT102, outletName: "Fresh Nuwara Eliya", stopNumber: 3, totalStops: 5, deliveredStops: 2, eta: "07:05", windowOpen: "06:00", windowClose: "09:30" }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }

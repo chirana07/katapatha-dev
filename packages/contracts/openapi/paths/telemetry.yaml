@@ -1,0 +1,121 @@
+# Owner: Slice V
+#
+# What the field reports back. Neither endpoint is a sensor stream: a ping is
+# whatever the driver's phone managed to send, and a chiller reading is a
+# person looking at a gauge.
+
+pings:
+  post:
+    operationId: reportPositions
+    summary: Report the vehicle's position (driver)
+    description: >
+      Driver only. Files up to 50 position reports for the driver's current
+      vehicle (the one picked at the dock). Each is the phone's own fix with
+      its own clock; the dispatcher's map shows the newest as "last reported",
+      with its age. Nothing here is, or should be described as, continuous
+      tracking.
+
+      Each report is filed against the vehicle's DEPARTED trip, else its READY
+      or LOADING trip, else against no trip, on a published plan.
+
+      Replay-safe: reports are keyed by the phone's clientPingId, and a repeat
+      is counted in `duplicates` rather than stored again, so an outbox can
+      resend a batch freely.
+
+      A report dated more than 5 minutes ahead of the server clock refuses the
+      whole batch with 422 PING_IN_FUTURE. A driver who has not picked a
+      vehicle gets 403.
+    tags: [telemetry]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/telemetry.yaml#/PingBatchRequest" }
+          example:
+            pings:
+              - { clientPingId: "01JBX3Q7W2R8M5T9K4N6P0ZYAB", lat: 7.6201, lng: 79.8402, accuracyM: 12, recordedAt: "2026-09-29T01:11:00.000Z" }
+              - { clientPingId: "01JBX3Q7W2R8M5T9K4N6P0ZYAC", lat: 7.6188, lng: 79.8397, recordedAt: "2026-09-29T01:12:00.000Z" }
+    responses:
+      "200":
+        description: How many reports were stored and how many had already arrived.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/telemetry.yaml#/PingBatchResult" }
+            example: { accepted: 1, duplicates: 1 }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "422":
+        description: A report is dated in the future, or the body does not match the contract.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/common.yaml#/Error" }
+            example:
+              error:
+                code: PING_IN_FUTURE
+                message: "A report is dated more than 5 minutes ahead of the server clock. Check the phone's date and time."
+                details: { clientPingId: "01JBX3Q7W2R8M5T9K4N6P0ZYAB" }
+
+chillerReadings:
+  parameters:
+    - name: tripId
+      in: path
+      required: true
+      schema: { type: string }
+  post:
+    operationId: recordChillerReading
+    summary: Record a chiller reading for a trip
+    description: >
+      A person's reading of the chiller gauge, taken by a loader at the bay or
+      a driver on arrival. It is a reading, not a sensor feed, and is stored
+      with who read it and when.
+
+      Who may call: a loader or dispatcher for a trip at their depot (like the
+      rest of the dock surface); a driver only for a trip on their own vehicle
+      in a published plan at their depot. A trip the caller cannot see answers
+      403. LOADER_AT_BAY is accepted only from a loader or dispatcher, and
+      DRIVER_ON_ARRIVAL only from a driver (422 SOURCE_NOT_ALLOWED_FOR_ROLE).
+
+      Only refrigerated vehicles take readings: an ambient vehicle answers
+      422 CHILLER_NOT_APPLICABLE.
+
+      The target band (2 to 5 °C) is copied onto the reading, so a later policy
+      change cannot rewrite whether it was in range. An out-of-range reading
+      blocks nothing by itself; it is recorded in the decision log and read by
+      the exceptions console.
+
+      Idempotent on clientReadingId: the first send answers 201, a resend
+      answers 200 with the same reading. The same id on a different trip is
+      409 CLIENT_ID_REUSED. A recordedAt more than 5 minutes ahead of the
+      server clock is 422 READING_IN_FUTURE.
+    tags: [telemetry]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/telemetry.yaml#/ChillerReadingRequest" }
+          example: { tempC: 3.8, source: LOADER_AT_BAY, note: "Gauge steady", clientReadingId: "01JBX3Q7W2R8M5T9K4N6P1CHL1" }
+    responses:
+      "200":
+        description: The reading already recorded under this clientReadingId.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/telemetry.yaml#/ChillerReadingResponse" }
+            example: { id: "clx0chr1a2b3c4d5e6f7g8h9", tripId: "clx0trp1a2b3c4d5e6f7g8h9", vehicleId: VEH014, tempC: 3.8, targetMinC: 2, targetMaxC: 5, inRange: true, source: LOADER_AT_BAY, recordedAt: "2026-09-29T00:21:00.000Z", recordedByName: "Ranjith Silva" }
+      "201":
+        description: The reading was recorded.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/telemetry.yaml#/ChillerReadingResponse" }
+            example: { id: "clx0chr2a2b3c4d5e6f7g8h9", tripId: "clx0trp1a2b3c4d5e6f7g8h9", vehicleId: VEH014, tempC: 6.2, targetMinC: 2, targetMaxC: 5, inRange: false, source: LOADER_AT_BAY, recordedAt: "2026-09-29T00:24:00.000Z", recordedByName: "Ranjith Silva" }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "409": { $ref: "../components/responses/common.yaml#/Conflict" }
+      "422":
+        description: The reading cannot be recorded in this state.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/common.yaml#/Error" }
+            example:
+              error:
+                code: CHILLER_NOT_APPLICABLE
+                message: "Only refrigerated vehicles take chiller readings."

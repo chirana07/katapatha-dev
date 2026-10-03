@@ -1,0 +1,265 @@
+# Owner: Slice V
+#
+# The dispatcher's vehicle views. Every position here is "last reported by the
+# driver's phone, with its age" — never a live feed — and every temperature is
+# a person's reading of a gauge. See DOMAIN.md, "What the product may claim,
+# and how". There are deliberately no registration, make, model, licence or
+# insurance fields: the system holds no data for them.
+
+VehicleDayState:
+  type: string
+  enum: [AVAILABLE, LOADING, ON_ROUTE, RETURNED, IN_WORKSHOP]
+  description: >
+    Derived from the day's workshop flag and the trips of the day's published
+    plan (cancelled trips ignored). First match wins:
+
+    | Condition | Status |
+    |---|---|
+    | any trip DEPARTED | ON_ROUTE |
+    | workshop flag set for the day | IN_WORKSHOP |
+    | any trip READY or LOADING | LOADING |
+    | at least one trip, every one COMPLETED | RETURNED |
+    | otherwise (no trips, or only PLANNED trips left) | AVAILABLE |
+
+    A departed trip outranks the workshop flag because the flag can only be
+    edited before publication; a vehicle that is on the road is on the road.
+    RETURNED means done for the day: a vehicle back from trip 1 with trip 2
+    still planned is AVAILABLE.
+
+FleetSummary:
+  type: object
+  required: [total, refrigerated, ambient, available, idle, onRoute, loading, returned, inWorkshop]
+  properties:
+    total: { type: integer, examples: [6] }
+    refrigerated: { type: integer, examples: [2] }
+    ambient: { type: integer, examples: [4] }
+    available:
+      type: integer
+      description: >
+        Vehicles that can run today — everything not in the workshop,
+        including those already loading, out or back. This is the "Available
+        today" figure.
+      examples: [5]
+    idle:
+      type: integer
+      description: Vehicles whose status is exactly AVAILABLE — nothing loading, out or finished.
+      examples: [2]
+    onRoute: { type: integer, examples: [1] }
+    loading: { type: integer, examples: [1] }
+    returned: { type: integer, examples: [1] }
+    inWorkshop: { type: integer, examples: [1] }
+
+VehicleRow:
+  type: object
+  required: [vehicleId, type, temp, depotCode, volumeCapM3, weightCapKg, driverName, tripsToday, utilisationPct, status, note]
+  properties:
+    vehicleId: { type: string, examples: ["VEH014"] }
+    type: { type: string, enum: [truck, van] }
+    temp: { type: string, enum: [reefer, ambient] }
+    depotCode: { type: string, examples: ["Peliyagoda"] }
+    volumeCapM3: { type: number, examples: [15] }
+    weightCapKg: { type: number, examples: [4800] }
+    driverName:
+      type: [string, "null"]
+      description: The user whose default vehicle this is — whoever picked it at the dock. Null when nobody has.
+      examples: ["Sunil Fernando"]
+    tripsToday:
+      type: integer
+      description: Non-cancelled trips on the day's published plan.
+      examples: [2]
+    utilisationPct:
+      type: integer
+      minimum: 0
+      maximum: 100
+      description: >
+        The mean, over the vehicle's non-cancelled published-plan trips that
+        day, of max(trip volume / volume capacity, trip weight / weight
+        capacity), as a whole percentage clamped to 0-100. Zero when the
+        vehicle has no trips. It is how full the day's loads are, not how busy
+        the vehicle is.
+      examples: [82]
+    status: { $ref: "./vehicles.yaml#/VehicleDayState" }
+    note:
+      type: [string, "null"]
+      description: The dispatcher's note on the workshop flag, when there is one.
+      examples: [null]
+
+VehicleList:
+  type: object
+  required: [date, depotCode, summary, vehicles]
+  properties:
+    date: { $ref: "./common.yaml#/DateOnly" }
+    depotCode: { type: string, examples: ["Peliyagoda"] }
+    summary: { $ref: "./vehicles.yaml#/FleetSummary" }
+    vehicles:
+      type: array
+      items: { $ref: "./vehicles.yaml#/VehicleRow" }
+
+ReportedPosition:
+  type: object
+  description: >
+    The last position the driver's phone reported — not a live position. Show
+    it with its age; plot it as reported. The map is schematic.
+  required: [lat, lng, accuracyM, recordedAt, ageSeconds, lamp]
+  properties:
+    lat: { type: number, examples: [7.9] }
+    lng: { type: number, examples: [79.9] }
+    accuracyM: { type: [number, "null"], examples: [18] }
+    recordedAt:
+      type: string
+      format: date-time
+      description: When the phone took the fix (its own clock), not when the server received it.
+    ageSeconds:
+      type: integer
+      minimum: 0
+      description: Whole seconds since recordedAt, measured at the server's clock when the response was made.
+      examples: [60]
+    lamp:
+      type: boolean
+      description: The report is older than the Lamp Mode threshold (10 minutes).
+
+ChillerReadingView:
+  type: object
+  description: >
+    A person's reading of a chiller gauge — a loader at the bay or a driver on
+    arrival. It is not a sensor feed; show who read it and how long ago.
+  required: [tempC, targetMinC, targetMaxC, inRange, source, recordedByName, recordedAt, ageSeconds]
+  properties:
+    tempC: { type: number, examples: [3.8] }
+    targetMinC: { type: number, examples: [2] }
+    targetMaxC: { type: number, examples: [5] }
+    inRange:
+      type: boolean
+      description: tempC within the target band stored on the reading, both ends included.
+    source: { $ref: "./telemetry.yaml#/ChillerSource" }
+    recordedByName: { type: [string, "null"], examples: ["Ranjith Silva"] }
+    recordedAt: { type: string, format: date-time }
+    ageSeconds: { type: integer, minimum: 0, examples: [600] }
+
+VehicleTripSummary:
+  type: object
+  required: [tripId, tripNo, route, plannedDepartAt, stops, orders, status, wave]
+  properties:
+    tripId: { type: string, examples: ["clx0trp1a2b3c4d5e6f7g8h9"] }
+    tripNo: { type: integer, examples: [1] }
+    route:
+      type: string
+      description: Depot code, an arrow, and the district.
+      examples: ["Peliyagoda → Colombo"]
+    plannedDepartAt: { $ref: "./common.yaml#/ClockTime" }
+    stops: { type: integer, examples: [12] }
+    orders: { type: integer, examples: [28] }
+    status: { type: string, enum: [PLANNED, LOADING, READY, DEPARTED, COMPLETED, CANCELLED] }
+    wave: { type: string, enum: [PREDAWN, DAYTIME] }
+
+VehicleDetail:
+  allOf:
+    - $ref: "./vehicles.yaml#/VehicleRow"
+    - type: object
+      required: [date, trips, chiller, position]
+      properties:
+        date: { $ref: "./common.yaml#/DateOnly" }
+        trips:
+          type: array
+          description: The day's non-cancelled published-plan trips, in trip order.
+          items: { $ref: "./vehicles.yaml#/VehicleTripSummary" }
+        chiller:
+          description: >
+            The most recent chiller reading for a refrigerated vehicle. Null
+            for an ambient vehicle, or when nobody has recorded one.
+          oneOf:
+            - $ref: "./vehicles.yaml#/ChillerReadingView"
+            - type: "null"
+        position:
+          description: The last position reported by the driver's phone, or null if it has never reported.
+          oneOf:
+            - $ref: "./vehicles.yaml#/ReportedPosition"
+            - type: "null"
+
+MapState:
+  type: string
+  enum: [ON_TIME, LATE, RETURNING, LAMP, NOT_STARTED]
+  description: >
+    The state of the vehicle's current trip on the map. Precedence, strongest
+    first: LAMP > LATE > RETURNING > ON_TIME.
+
+    - NOT_STARTED: the trip is READY or LOADING, so the vehicle is at the dock. Reported
+      regardless of position; a missing report at the dock is not an alarm.
+    - LAMP: the trip has departed and either the phone has never reported, or
+      its last report is older than 10 minutes. Outranks everything: when the
+      report is stale, every other state is a guess.
+    - LATE: lateMinutes is 5 or more.
+    - RETURNING: no stop is left to serve (every stop DONE, SKIPPED or FAILED) but the trip is not COMPLETED.
+    - ON_TIME: otherwise.
+
+MapNextStop:
+  type: object
+  description: The first stop the driver still has to serve, including one they are standing at.
+  required: [outletId, outletName, stopNumber, totalStops, deliveredStops, eta, windowOpen, windowClose]
+  properties:
+    outletId: { type: string, examples: ["OUT074"] }
+    outletName: { type: string, examples: ["Fresh Puttalam"] }
+    stopNumber: { type: integer, minimum: 1, description: "1-based position in the trip.", examples: [2] }
+    totalStops: { type: integer, minimum: 1, examples: [4] }
+    deliveredStops: { type: integer, minimum: 0, description: "Stops marked DONE.", examples: [1] }
+    eta:
+      allOf: [{ $ref: "./common.yaml#/ClockTime" }]
+      description: >
+        The planned arrival pushed back by lateMinutes. A single point
+        estimate: when state is LAMP it rests on a stale position, so show it
+        as an estimate (the arrival is a range once it is uncertain).
+    windowOpen: { $ref: "./common.yaml#/ClockTime" }
+    windowClose: { $ref: "./common.yaml#/ClockTime" }
+
+MapVehicle:
+  type: object
+  required: [vehicleId, driverName, state, lateMinutes, trip, position, nextStop]
+  properties:
+    vehicleId: { type: string, examples: ["VEH025"] }
+    driverName: { type: [string, "null"], examples: ["K. Fernando"] }
+    state: { $ref: "./vehicles.yaml#/MapState" }
+    lateMinutes:
+      type: integer
+      minimum: 0
+      description: >
+        Minutes behind plan at the last stop the driver arrived at; 0 when on
+        time, before the first arrival, or once no stop is left to serve.
+      examples: [0]
+    trip:
+      type: object
+      required: [tripId, tripNo, districtName]
+      properties:
+        tripId: { type: string, examples: ["clx0trp1a2b3c4d5e6f7g8h9"] }
+        tripNo: { type: integer, examples: [1] }
+        districtName: { type: string, examples: ["Puttalam"] }
+    position:
+      description: Null for a vehicle that has never reported. No position is invented for it.
+      oneOf:
+        - $ref: "./vehicles.yaml#/ReportedPosition"
+        - type: "null"
+    nextStop:
+      oneOf:
+        - $ref: "./vehicles.yaml#/MapNextStop"
+        - type: "null"
+
+FleetPositions:
+  type: object
+  required: [date, depotCode, updatedAt, summary, vehicles]
+  properties:
+    date: { $ref: "./common.yaml#/DateOnly" }
+    depotCode: { type: string, examples: ["Peliyagoda"] }
+    updatedAt:
+      type: string
+      format: date-time
+      description: Server time when this response was assembled. Not a claim that positions are current — each carries its own age.
+    summary:
+      type: object
+      description: Counts for the list tabs.
+      required: [all, late, lamp]
+      properties:
+        all: { type: integer, examples: [3] }
+        late: { type: integer, examples: [1] }
+        lamp: { type: integer, examples: [1] }
+    vehicles:
+      type: array
+      items: { $ref: "./vehicles.yaml#/MapVehicle" }
