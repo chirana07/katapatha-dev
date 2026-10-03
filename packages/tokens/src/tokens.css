@@ -1,13 +1,18 @@
 /*
  * Katapatha design tokens.
  *
- * Values come from DESIGN.md, which is binding. LEAD-owned: one file, one
- * owner, so this is never a merge conflict.
+ * Values come from DESIGN.md, which is binding. One file, one owner, so this is
+ * never a merge conflict.
  *
- * There is deliberately no runtime palette switcher and no night theme.
- * DESIGN.md: "Palette selection is not part of the product." The supplied
- * identity is fixed, and making a review aid look like product configuration
- * weakened brand consistency last time.
+ * There is one palette and no runtime palette switcher. There is also one
+ * NIGHT RENDERING of that palette, for the driver only — see the night block
+ * below and DESIGN.md "Night theme". Night is the same hues re-mapped onto dark
+ * surfaces, not a second palette: a predawn run starts at 03:30 in a dark cab,
+ * and a full-brightness white screen is a safety problem rather than a
+ * preference. Dispatcher, loader and store stay light.
+ *
+ * Mirror: src/tokens.ts carries the same values for React Native. The two must
+ * stay in step.
  */
 :root {
   --c-navy: #20364e;
@@ -28,10 +33,96 @@
   --c-brand-style: var(--c-ruby);
   --c-brand-tech: var(--c-link);
 
+  /* Status tones. Every status pairs a colour with a label or icon, so these
+     exist as a foreground/surface pair rather than a single hue — the surface
+     alone never carries the meaning. */
+  --c-good: #157347;
+  --c-good-ink: #115c3a;
+  --c-good-surface: #ecfdf3;
+
+  --c-warn: #b45309;
+  --c-warn-ink: #8a4208;
+  --c-warn-surface: #fef6e0;
+
+  --c-bad: var(--c-ruby);
+  --c-bad-ink: var(--c-ruby);
+  --c-bad-surface: #fef1f1;
+
+  --c-info: var(--c-link);
+  --c-info-ink: #1d4ed8;
+  --c-info-surface: #eff6ff;
+
   --radius-control: 8px;
   --radius-card: 10px;
+  --radius-card-loose: 14px;
 
   --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+/*
+ * Night, driver surfaces only.
+ *
+ * The driver shell opts in with data-night="auto" and follows the device; a
+ * driver who pins the theme sets data-theme="dark" or "light" on the same
+ * element, which wins. Nothing outside that shell carries either attribute, so
+ * the rest of the product cannot go dark by accident.
+ *
+ * The two blocks are deliberately identical. Plain CSS has no way to share one
+ * value set across a media query and an attribute selector, and splitting them
+ * into a third indirection costs more than the duplication does. Change both.
+ */
+@media (prefers-color-scheme: dark) {
+  [data-night="auto"]:not([data-theme="light"]) {
+    --c-ink: #f1f5f9;
+    --c-muted: #94a3b8;
+    --c-canvas: #0b1220;
+    --c-raised: #131c2e;
+    --c-surface: #18233a;
+    --c-line: #2a3650;
+    --c-link: #7aa5ff;
+
+    --c-good: #2fa36b;
+    --c-good-ink: #7fe0ae;
+    --c-good-surface: #11291e;
+
+    --c-warn: var(--c-ochre);
+    --c-warn-ink: var(--c-ochre);
+    --c-warn-surface: #2b2110;
+
+    --c-bad: #ef4b55;
+    --c-bad-ink: #ff9ba1;
+    --c-bad-surface: #2d1417;
+
+    --c-info: #7aa5ff;
+    --c-info-ink: #a8c4ff;
+    --c-info-surface: #141f38;
+  }
+}
+
+[data-theme="dark"] {
+  --c-ink: #f1f5f9;
+  --c-muted: #94a3b8;
+  --c-canvas: #0b1220;
+  --c-raised: #131c2e;
+  --c-surface: #18233a;
+  --c-line: #2a3650;
+  --c-link: #7aa5ff;
+
+  --c-good: #2fa36b;
+  --c-good-ink: #7fe0ae;
+  --c-good-surface: #11291e;
+
+  --c-warn: var(--c-ochre);
+  --c-warn-ink: var(--c-ochre);
+  --c-warn-surface: #2b2110;
+
+  --c-bad: #ef4b55;
+  --c-bad-ink: #ff9ba1;
+  --c-bad-surface: #2d1417;
+
+  --c-info: #7aa5ff;
+  --c-info-ink: #a8c4ff;
+  --c-info-surface: #141f38;
 }
 
 /* Semantic layer. Components use these, never the raw --c-* values, so a
@@ -39,6 +130,8 @@
 @theme inline {
   --color-action: var(--c-flame);
   --color-rail: var(--c-navy);
+  --color-navy: var(--c-navy);
+  --color-ochre: var(--c-ochre);
   --color-critical: var(--c-ruby);
   --color-canvas: var(--c-canvas);
   --color-surface: var(--c-surface);
@@ -47,6 +140,28 @@
   --color-ink: var(--c-ink);
   --color-muted: var(--c-muted);
   --color-link: var(--c-link);
+
+  --color-brand-fresh: var(--c-brand-fresh);
+  --color-brand-style: var(--c-brand-style);
+  --color-brand-tech: var(--c-brand-tech);
+
+  --color-good: var(--c-good);
+  --color-good-ink: var(--c-good-ink);
+  --color-good-surface: var(--c-good-surface);
+  --color-warn: var(--c-warn);
+  --color-warn-ink: var(--c-warn-ink);
+  --color-warn-surface: var(--c-warn-surface);
+  --color-bad: var(--c-bad);
+  --color-bad-ink: var(--c-bad-ink);
+  --color-bad-surface: var(--c-bad-surface);
+  --color-info: var(--c-info);
+  --color-info-ink: var(--c-info-ink);
+  --color-info-surface: var(--c-info-surface);
+
+  /* So components write rounded-card, not rounded-[var(--radius-card)]. */
+  --radius-control: var(--radius-control);
+  --radius-card: var(--radius-card);
+  --radius-card-loose: var(--radius-card-loose);
 }
 
 @layer base {

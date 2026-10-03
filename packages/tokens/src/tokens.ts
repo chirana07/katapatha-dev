@@ -28,6 +28,67 @@ export const color = {
   link: "#2563EB",
 } as const;
 
+/**
+ * The night rendering of the same palette, for the driver only.
+ *
+ * Not a second palette: the brand hues (navy, flame, ruby, ochre, crimson) are
+ * unchanged, and only the surface and text ramp is re-mapped. A predawn run
+ * starts at 03:30 in a dark cab. See DESIGN.md "Night theme", and keep this in
+ * step with the [data-theme="dark"] block in tokens.css.
+ */
+export const nightColor = {
+  navy: color.navy,
+  flame: color.flame,
+  ruby: color.ruby,
+  ochre: color.ochre,
+  crimson: color.crimson,
+  ink: "#F1F5F9",
+  muted: "#94A3B8",
+  canvas: "#0B1220",
+  raised: "#131C2E",
+  surface: "#18233A",
+  line: "#2A3650",
+  link: "#7AA5FF",
+} as const;
+
+export type Scheme = "light" | "dark";
+
+/** The shape both renderings share. Values are strings, not literals, so the
+ *  night set is assignable to the same type as the light one. */
+export type Palette = { readonly [K in keyof typeof color]: string };
+
+export function paletteFor(scheme: Scheme): Palette {
+  return scheme === "dark" ? nightColor : color;
+}
+
+/**
+ * Status tones, as a foreground/surface pair.
+ *
+ * A status is never a surface alone — DESIGN.md requires colour to appear with
+ * a label or icon — so each tone carries the ink to write on it.
+ */
+export const tone = {
+  good: { fg: "#157347", ink: "#115C3A", surface: "#ECFDF3" },
+  warn: { fg: "#B45309", ink: "#8A4208", surface: "#FEF6E0" },
+  bad: { fg: color.ruby, ink: color.ruby, surface: "#FEF1F1" },
+  info: { fg: color.link, ink: "#1D4ED8", surface: "#EFF6FF" },
+} as const;
+
+export const nightTone = {
+  good: { fg: "#2FA36B", ink: "#7FE0AE", surface: "#11291E" },
+  warn: { fg: color.ochre, ink: color.ochre, surface: "#2B2110" },
+  bad: { fg: "#EF4B55", ink: "#FF9BA1", surface: "#2D1417" },
+  info: { fg: "#7AA5FF", ink: "#A8C4FF", surface: "#141F38" },
+} as const;
+
+export type ToneSet = {
+  readonly [K in keyof typeof tone]: { readonly fg: string; readonly ink: string; readonly surface: string };
+};
+
+export function toneFor(scheme: Scheme): ToneSet {
+  return scheme === "dark" ? nightTone : tone;
+}
+
 /** Brand accents. Status colour never appears without a label or icon. */
 export const brand = {
   Fresh: "#157347",
