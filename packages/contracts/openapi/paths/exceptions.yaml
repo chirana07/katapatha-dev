@@ -1,0 +1,316 @@
+# Owner: BE2 (Phase 1, slice X)
+collection:
+  get:
+    operationId: listExceptions
+    summary: Everything that needs a decision before or during delivery
+    description: >
+      Dispatcher only, own depot. One list over loading shortfalls, chiller
+      readings, the draft plan's validation, late trips, Lamp Mode vehicles
+      and reported problems, with the figures for the tiles and tabs.
+      `date` defaults to today in Asia/Colombo; `status` to `open`.
+
+      The summary describes the whole day and ignores the filters.
+
+      Everything is derived from what the field has recorded, and says so: a
+      chiller figure is a named person's gauge reading, lateness is measured
+      at the last stop the driver recorded arriving at, and Lamp Mode shows the
+      last reliable update with its time. Nothing here is live tracking.
+    tags: [exceptions]
+    parameters:
+      - name: date
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+      - name: status
+        in: query
+        required: false
+        schema: { type: string, enum: [open, resolved, all], default: open }
+      - name: category
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/exceptions.yaml#/ExceptionCategory" }
+      - name: severity
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/exceptions.yaml#/ExceptionSeverity" }
+      - name: q
+        in: query
+        required: false
+        description: Matches order ref, vehicle, outlet id or name, and the title.
+        schema: { type: string, maxLength: 100 }
+    responses:
+      "200":
+        description: The day's exceptions and summary.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/exceptions.yaml#/ExceptionList" }
+            example:
+              date: "2026-09-29"
+              summary:
+                open: 3
+                critical: 1
+                ordersAffected: 4
+                outletsAffected: 3
+                vehiclesAffected: 2
+                resolvedToday: 1
+                avgResolveMinutes: 18
+                countsByCategory: { planning: 0, loading: 1, on_the_road: 1, store: 1 }
+                countsBySeverity: { critical: 1, warning: 1, info: 1 }
+              exceptions:
+                - id: "shortfall:clx0sf1a2b3c4d5e6f7g8h9"
+                  kind: SHORTFALL
+                  severity: critical
+                  category: loading
+                  status: open
+                  title: "Short 4 units · S1-082 on VEH017"
+                  subtitle: "Kurunegala route · Trip 2 · departs 04:11"
+                  detail: "Missing from the dock"
+                  reportedBy: { name: "Ranjith Silva", role: LOADER }
+                  raisedAt: "2026-09-28T22:32:00.000Z"
+                  ageMinutes: 8
+                  resolvedAt: null
+                  vehicleId: VEH017
+                  tripId: "clx0trp1a2b3c4d5e6f7g8h9"
+                  planId: "clx0pln1a2b3c4d5e6f7g8h"
+                  departsAt: "04:11"
+                  orderRefs: ["S1-082"]
+                  affectedOutlets:
+                    - { outletId: OUT027, outletName: "Kandy City Centre", stopSeq: 2, ordered: 20, delta: -4 }
+                  quantities: { loaded: 16, expected: 20, short: 4 }
+                  acknowledgement: null
+                  resolution: null
+                  decisionOptions:
+                    - decision: SEND_SHORT
+                      label: "Send short and notify the store"
+                      description: "VEH017 leaves on time with 16 of 20 units. The store is told before departure."
+                      recommended: true
+                      requiresNote: false
+                      followUp: { forDate: "2026-09-30", units: 4, label: "Add the 4 missing units to Wed, 30 Sept's orders" }
+                      consequences:
+                        - { audience: loader, title: "Loader · Ranjith Silva", detail: "The departure block is lifted: VEH017 can be marked ready with 16 of 20 units." }
+                        - { audience: store, title: "Store · Kandy City Centre", detail: "Told before departure that 16 of 20 units are on the way for S1-082." }
+                        - { audience: record, title: "Decision record", detail: "Logged by the dispatcher against the shortfall and order S1-082." }
+                    - decision: HOLD_ORDER
+                      label: "Hold the order for the next run"
+                      description: "VEH017 leaves without S1-082; it is deferred to Wed, 30 Sept."
+                      recommended: false
+                      requiresNote: false
+                      followUp: null
+                      consequences:
+                        - { audience: record, title: "Decision record", detail: "Logged by the dispatcher against the shortfall and order S1-082." }
+                - id: "lamp:clx0trp9a2b3c4d5e6f7g8h9"
+                  kind: LAMP
+                  severity: warning
+                  category: on_the_road
+                  status: open
+                  title: "VEH043 in Lamp Mode · no update 14 min"
+                  subtitle: "Nuwara Eliya · last reliable update 06:28"
+                  detail: "Driver works offline; ETA is estimated"
+                  reportedBy: { name: System, role: null }
+                  raisedAt: "2026-09-29T00:58:00.000Z"
+                  ageMinutes: 4
+                  resolvedAt: null
+                  vehicleId: VEH043
+                  tripId: "clx0trp9a2b3c4d5e6f7g8h9"
+                  planId: "clx0pln1a2b3c4d5e6f7g8h"
+                  departsAt: "05:40"
+                  orderRefs: ["S1-091"]
+                  affectedOutlets:
+                    - { outletId: OUT081, outletName: "Nuwara Eliya Fresh", stopSeq: 3, ordered: 24, delta: null }
+                  quantities: null
+                  acknowledgement: null
+                  resolution: null
+                  decisionOptions:
+                    - decision: ACKNOWLEDGE
+                      label: "Acknowledge"
+                      description: "Mark it seen. It stays open while the condition lasts and clears by itself when the evidence changes."
+                      recommended: true
+                      requiresNote: false
+                      followUp: null
+                      consequences:
+                        - { audience: record, title: "Decision record", detail: "Acknowledged by the dispatcher. The exception stays open for as long as the condition lasts." }
+                - id: "problem:01JB2X8Q9K7YC4V3M0ZQ5T6RWE"
+                  kind: PROBLEM
+                  severity: info
+                  category: store
+                  status: open
+                  title: "Items missing reported · S1-074"
+                  subtitle: "Fresh Puttalam · S1-074 · 4 units affected"
+                  detail: "Only 1 bag arrived."
+                  reportedBy: { name: "Fathima Rizvi", role: STORE_MANAGER }
+                  raisedAt: "2026-09-28T04:10:00.000Z"
+                  ageMinutes: 1585
+                  resolvedAt: null
+                  vehicleId: VEH025
+                  tripId: "clx0trp5a2b3c4d5e6f7g8h9"
+                  planId: "clx0pln0a2b3c4d5e6f7g8h"
+                  departsAt: null
+                  orderRefs: ["S1-074"]
+                  affectedOutlets:
+                    - { outletId: OUT074, outletName: "Fresh Puttalam", stopSeq: 1, ordered: 5, delta: -4 }
+                  quantities: null
+                  acknowledgement: null
+                  resolution: null
+                  decisionOptions: []
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+
+item:
+  parameters:
+    - name: exceptionId
+      in: path
+      required: true
+      description: See the id scheme in the exceptions schema file.
+      schema: { type: string }
+  get:
+    operationId: getException
+    summary: One exception, with its activity
+    description: >
+      The exception as the list shows it, plus `activity`: what the decision log
+      holds about it plus the event that raised it, oldest first. Chiller,
+      late, Lamp and planning items exist only while the condition does, so one
+      that has cleared answers 404 `EXCEPTION_NOT_ACTIVE`. A record the caller
+      cannot see answers 403, the same as one that does not exist.
+    tags: [exceptions]
+    responses:
+      "200":
+        description: The exception.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/exceptions.yaml#/ExceptionDetail" }
+            example:
+              id: "problem:01JB2X8Q9K7YC4V3M0ZQ5T6RWE"
+              kind: PROBLEM
+              severity: info
+              category: store
+              status: open
+              title: "Items missing reported · S1-074"
+              subtitle: "Fresh Puttalam · S1-074 · 4 units affected"
+              detail: "Only 1 bag arrived."
+              reportedBy: { name: "Fathima Rizvi", role: STORE_MANAGER }
+              raisedAt: "2026-09-28T04:10:00.000Z"
+              ageMinutes: 1585
+              resolvedAt: null
+              vehicleId: VEH025
+              tripId: "clx0trp5a2b3c4d5e6f7g8h9"
+              planId: "clx0pln0a2b3c4d5e6f7g8h"
+              departsAt: null
+              orderRefs: ["S1-074"]
+              affectedOutlets:
+                - { outletId: OUT074, outletName: "Fresh Puttalam", stopSeq: 1, ordered: 5, delta: -4 }
+              quantities: null
+              acknowledgement: { at: "2026-09-28T04:30:00.000Z", byName: "Nimal Perera" }
+              resolution: null
+              decisionOptions:
+                - decision: RESOLVE
+                  label: "Resolve"
+                  description: "Close it. Your note is kept as the resolution and sent to the store."
+                  recommended: true
+                  requiresNote: true
+                  followUp: null
+                  consequences:
+                    - { audience: order, title: Problem, detail: "Marked resolved, with your note kept as the resolution." }
+                    - { audience: store, title: "Store · Fresh Puttalam", detail: "Told that the issue is resolved, with your note." }
+                    - { audience: record, title: "Decision record", detail: "Logged by the dispatcher against the problem." }
+              activity:
+                - { at: "2026-09-28T04:10:00.000Z", actorName: "Fathima Rizvi", actorRole: STORE_MANAGER, action: problem.raise, summary: "Fathima Rizvi reported the problem", note: "Only 1 bag arrived." }
+                - { at: "2026-09-28T04:30:00.000Z", actorName: "Nimal Perera", actorRole: DISPATCHER, action: problem.acknowledge, summary: "Nimal Perera acknowledged the problem", note: null }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+
+decision:
+  parameters:
+    - name: exceptionId
+      in: path
+      required: true
+      schema: { type: string }
+  post:
+    operationId: decideException
+    summary: Decide an exception
+    description: >
+      Dispatcher only, own depot. What each decision does:
+
+      **Shortfall.** `SEND_SHORT` closes the shortfall and lifts the departure
+      block; the order is untouched (it will be delivered, and recorded, as a
+      part-delivery). With `followUp: true` the missing units become a new order
+      for the next operating day, keyed on the shortfall so a retry never
+      creates a second one. `HOLD_ORDER` takes the order off the trip and marks
+      it DEFERRED with a deferral to the next operating day. `CANCEL_LINE` takes
+      it off the trip and marks it CANCELLED. `MOVE_TO_TRIP_2` moves the whole
+      order to the same vehicle's later trip, offered only when that trip is on
+      the same plan, not yet sealed, serves the same brand and district, and has
+      room; the trip's time budget is not re-checked. In each case the affected
+      store is notified.
+
+      **Problem.** `ACKNOWLEDGE` marks it seen (it stays open); `RESOLVE` closes
+      it and needs `note`, kept as the resolution. A store-raised issue notifies
+      the store either way.
+
+      **Chiller, late, Lamp.** `ACKNOWLEDGE` only. It is recorded, and the item
+      stays open until the condition clears.
+
+      **Planning.** No decisions: 409 `NO_DECISION_AVAILABLE`.
+
+      Repeating the same decision returns 200 with `replayed: true` and does
+      nothing; a different decision on a decided exception is 409
+      `ALREADY_DECIDED`, with the existing resolution in `details`.
+      `consequences` is what was actually done.
+    tags: [exceptions]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/exceptions.yaml#/ExceptionDecisionRequest" }
+          example: { decision: SEND_SHORT, note: "Stock is on tomorrow's truck", followUp: true }
+    responses:
+      "200":
+        description: The updated exception and what was done.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/exceptions.yaml#/ExceptionDecisionResult" }
+            example:
+              replayed: false
+              exception:
+                id: "shortfall:clx0sf1a2b3c4d5e6f7g8h9"
+                kind: SHORTFALL
+                severity: warning
+                category: loading
+                status: resolved
+                title: "Short 4 units · S1-082 on VEH017"
+                subtitle: "Kurunegala route · Trip 2 · departs 04:11"
+                detail: "Missing from the dock"
+                reportedBy: { name: "Ranjith Silva", role: LOADER }
+                raisedAt: "2026-09-28T22:32:00.000Z"
+                ageMinutes: 9
+                resolvedAt: "2026-09-28T22:41:00.000Z"
+                vehicleId: VEH017
+                tripId: "clx0trp1a2b3c4d5e6f7g8h9"
+                planId: "clx0pln1a2b3c4d5e6f7g8h"
+                departsAt: "04:11"
+                orderRefs: ["S1-082"]
+                affectedOutlets:
+                  - { outletId: OUT027, outletName: "Kandy City Centre", stopSeq: 2, ordered: 20, delta: -4 }
+                quantities: { loaded: 16, expected: 20, short: 4 }
+                acknowledgement: null
+                resolution: { decision: SEND_SHORT, note: "Stock is on tomorrow's truck", at: "2026-09-28T22:41:00.000Z", byName: "Nimal Perera" }
+                decisionOptions: []
+              consequences:
+                - { audience: loader, title: "Loader · Ranjith Silva", detail: "The departure block is lifted: VEH017 can be marked ready with 16 of 20 units." }
+                - { audience: store, title: "Store · Kandy City Centre", detail: "Told before departure that 16 of 20 units are on the way for S1-082." }
+                - { audience: order, title: "Next run · Wed, 30 Sept", detail: "The 4 missing units are queued as order ORD-004391 for Kandy City Centre." }
+                - { audience: record, title: "Decision record", detail: "Logged by Nimal Perera against the shortfall and order S1-082." }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+      "409":
+        description: >
+          `ALREADY_DECIDED` (a different decision was applied; `details.resolution`
+          says which), `DECISION_NOT_AVAILABLE` (not offered now; `details.offered`
+          lists what is), `NO_DECISION_AVAILABLE` (a planning item) or `RACE_LOST`.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/common.yaml#/Error" }
+            example:
+              error:
+                code: ALREADY_DECIDED
+                message: "This exception has already been decided: it was resolved as HOLD_ORDER."
+                details: { resolution: HOLD_ORDER, decidedBy: "Nimal Perera", decidedAt: "2026-09-28T22:41:00.000Z" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }

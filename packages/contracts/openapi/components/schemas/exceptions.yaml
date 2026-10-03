@@ -1,0 +1,286 @@
+# Owner: BE2 (Phase 1, slice X)
+#
+# The Exceptions console. An exception is never stored: it is derived from
+# shortfalls, chiller readings, the draft plan's validation, trip progress,
+# the last thing a phone reported, and reported problems. The ids are stable
+# strings so the console can link to one:
+#
+#   shortfall:<shortfallId>      problem:<problemId>       chiller:<readingId>
+#   late:<tripId>                lamp:<tripId>
+#   plan:<planId>:<ruleCode>:<n>
+#
+# `chiller:` keys on the reading, so a newer out-of-band reading is a new
+# exception. `plan:` keys on the draft plan, which re-running the allocator
+# replaces, so those ids retire with it.
+
+ExceptionKind:
+  type: string
+  enum: [SHORTFALL, CHILLER, PLANNING, LATE, LAMP, PROBLEM]
+
+ExceptionSeverity:
+  type: string
+  enum: [critical, warning, info]
+
+ExceptionCategory:
+  type: string
+  description: The console's tabs. `store` is an issue a store manager raised.
+  enum: [planning, loading, on_the_road, store]
+
+ExceptionStatus:
+  type: string
+  description: >
+    A problem that is ACKNOWLEDGED is still open. Chiller, late and Lamp
+    items are never resolved: they disappear when the evidence changes.
+  enum: [open, resolved]
+
+ExceptionDecisionCode:
+  type: string
+  description: >
+    SEND_SHORT, HOLD_ORDER, CANCEL_LINE and MOVE_TO_TRIP_2 map onto the
+    shortfall resolutions DOMAIN.md names. ACKNOWLEDGE applies to every kind
+    but planning; RESOLVE to problems. There is deliberately no "substitute":
+    nothing in the system models stock to back it.
+  enum: [SEND_SHORT, HOLD_ORDER, CANCEL_LINE, MOVE_TO_TRIP_2, ACKNOWLEDGE, RESOLVE]
+
+ExceptionConsequence:
+  type: object
+  description: >
+    One step of "what happens when you confirm". Every step corresponds to a
+    write the decision really performs.
+  required: [audience, title, detail]
+  properties:
+    audience: { type: string, enum: [loader, driver, store, order, trip, record] }
+    title: { type: string, examples: ["Store · Fresh Mart Kurunegala"] }
+    detail: { type: string, examples: ["Told before departure that 16 of 20 units are on the way for S1-082."] }
+
+ExceptionDecisionOption:
+  type: object
+  required: [decision, label, description, recommended, requiresNote, followUp, consequences]
+  properties:
+    decision: { $ref: "#/ExceptionDecisionCode" }
+    label: { type: string, examples: ["Send short and notify the store"] }
+    description: { type: string }
+    recommended: { type: boolean }
+    requiresNote:
+      type: boolean
+      description: True for RESOLVE, where the note is kept as the resolution.
+    followUp:
+      description: >
+        SEND_SHORT only: the optional follow-up order for the missing units, to
+        be requested with `followUp: true`. Null on every other option.
+      oneOf:
+        - type: object
+          required: [forDate, units, label]
+          properties:
+            forDate: { $ref: "./common.yaml#/DateOnly" }
+            units: { type: integer, examples: [4] }
+            label: { type: string, examples: ["Add the 4 missing units to Thu, 1 Oct's orders"] }
+        - { type: "null" }
+    consequences:
+      type: array
+      description: The preview, shown before the dispatcher confirms.
+      items: { $ref: "#/ExceptionConsequence" }
+
+ExceptionOutlet:
+  type: object
+  required: [outletId, outletName, stopSeq, ordered, delta]
+  properties:
+    outletId: { type: string, examples: ["OUT027"] }
+    outletName: { oneOf: [{ type: string }, { type: "null" }], examples: ["Kandy City Centre"] }
+    stopSeq: { oneOf: [{ type: integer }, { type: "null" }], examples: [2] }
+    ordered: { oneOf: [{ type: integer }, { type: "null" }], examples: [12] }
+    delta:
+      description: Units short at this outlet (negative), where that is known.
+      oneOf: [{ type: integer }, { type: "null" }]
+      examples: [-3]
+
+ExceptionActor:
+  type: object
+  description: Who reported it. Derived items carry the name System and a null role.
+  required: [name, role]
+  properties:
+    name: { type: string, examples: ["Ranjith Silva"] }
+    role: { oneOf: [{ $ref: "./common.yaml#/Role" }, { type: "null" }] }
+
+Exception:
+  type: object
+  required:
+    - id
+    - kind
+    - severity
+    - category
+    - status
+    - title
+    - subtitle
+    - detail
+    - reportedBy
+    - raisedAt
+    - ageMinutes
+    - resolvedAt
+    - vehicleId
+    - tripId
+    - planId
+    - departsAt
+    - orderRefs
+    - affectedOutlets
+    - quantities
+    - acknowledgement
+    - resolution
+    - decisionOptions
+  properties:
+    id: { type: string, examples: ["shortfall:clx0sf1a2b3c4d5e6f7g8h9"] }
+    kind: { $ref: "#/ExceptionKind" }
+    severity: { $ref: "#/ExceptionSeverity" }
+    category: { $ref: "#/ExceptionCategory" }
+    status: { $ref: "#/ExceptionStatus" }
+    title: { type: string, examples: ["Short 4 units · S1-082 on VEH017"] }
+    subtitle: { type: string, examples: ["Kurunegala route · Trip 2 · departs 04:11"] }
+    detail:
+      description: >
+        A third line of context. For a chiller item it says the figure is a
+        person's gauge reading; for Lamp Mode, that the driver works offline
+        and the ETA is estimated.
+      oneOf: [{ type: string }, { type: "null" }]
+    reportedBy: { $ref: "#/ExceptionActor" }
+    raisedAt: { type: string, format: date-time }
+    ageMinutes: { type: integer, examples: [8] }
+    resolvedAt: { oneOf: [{ type: string, format: date-time }, { type: "null" }] }
+    vehicleId: { oneOf: [{ type: string }, { type: "null" }], examples: ["VEH017"] }
+    tripId: { oneOf: [{ type: string }, { type: "null" }] }
+    planId:
+      description: For a planning item, the draft plan to open. Also set on items tied to a trip.
+      oneOf: [{ type: string }, { type: "null" }]
+    departsAt:
+      description: The trip's planned departure, which is what the list sorts by.
+      oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }]
+    orderRefs: { type: array, items: { type: string }, examples: [["S1-082"]] }
+    affectedOutlets:
+      type: array
+      items: { $ref: "#/ExceptionOutlet" }
+    quantities:
+      description: Loaded, expected and short units. Shortfalls only; null otherwise.
+      oneOf:
+        - type: object
+          required: [loaded, expected, short]
+          properties:
+            loaded: { type: integer, examples: [16] }
+            expected: { type: integer, examples: [20] }
+            short: { type: integer, examples: [4] }
+        - { type: "null" }
+    acknowledgement:
+      description: Set once a dispatcher has acknowledged it. An open item may be acknowledged.
+      oneOf:
+        - type: object
+          required: [at, byName]
+          properties:
+            at: { type: string, format: date-time }
+            byName: { type: string }
+        - { type: "null" }
+    resolution:
+      description: Set on a resolved item. `decision` is the shortfall resolution, or RESOLVE for a problem.
+      oneOf:
+        - type: object
+          required: [decision, note, at, byName]
+          properties:
+            decision: { oneOf: [{ type: string }, { type: "null" }] }
+            note: { oneOf: [{ type: string }, { type: "null" }] }
+            at: { oneOf: [{ type: string, format: date-time }, { type: "null" }] }
+            byName: { oneOf: [{ type: string }, { type: "null" }] }
+        - { type: "null" }
+    decisionOptions:
+      type: array
+      description: Empty when nothing can be decided (planning items, resolved items, already-acknowledged trip items).
+      items: { $ref: "#/ExceptionDecisionOption" }
+
+ExceptionSummary:
+  type: object
+  description: >
+    Over the whole day, ignoring the list's filters, so a tab count never
+    shrinks when the dispatcher searches. `resolvedToday` is the resolved items
+    belonging to the date shown. `avgResolveMinutes` is null when none carry a
+    resolution time, never 0.
+  required: [open, critical, ordersAffected, outletsAffected, vehiclesAffected, resolvedToday, avgResolveMinutes, countsByCategory, countsBySeverity]
+  properties:
+    open: { type: integer, examples: [7] }
+    critical: { type: integer, examples: [3] }
+    ordersAffected: { type: integer, examples: [11] }
+    outletsAffected: { type: integer, examples: [4] }
+    vehiclesAffected: { type: integer, examples: [3] }
+    resolvedToday: { type: integer, examples: [12] }
+    avgResolveMinutes: { oneOf: [{ type: integer }, { type: "null" }], examples: [18] }
+    countsByCategory:
+      type: object
+      required: [planning, loading, on_the_road, store]
+      properties:
+        planning: { type: integer }
+        loading: { type: integer }
+        on_the_road: { type: integer }
+        store: { type: integer }
+    countsBySeverity:
+      type: object
+      required: [critical, warning, info]
+      properties:
+        critical: { type: integer }
+        warning: { type: integer }
+        info: { type: integer }
+
+ExceptionList:
+  type: object
+  required: [date, summary, exceptions]
+  properties:
+    date: { $ref: "./common.yaml#/DateOnly" }
+    summary: { $ref: "#/ExceptionSummary" }
+    exceptions:
+      type: array
+      description: >
+        Open before resolved; then by the trip's planned departure; then by
+        when it was raised. Items with no departure to race sort last.
+      items: { $ref: "#/Exception" }
+
+ExceptionActivityEvent:
+  type: object
+  required: [at, actorName, actorRole, action, summary, note]
+  properties:
+    at: { type: string, format: date-time }
+    actorName: { oneOf: [{ type: string }, { type: "null" }] }
+    actorRole: { oneOf: [{ $ref: "./common.yaml#/Role" }, { type: "null" }] }
+    action: { type: string, examples: ["shortfall.raise"] }
+    summary: { type: string, examples: ["Ranjith Silva flagged the shortfall at the dock"] }
+    note: { oneOf: [{ type: string }, { type: "null" }] }
+
+ExceptionDetail:
+  description: An exception with its activity, oldest first.
+  allOf:
+    - { $ref: "#/Exception" }
+    - type: object
+      required: [activity]
+      properties:
+        activity:
+          type: array
+          items: { $ref: "#/ExceptionActivityEvent" }
+
+ExceptionDecisionRequest:
+  type: object
+  required: [decision]
+  properties:
+    decision: { $ref: "#/ExceptionDecisionCode" }
+    note:
+      type: string
+      maxLength: 500
+      description: Required for RESOLVE (kept as the resolution); optional elsewhere.
+    followUp:
+      type: boolean
+      description: SEND_SHORT only. Creates a next-operating-day order for the missing units.
+
+ExceptionDecisionResult:
+  type: object
+  required: [exception, consequences, replayed]
+  properties:
+    exception: { $ref: "#/Exception" }
+    consequences:
+      type: array
+      description: What was actually done, in order.
+      items: { $ref: "#/ExceptionConsequence" }
+    replayed:
+      type: boolean
+      description: True when the same decision had already been applied and nothing was done this time.

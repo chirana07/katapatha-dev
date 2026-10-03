@@ -1,0 +1,71 @@
+# Owner: BE2 (Phase 1, slice X)
+collection:
+  get:
+    operationId: listNotifications
+    summary: The caller's notifications
+    description: >
+      A store manager reads their outlet's notifications; a dispatcher their
+      own. Every other role is 403. Newest first, at most 50. `unread=true`
+      returns only unread ones; omitted or `false` returns all. `unreadCount`
+      always counts every unread notification, not just those returned.
+    tags: [notifications]
+    parameters:
+      - name: unread
+        in: query
+        required: false
+        schema: { type: string, enum: ["true", "false"] }
+    responses:
+      "200":
+        description: The notifications.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/notifications.yaml#/NotificationList" }
+            example:
+              unreadCount: 1
+              items:
+                - id: "clx0ntf2a2b3c4d5e6f7g8h9"
+                  kind: shortfall.send_short
+                  title: "Order S1-082 is leaving 4 short"
+                  body: "VEH017 leaves with 16 of 20 units. The missing 4 are queued for Wed, 30 Sept as ORD-004391."
+                  payload: { orderId: "clx0ord2a2b3c4d5e6f7g8h9", shortfallId: "clx0sf1a2b3c4d5e6f7g8h9", missingUnits: 4, followUpOrderId: "clx0ord3a2b3c4d5e6f7g8h9" }
+                  createdAt: "2026-09-28T22:41:00.000Z"
+                  readAt: null
+                - id: "clx0ntf1a2b3c4d5e6f7g8h9"
+                  kind: delivered
+                  title: "Your delivery has arrived"
+                  body: "VEH025 delivered at 07:38. Please confirm what you received."
+                  payload: { tripStopId: "clx0tst1a2b3c4d5e6f7g8h9" }
+                  createdAt: "2026-09-27T02:08:00.000Z"
+                  readAt: "2026-09-27T02:30:00.000Z"
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+
+read:
+  parameters:
+    - name: notificationId
+      in: path
+      required: true
+      schema: { type: string }
+  post:
+    operationId: markNotificationRead
+    summary: Mark a notification read
+    description: >
+      Idempotent: reading twice keeps the first read time. A notification the
+      caller does not own answers 403, the same as one that does not exist.
+    tags: [notifications]
+    responses:
+      "200":
+        description: The notification, and how many remain unread.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/notifications.yaml#/NotificationRead" }
+            example:
+              notification:
+                id: "clx0ntf2a2b3c4d5e6f7g8h9"
+                kind: shortfall.send_short
+                title: "Order S1-082 is leaving 4 short"
+                body: "VEH017 leaves with 16 of 20 units."
+                payload: { orderId: "clx0ord2a2b3c4d5e6f7g8h9" }
+                createdAt: "2026-09-28T22:41:00.000Z"
+                readAt: "2026-09-28T22:50:00.000Z"
+              unreadCount: 0
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }

@@ -1,0 +1,44 @@
+# Owner: BE2 (Phase 1, slice X)
+
+Notification:
+  type: object
+  required: [id, kind, title, body, payload, createdAt, readAt]
+  properties:
+    id: { type: string, examples: ["clx0ntf1a2b3c4d5e6f7g8h9"] }
+    kind:
+      type: string
+      description: >
+        Dotted or plain verb a client may use to pick an icon:
+        `delivered`, `deferred`, `cancelled`, `shortfall.send_short`,
+        `shortfall.moved`, `issue.raised`, `issue.acknowledged`,
+        `issue.resolved`. Free-form on purpose.
+      examples: ["shortfall.send_short"]
+    title: { type: string, examples: ["Order S1-082 is leaving 4 short"] }
+    body: { type: string }
+    payload:
+      description: Ids a client can use to deep-link (orderId, exceptionId, ...). Shape varies by kind.
+      oneOf:
+        - { type: object, additionalProperties: true }
+        - { type: "null" }
+    createdAt: { type: string, format: date-time }
+    readAt: { oneOf: [{ type: string, format: date-time }, { type: "null" }] }
+
+NotificationList:
+  type: object
+  required: [unreadCount, items]
+  properties:
+    unreadCount:
+      type: integer
+      description: Every unread notification, not just those in `items`.
+      examples: [2]
+    items:
+      type: array
+      description: Newest first, at most 50.
+      items: { $ref: "#/Notification" }
+
+NotificationRead:
+  type: object
+  required: [notification, unreadCount]
+  properties:
+    notification: { $ref: "#/Notification" }
+    unreadCount: { type: integer, examples: [1] }

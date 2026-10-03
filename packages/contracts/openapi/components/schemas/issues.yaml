@@ -1,0 +1,56 @@
+# Owner: BE2 (Phase 1, slice X)
+#
+# What a store manager reports about a delivery. An issue is a Problem row
+# raised by the manager; the dispatcher sees it in the Exceptions console
+# under "Store".
+
+IssueKind:
+  type: string
+  description: A STORE_PROBLEM_KINDS code, served by GET /reference/vocabularies.
+  enum: [GOODS_DAMAGED, ACCESS_DENIED, OUTLET_CLOSED, DELIVERY_REFUSED, OTHER]
+
+IssueReason:
+  type: string
+  description: A STORE_ISSUE_REASONS code.
+  enum: [ITEMS_MISSING, ITEMS_DAMAGED, ARRIVED_WARM, WRONG_ITEMS]
+
+IssueStatus:
+  type: string
+  enum: [NEW, ACKNOWLEDGED, RESOLVED]
+
+CreateIssueRequest:
+  type: object
+  required: [orderId, kind]
+  properties:
+    orderId: { type: string, examples: ["clx0ord1a2b3c4d5e6f7g8h9"] }
+    kind: { $ref: "#/IssueKind" }
+    reasonCode: { $ref: "#/IssueReason" }
+    units:
+      type: integer
+      minimum: 1
+      description: How many units were affected. Must not exceed the order's units.
+      examples: [4]
+    note: { type: string, maxLength: 500 }
+    clientRequestId:
+      type: string
+      format: uuid
+      description: >
+        Makes a retried submit safe. The same id from the same manager about the
+        same order and kind returns the first issue (200); the same id for
+        anything else is 409.
+
+Issue:
+  type: object
+  required: [id, orderId, orderRef, kind, reasonCode, units, note, status, resolution, createdAt, resolvedAt]
+  properties:
+    id: { type: string, examples: ["01JB2X8Q9K7YC4V3M0ZQ5T6RWE"] }
+    orderId: { type: string }
+    orderRef: { type: string, examples: ["S1-074"] }
+    kind: { $ref: "#/IssueKind" }
+    reasonCode: { oneOf: [{ $ref: "#/IssueReason" }, { type: "null" }] }
+    units: { oneOf: [{ type: integer }, { type: "null" }], examples: [4] }
+    note: { oneOf: [{ type: string }, { type: "null" }] }
+    status: { $ref: "#/IssueStatus" }
+    resolution: { oneOf: [{ type: string }, { type: "null" }] }
+    createdAt: { type: string, format: date-time }
+    resolvedAt: { oneOf: [{ type: string, format: date-time }, { type: "null" }] }

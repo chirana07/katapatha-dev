@@ -1,0 +1,105 @@
+# Owner: BE2 (Phase 1, slice X)
+collection:
+  post:
+    operationId: createIssue
+    summary: Report a problem with a delivery
+    description: >
+      Store manager only, and only about an order at their own outlet. Creates a
+      problem the dispatcher sees in the Exceptions console (category `store`)
+      and notifies the depot's dispatchers.
+
+      Idempotent on `clientRequestId`: the first call answers 201, a retry of the
+      same request answers 200 with the same issue and creates nothing. The same
+      id used for a different order or kind is 409 `IDEMPOTENCY_KEY_REUSED`.
+      `units` may not exceed the order's units (422 `UNITS_EXCEED_ORDER`).
+    tags: [issues]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/issues.yaml#/CreateIssueRequest" }
+          example:
+            orderId: "clx0ord1a2b3c4d5e6f7g8h9"
+            kind: GOODS_DAMAGED
+            reasonCode: ITEMS_MISSING
+            units: 4
+            note: "Only 1 bag of wheat flour arrived. The driver said the dock was short."
+            clientRequestId: "3f2b8e9a-7c41-4d0e-9a52-6b1f0c8d2e11"
+    responses:
+      "200":
+        description: A retry of an issue already raised; nothing new was created.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/issues.yaml#/Issue" }
+            example:
+              id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWE"
+              orderId: "clx0ord1a2b3c4d5e6f7g8h9"
+              orderRef: "S1-074"
+              kind: GOODS_DAMAGED
+              reasonCode: ITEMS_MISSING
+              units: 4
+              note: "Only 1 bag of wheat flour arrived. The driver said the dock was short."
+              status: NEW
+              resolution: null
+              createdAt: "2026-09-28T04:10:00.000Z"
+              resolvedAt: null
+      "201":
+        description: The issue was raised.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/issues.yaml#/Issue" }
+            example:
+              id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWE"
+              orderId: "clx0ord1a2b3c4d5e6f7g8h9"
+              orderRef: "S1-074"
+              kind: GOODS_DAMAGED
+              reasonCode: ITEMS_MISSING
+              units: 4
+              note: "Only 1 bag of wheat flour arrived. The driver said the dock was short."
+              status: NEW
+              resolution: null
+              createdAt: "2026-09-28T04:10:00.000Z"
+              resolvedAt: null
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "409": { $ref: "../components/responses/common.yaml#/Conflict" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+  get:
+    operationId: listIssues
+    summary: The outlet's own issues
+    description: >
+      Store manager only. Issues raised by this outlet's managers, newest first
+      (at most 100). Status follows the dispatcher: NEW, then ACKNOWLEDGED, then
+      RESOLVED with the dispatcher's note as `resolution`.
+    tags: [issues]
+    responses:
+      "200":
+        description: The outlet's issues.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/issues.yaml#/Issue" }
+            example:
+              - id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWE"
+                orderId: "clx0ord1a2b3c4d5e6f7g8h9"
+                orderRef: "S1-074"
+                kind: GOODS_DAMAGED
+                reasonCode: ITEMS_MISSING
+                units: 4
+                note: "Only 1 bag of wheat flour arrived."
+                status: ACKNOWLEDGED
+                resolution: null
+                createdAt: "2026-09-28T04:10:00.000Z"
+                resolvedAt: null
+              - id: "01JB1Q4T8M2ZH6N5R7V0W3X9YA"
+                orderId: "clx0ord0a2b3c4d5e6f7g8h8"
+                orderRef: "S1-068"
+                kind: GOODS_DAMAGED
+                reasonCode: ITEMS_DAMAGED
+                units: 2
+                note: null
+                status: RESOLVED
+                resolution: "Credit issued by head office."
+                createdAt: "2026-09-27T05:02:00.000Z"
+                resolvedAt: "2026-09-27T09:15:00.000Z"
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
