@@ -44,8 +44,8 @@ export default function ReportIssuePage() {
       <section className="mt-6 rounded-[var(--radius-card)] border border-line bg-raised p-4 text-sm text-muted">
         <p className="font-semibold text-ink">Need to speak to someone?</p>
         <p className="mt-1">
-          Contact your dispatcher at the depot. The next release will add a direct
-          messaging thread for issue follow-up.
+          Contact your dispatcher at the depot directly. Issues you record on an order&apos;s
+          receipt panel are saved on that order&apos;s record.
         </p>
       </section>
     </main>

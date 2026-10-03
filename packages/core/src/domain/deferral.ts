@@ -33,10 +33,41 @@ const SUGGESTION: Readonly<Record<string, DeferralReasonCode>> = {
   WEIGHT_CAP_EXCEEDED: "ORDER_TOO_LARGE",
 };
 
+/** Capacity-type findings: the vehicle runs, it's just used up. */
+const BUSY_CODES = new Set([
+  "VOLUME_CAP_EXCEEDED",
+  "WEIGHT_CAP_EXCEEDED",
+  "NO_TRIP_SLOT",
+  "PREDAWN_BUDGET_EXCEEDED",
+  "DAYTIME_BUDGET_EXCEEDED",
+  "FUEL_QUOTA_EXCEEDED",
+]);
+
+/**
+ * "None of the right vehicles is free" — which can mean full, or off the road.
+ * NO_TRIP_SLOT is left out: the allocator also records it against single busy
+ * vehicles, so it can't tell the two apart.
+ */
+const AVAILABILITY_CODES = new Set(["NO_REEFER_AVAILABLE", "NO_VAN_AVAILABLE"]);
+
+/**
+ * `contributing` is every code the allocator recorded for the order. When the
+ * only reason the right vehicles weren't free is that they're in the
+ * workshop — none was merely full — say so: "refrigerated capacity full"
+ * would tell the store something untrue.
+ */
 export function suggestDeferralReason(
   rejectionCode: string | null | undefined,
+  contributing: readonly string[] = [],
 ): DeferralReasonCode | null {
   if (!rejectionCode) return null;
+  if (
+    AVAILABILITY_CODES.has(rejectionCode) &&
+    contributing.includes("VEHICLE_IN_WORKSHOP") &&
+    !contributing.some((code) => BUSY_CODES.has(code))
+  ) {
+    return "VEHICLE_IN_WORKSHOP";
+  }
   return SUGGESTION[rejectionCode] ?? null;
 }
 
@@ -97,8 +128,13 @@ export function deferralMessage(
   const reason = `Reason: ${deferralReasonLabel(reasonCode).toLowerCase()}.`;
   if (permanent) {
     // No vehicle in the fleet can take it as it stands, so promising a slot
-    // on the next run would be a lie. Say what actually happens.
-    return `Your order ${order.ref} could not be delivered today. ${reason} The dispatcher will contact you about splitting or changing it.`;
+    // on the next run would be a lie. Say what actually happens — and only
+    // ask for smaller orders when size is the reason the dispatcher gave.
+    const next =
+      reasonCode === "ORDER_TOO_LARGE"
+        ? "Please place it again as smaller orders."
+        : "Your dispatcher will contact you about what happens next.";
+    return `Your order ${order.ref} could not be delivered today. ${reason} ${next}`;
   }
   return `Your order ${order.ref} moves to ${shortDay(movesTo)}, ${order.windowOpen}–${order.windowClose}. ${reason} It will be planned first on that run.`;
 }

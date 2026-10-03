@@ -475,12 +475,16 @@ export function allocate(input: AllocatorInput): AllocatorOutput {
       ledger.record(order.ref, { code: "WRONG_DEPOT", vehicleId: v.vehicleId });
       return false;
     }
+    // Compatibility before availability: a vehicle that could never carry
+    // this order is not part of its story, so its workshop status must not
+    // appear in the explanation (an ambient van "in the workshop" is noise
+    // for a chilled order).
+    if (order.tempRequirement === "chilled" && v.temp !== "reefer") return false;
+    if (outlet.parkingConstraint === "van_only" && v.type !== "van") return false;
     if (!v.available) {
       ledger.record(order.ref, { code: "VEHICLE_IN_WORKSHOP", vehicleId: v.vehicleId });
       return false;
     }
-    if (order.tempRequirement === "chilled" && v.temp !== "reefer") return false;
-    if (outlet.parkingConstraint === "van_only" && v.type !== "van") return false;
     return true;
   }
 

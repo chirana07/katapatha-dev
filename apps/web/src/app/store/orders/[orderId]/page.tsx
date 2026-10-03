@@ -90,7 +90,7 @@ export default async function StoreOrderPage({
         <OrderFact label="Receiving window" value={receivingWindowLabel(order)} />
       </dl>
 
-      <OrderProgress state={state} />
+      <OrderProgress state={state} deferralExplained={Boolean(order.deferral)} />
 
       <section className="mt-6 rounded-[var(--radius-card)] bg-surface p-5 sm:p-6">
         <h2 className="text-xl font-semibold">Delivery outcome</h2>

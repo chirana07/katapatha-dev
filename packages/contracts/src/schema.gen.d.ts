@@ -148,9 +148,29 @@ export interface paths {
         put?: never;
         /**
          * Place orders for the next operating day
-         * @description Units only. Outlet, brand, district and depot come from the session, never the body. Idempotent on `requestId`, so a retry over a flaky connection cannot double-order.
+         * @description Units only. Outlet, brand, district and depot come from the session, never the body. Idempotent on `requestId`, so a retry over a flaky connection cannot double-order. Each line becomes its own order. A line bigger than any vehicle allowed to carry it (Rule 5: an order travels whole) is rejected with 422 `ORDER_TOO_LARGE`; see GET /orders/limits and raise it as several lines.
          */
         post: operations["placeOrders"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How big one order can be for the signed-in store
+         * @description Per temperature: the outlet's unit-size estimate and the most units one order can hold on the roomiest vehicle allowed to carry it (reefers for chilled, vans for a van-only outlet). The whole depot fleet counts, workshop or not. Store manager only.
+         */
+        get: operations["getOrderLimits"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -792,6 +812,21 @@ export interface components {
                 units: number;
             }[];
         };
+        OrderLimit: {
+            /** @example 0.1125 */
+            m3PerUnit: number;
+            /** @example 8 */
+            kgPerUnit: number;
+            /**
+             * @description 0 when no vehicle at the depot can carry this temperature to the outlet.
+             * @example 302
+             */
+            maxUnitsPerOrder: number;
+        };
+        OrderLimits: {
+            chilled: components["schemas"]["OrderLimit"];
+            ambient: components["schemas"]["OrderLimit"];
+        };
         ReceiptRequest: {
             /** @example 120 */
             unitsReceived: number;
@@ -863,10 +898,15 @@ export interface components {
             /** @example null */
             lockedReason?: string | null;
             /**
-             * @description A draft plan exists; re-run auto-plan for a status change to take effect.
+             * @description A draft plan exists for the day.
              * @example false
              */
             hasDraft?: boolean;
+            /**
+             * @description A vehicle's status changed after the draft was built, so the draft no longer reflects the fleet — re-run auto-plan.
+             * @example false
+             */
+            draftStale?: boolean;
             vehicles: components["schemas"]["VehicleDay"][];
         };
         SetVehicleStatusRequest: {
@@ -1060,8 +1100,18 @@ export interface components {
                 brand: string;
                 /** @example Puttalam */
                 districtName: string;
+                /**
+                 * @description The kind of vehicle this order needed — what it competed for.
+                 * @enum {string}
+                 */
+                resource?: "refrigerated vehicle" | "van" | "vehicle";
+                /**
+                 * @description This order plus every served order, depot-wide, that rode a vehicle this order could also have used. 1 means nothing was swappable.
+                 * @example 4
+                 */
+                competing?: number;
             };
-            /** @description The deferred order first, then up to four competitors by priority rank. */
+            /** @description The deferred order first, then up to four competitors: orders served on a vehicle this order could have used, lowest priority (most swappable) shown. Only the deferred order when nothing was swappable. */
             items: {
                 /** @example ORD-004312 */
                 orderRef: string;
@@ -1791,6 +1841,41 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
         };
     };
+    getOrderLimits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Order size limits. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "chilled": {
+                     *         "m3PerUnit": 0.09,
+                     *         "kgPerUnit": 8,
+                     *         "maxUnitsPerOrder": 333
+                     *       },
+                     *       "ambient": {
+                     *         "m3PerUnit": 0.1125,
+                     *         "kgPerUnit": 8,
+                     *         "maxUnitsPerOrder": 302
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OrderLimits"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
     getOrder: {
         parameters: {
             query?: never;
@@ -2129,6 +2214,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "planId": "clx0pln1a2b3c4d5e6f7g8h",
+                     *       "date": "2026-04-09",
                      *       "status": "DRAFT",
                      *       "stats": {
                      *         "orders": 85,
@@ -2201,6 +2287,8 @@ export interface operations {
                      */
                     "application/json": {
                         planId: string;
+                        /** @description The planning day this plan belongs to. Additive. */
+                        date?: components["schemas"]["DateOnly"];
                         /** @enum {string} */
                         status: "DRAFT" | "PUBLISHED" | "SUPERSEDED";
                         stats: components["schemas"]["PlanStats"];
@@ -2313,7 +2401,9 @@ export interface operations {
                      * @example {
                      *       "lane": {
                      *         "brand": "Fresh",
-                     *         "districtName": "Puttalam"
+                     *         "districtName": "Puttalam",
+                     *         "resource": "refrigerated vehicle",
+                     *         "competing": 2
                      *       },
                      *       "items": [
                      *         {

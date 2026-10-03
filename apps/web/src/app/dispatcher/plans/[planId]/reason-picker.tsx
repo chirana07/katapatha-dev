@@ -26,6 +26,7 @@ export function ReasonPicker({
   allReasons,
   recipient,
   readOnly,
+  sent = false,
   children,
 }: {
   assignmentId: string;
@@ -40,6 +41,8 @@ export function ReasonPicker({
   allReasons: string[];
   recipient: string;
   readOnly: boolean;
+  /** The plan is published: the message has been sent, not "will be". */
+  sent?: boolean;
   /** Rendered between the reasons and the store preview (the "Moves to" card). */
   children?: ReactNode;
 }) {
@@ -53,9 +56,9 @@ export function ReasonPicker({
   const [choice, setChoice] = useState<string>(
     startOnOther ? OTHER : (initialReason ?? suggested ?? ""),
   );
-  const [otherCode, setOtherCode] = useState<string>(
-    startOnOther ? initialReason! : (others[0] ?? ""),
-  );
+  // No default under "Other": a pre-picked code would be saved — and sent to
+  // the store — if the dispatcher only typed a note.
+  const [otherCode, setOtherCode] = useState<string>(startOnOther ? initialReason! : "");
   const [note, setNote] = useState<string>(initialNote ?? "");
 
   const reasonCode = choice === OTHER ? otherCode : choice;
@@ -91,9 +94,13 @@ export function ReasonPicker({
               <select
                 aria-label="Other reason"
                 value={otherCode}
+                required
                 onChange={(event) => setOtherCode(event.target.value)}
                 className="min-h-11 rounded-[var(--radius-control)] border border-line bg-surface px-3 text-sm text-ink"
               >
+                <option value="" disabled>
+                  Choose a reason…
+                </option>
                 {others.map((code) => (
                   <option key={code} value={code}>
                     {deferralReasonLabel(code)}
@@ -120,7 +127,7 @@ export function ReasonPicker({
       {children}
 
       <div className="mt-5 rounded-[var(--radius-control)] bg-raised p-4 text-sm">
-        <p className="text-xs font-semibold text-muted">{recipient} will see</p>
+        <p className="text-xs font-semibold text-muted">{sent ? `Sent to ${lowerFirst(recipient)}` : `${recipient} will see`}</p>
         <p className="mt-1 text-ink">
           {preview ? <>&ldquo;{preview}&rdquo;</> : "Pick a reason to preview the message."}
         </p>
@@ -166,4 +173,9 @@ function ReasonOption({
       </span>
     </label>
   );
+}
+
+/** "The store at OUT010" → "the store at OUT010"; names stay as they are. */
+function lowerFirst(value: string) {
+  return value.startsWith("The ") ? `the ${value.slice(4)}` : value;
 }

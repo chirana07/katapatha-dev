@@ -66,3 +66,11 @@ export function deviceId(): string {
     return `device-ephemeral-${Math.random().toString(36).slice(2, 10)}`;
   }
 }
+
+/**
+ * The allocator numbers stops from 0 within a trip; people count from 1.
+ * Display only — the stored sequence is unchanged.
+ */
+export function stopNumber(seq: number): number {
+  return seq + 1;
+}

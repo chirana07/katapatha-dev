@@ -5,7 +5,17 @@ const STEPS = [
   { key: "delivered", label: "Delivered" },
 ] as const;
 
-export function OrderProgress({ state }: { state: string }) {
+export function OrderProgress({
+  state,
+  deferralExplained = false,
+}: {
+  state: string;
+  /** The page already shows the published deferral's reason and next run. */
+  deferralExplained?: boolean;
+}) {
+  // "Dispatch must update this order" would contradict a deferral that has
+  // already said where the order went, so stay out of the way.
+  if (state === "deferred" && deferralExplained) return null;
   if (state === "deferred" || state === "failed" || state === "cancelled") {
     return (
       <section aria-labelledby="progress-heading" className="mt-6 rounded-[var(--radius-card)] bg-red-50 p-5">

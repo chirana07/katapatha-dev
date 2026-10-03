@@ -19,7 +19,7 @@ export function FleetPanel({ fleet }: { fleet: FleetDay }) {
           <p className="mt-0.5 text-sm text-muted">
             {fleet.editable
               ? "Mark a vehicle in the workshop before running auto-plan. The allocator only uses available vehicles."
-              : fleet.lockedReason}
+              : "Which vehicles ran on this day."}
           </p>
         </div>
         <span className="text-sm font-semibold text-muted">
@@ -27,9 +27,16 @@ export function FleetPanel({ fleet }: { fleet: FleetDay }) {
         </span>
       </div>
 
-      {fleet.editable && fleet.hasDraft ? (
+      {!fleet.editable ? (
+        <p role="status" className="mt-3 flex items-start gap-2 rounded-[var(--radius-control)] border border-blue-200 bg-blue-50 p-3 text-sm font-semibold text-blue-900">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 h-4 w-4 shrink-0" aria-hidden>
+            <rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
+          </svg>
+          Locked — this day&apos;s plan is published, so vehicles can no longer be changed here.
+        </p>
+      ) : fleet.draftStale ? (
         <p className="mt-3 rounded-[var(--radius-control)] border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-          A draft plan exists. After changing a vehicle, use <span className="font-semibold">Re-run auto-plan</span> — a draft that still uses a vehicle in the workshop can&apos;t be published.
+          A vehicle changed after the draft was built. Use <span className="font-semibold">Re-run auto-plan</span> — a draft that still uses a vehicle in the workshop can&apos;t be published.
         </p>
       ) : null}
 

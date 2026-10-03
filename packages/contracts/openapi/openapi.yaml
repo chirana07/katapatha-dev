@@ -90,6 +90,7 @@ paths:
 
   # ---- orders / store (owner BE2) ----
   /orders:                                    { $ref: "./paths/orders.yaml#/collection" }
+  /orders/limits:                             { $ref: "./paths/orders.yaml#/limits" }
   /orders/{orderId}:                          { $ref: "./paths/orders.yaml#/item" }
   /orders/{orderId}/receipt:                  { $ref: "./paths/orders.yaml#/receipt" }
 

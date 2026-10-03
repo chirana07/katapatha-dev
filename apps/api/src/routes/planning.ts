@@ -225,7 +225,12 @@ const LANE_ALTERNATIVES = {
       type: "object",
       additionalProperties: false,
       required: ["brand", "districtName"],
-      properties: { brand: { type: "string" }, districtName: { type: "string" } },
+      properties: {
+        brand: { type: "string" },
+        districtName: { type: "string" },
+        resource: { type: "string", enum: ["refrigerated vehicle", "van", "vehicle"] },
+        competing: { type: "integer" },
+      },
     },
     items: {
       type: "array",
@@ -401,6 +406,9 @@ export default async function (fastify: FastifyInstance) {
             required: ["planId", "status", "stats", "trips", "deferrals"],
             properties: {
               planId: { type: "string" },
+              // Additive: the planning day this plan belongs to, so the board
+              // can link back to the right day on the desk.
+              date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
               status: { type: "string", enum: ["DRAFT", "PUBLISHED", "SUPERSEDED"] },
               stats: PLAN_STATS,
               trips: { type: "array", items: TRIP },
@@ -431,6 +439,7 @@ export default async function (fastify: FastifyInstance) {
 
       return {
         planId: plan.id,
+        date: plan.planningDay.date.toISOString().slice(0, 10),
         status: plan.status,
         stats: statsFor({
           id: plan.id,

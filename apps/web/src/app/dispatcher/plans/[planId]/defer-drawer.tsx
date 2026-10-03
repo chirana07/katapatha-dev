@@ -15,10 +15,6 @@ const IMPACT: Record<string, { label: string; style: string }> = {
   high: { label: "High impact", style: "bg-red-50 text-[color:var(--c-ruby)]" },
 };
 
-function humanCode(code: string) {
-  return code.replaceAll("_", " ").toLowerCase();
-}
-
 function titleCase(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
@@ -37,6 +33,7 @@ export function DeferDrawer({
   allReasons,
   closeHref,
   readOnly,
+  sent,
 }: {
   planId: string;
   deferral: DeferralRow;
@@ -47,6 +44,8 @@ export function DeferDrawer({
   allReasons: string[];
   closeHref: string;
   readOnly: boolean;
+  /** The plan is published, so the store message has already gone out. */
+  sent: boolean;
 }) {
   const order = deferral.order;
   const cause = deferral.cause ?? null;
@@ -123,16 +122,6 @@ export function DeferDrawer({
                   {permanent ? "Why it can't go on any day as it stands" : "Why it can't go today"}
                 </p>
                 {cause.suggestion ? <p className="mt-1 text-ink">{cause.suggestion}</p> : null}
-                {!permanent && cause.explanation.length ? (
-                  <ul className="mt-2 space-y-0.5 text-ink">
-                    {cause.explanation.map((line) => (
-                      <li key={line.code}>
-                        {line.count} vehicle{line.count === 1 ? "" : "s"}: {humanCode(line.code)}
-                        {line.sample ? ` (e.g. ${line.sample})` : ""}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
                 {cause.nearMiss ? (
                   <p className="mt-2 text-muted">
                     Closest fit: {cause.nearMiss.vehicleId}, short by {cause.nearMiss.short} {cause.nearMiss.unit} of {cause.nearMiss.metric}.
@@ -146,7 +135,11 @@ export function DeferDrawer({
               <p className="mt-2 rounded-[var(--radius-control)] border border-line p-3 text-sm text-muted">
                 This was not a choice between orders. No vehicle in the fleet can carry it, so deferring another order would not make room.
               </p>
-            ) : alternatives && alternatives.items.length ? (
+            ) : alternatives && alternatives.items.length <= 1 ? (
+              <p className="mt-2 rounded-[var(--radius-control)] border border-line p-3 text-sm text-muted">
+                No order was served on a {alternatives.lane.resource ?? "vehicle"} that could have taken this one, so deferring another order wouldn&apos;t have made room.
+              </p>
+            ) : alternatives ? (
               <ul className="mt-2 divide-y divide-line overflow-hidden rounded-[var(--radius-control)] border border-line">
                 {alternatives.items.map((item) => {
                   const impact = IMPACT[item.impact] ?? IMPACT.high!;
@@ -159,8 +152,8 @@ export function DeferDrawer({
                           {item.isThisOrder ? " (this order)" : ""}
                         </p>
                         <p className="text-xs text-muted">
-                          #{item.rank} in {alternatives.lane.brand} · {alternatives.lane.districtName} · {item.why}
-                          {item.isThisOrder ? "" : item.decision === "SERVED" ? " · served" : " · also deferred"}
+                          Priority #{item.rank} of {alternatives.lane.competing ?? alternatives.items.length} · {item.why}
+                          {item.isThisOrder ? "" : " · served"}
                         </p>
                       </div>
                       <span className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold ${impact.style}`}>{impact.label}</span>
@@ -188,6 +181,7 @@ export function DeferDrawer({
                 allReasons={allReasons}
                 recipient={recipient}
                 readOnly={readOnly}
+                sent={sent}
               >
                 {movesTo ? (
                   <>

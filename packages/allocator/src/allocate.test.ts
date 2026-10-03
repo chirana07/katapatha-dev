@@ -169,7 +169,7 @@ describe("structural screening", () => {
     expect(out.deferred).toHaveLength(1);
     expect(out.deferred[0].reasonCode).toBe("ORDER_EXCEEDS_FLEET_CAPACITY");
     expect(out.deferred[0].permanent).toBe(true);
-    expect(out.deferred[0].suggestion).toMatch(/Rule 5 forbids splitting/);
+    expect(out.deferred[0].suggestion).toMatch(/travels whole on one vehicle, so the store needs to place it as smaller orders/);
   });
 
   it("distinguishes a fleet with no reefer from a fleet whose reefers are busy", () => {

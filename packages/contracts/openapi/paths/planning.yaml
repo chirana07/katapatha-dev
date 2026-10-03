@@ -122,6 +122,9 @@ planItem:
               required: [planId, status, stats, trips, deferrals]
               properties:
                 planId: { type: string }
+                date:
+                  description: The planning day this plan belongs to. Additive.
+                  allOf: [{ $ref: "../components/schemas/common.yaml#/DateOnly" }]
                 status: { type: string, enum: [DRAFT, PUBLISHED, SUPERSEDED] }
                 stats: { $ref: "../components/schemas/planning.yaml#/PlanStats" }
                 trips:
@@ -138,6 +141,7 @@ planItem:
                   items: { $ref: "../components/schemas/planning.yaml#/DeferralRow" }
             example:
               planId: "clx0pln1a2b3c4d5e6f7g8h"
+              date: "2026-04-09"
               status: DRAFT
               stats: { orders: 85, served: 78, deferred: 7, tripsBuilt: 14, hash: "a3f9c1e70b4d2856" }
               trips:
@@ -278,7 +282,7 @@ planDeferralAlternatives:
           application/json:
             schema: { $ref: "../components/schemas/planning.yaml#/LaneAlternatives" }
             example:
-              lane: { brand: Fresh, districtName: "Puttalam" }
+              lane: { brand: Fresh, districtName: "Puttalam", resource: refrigerated vehicle, competing: 2 }
               items:
                 - { orderRef: "ORD-004312", outletId: "OUT074", outletName: "Puttalam", isThisOrder: true, decision: DEFERRED, rank: 3, impact: lowest, why: "window shuts 08:00" }
                 - { orderRef: "ORD-004298", outletId: "OUT033", outletName: null, isThisOrder: false, decision: SERVED, rank: 1, impact: protected, why: "deferred yesterday, window shuts 08:00" }

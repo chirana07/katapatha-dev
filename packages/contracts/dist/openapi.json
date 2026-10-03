@@ -434,7 +434,7 @@
       "post": {
         "operationId": "placeOrders",
         "summary": "Place orders for the next operating day",
-        "description": "Units only. Outlet, brand, district and depot come from the session, never the body. Idempotent on `requestId`, so a retry over a flaky connection cannot double-order.\n",
+        "description": "Units only. Outlet, brand, district and depot come from the session, never the body. Idempotent on `requestId`, so a retry over a flaky connection cannot double-order. Each line becomes its own order. A line bigger than any vehicle allowed to carry it (Rule 5: an order travels whole) is rejected with 422 `ORDER_TOO_LARGE`; see GET /orders/limits and raise it as several lines.\n",
         "tags": [
           "orders"
         ],
@@ -502,6 +502,43 @@
           },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/orders/limits": {
+      "get": {
+        "operationId": "getOrderLimits",
+        "summary": "How big one order can be for the signed-in store",
+        "description": "Per temperature: the outlet's unit-size estimate and the most units one order can hold on the roomiest vehicle allowed to carry it (reefers for chilled, vans for a van-only outlet). The whole depot fleet counts, workshop or not. Store manager only.\n",
+        "tags": [
+          "orders"
+        ],
+        "responses": {
+          "200": {
+            "description": "Order size limits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderLimits"
+                },
+                "example": {
+                  "chilled": {
+                    "m3PerUnit": 0.09,
+                    "kgPerUnit": 8,
+                    "maxUnitsPerOrder": 333
+                  },
+                  "ambient": {
+                    "m3PerUnit": 0.1125,
+                    "kgPerUnit": 8,
+                    "maxUnitsPerOrder": 302
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       }
@@ -959,6 +996,14 @@
                     "planId": {
                       "type": "string"
                     },
+                    "date": {
+                      "description": "The planning day this plan belongs to. Additive.",
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/DateOnly"
+                        }
+                      ]
+                    },
                     "status": {
                       "type": "string",
                       "enum": [
@@ -987,6 +1032,7 @@
                 },
                 "example": {
                   "planId": "clx0pln1a2b3c4d5e6f7g8h",
+                  "date": "2026-04-09",
                   "status": "DRAFT",
                   "stats": {
                     "orders": 85,
@@ -1231,7 +1277,9 @@
                 "example": {
                   "lane": {
                     "brand": "Fresh",
-                    "districtName": "Puttalam"
+                    "districtName": "Puttalam",
+                    "resource": "refrigerated vehicle",
+                    "competing": 2
                   },
                   "items": [
                     {
@@ -2536,6 +2584,50 @@
           }
         }
       },
+      "OrderLimit": {
+        "type": "object",
+        "required": [
+          "m3PerUnit",
+          "kgPerUnit",
+          "maxUnitsPerOrder"
+        ],
+        "properties": {
+          "m3PerUnit": {
+            "type": "number",
+            "examples": [
+              0.1125
+            ]
+          },
+          "kgPerUnit": {
+            "type": "number",
+            "examples": [
+              8
+            ]
+          },
+          "maxUnitsPerOrder": {
+            "type": "integer",
+            "description": "0 when no vehicle at the depot can carry this temperature to the outlet.",
+            "examples": [
+              302
+            ]
+          }
+        }
+      },
+      "OrderLimits": {
+        "type": "object",
+        "required": [
+          "chilled",
+          "ambient"
+        ],
+        "properties": {
+          "chilled": {
+            "$ref": "#/components/schemas/OrderLimit"
+          },
+          "ambient": {
+            "$ref": "#/components/schemas/OrderLimit"
+          }
+        }
+      },
       "ReceiptRequest": {
         "type": "object",
         "required": [
@@ -2773,7 +2865,14 @@
           },
           "hasDraft": {
             "type": "boolean",
-            "description": "A draft plan exists; re-run auto-plan for a status change to take effect.",
+            "description": "A draft plan exists for the day.",
+            "examples": [
+              false
+            ]
+          },
+          "draftStale": {
+            "type": "boolean",
+            "description": "A vehicle's status changed after the draft was built, so the draft no longer reflects the fleet — re-run auto-plan.\n",
             "examples": [
               false
             ]
@@ -3454,12 +3553,28 @@
                 "examples": [
                   "Puttalam"
                 ]
+              },
+              "resource": {
+                "type": "string",
+                "enum": [
+                  "refrigerated vehicle",
+                  "van",
+                  "vehicle"
+                ],
+                "description": "The kind of vehicle this order needed — what it competed for."
+              },
+              "competing": {
+                "type": "integer",
+                "description": "This order plus every served order, depot-wide, that rode a vehicle this order could also have used. 1 means nothing was swappable.\n",
+                "examples": [
+                  4
+                ]
               }
             }
           },
           "items": {
             "type": "array",
-            "description": "The deferred order first, then up to four competitors by priority rank.",
+            "description": "The deferred order first, then up to four competitors: orders served on a vehicle this order could have used, lowest priority (most swappable) shown. Only the deferred order when nothing was swappable.\n",
             "items": {
               "type": "object",
               "required": [

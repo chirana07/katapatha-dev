@@ -30,6 +30,25 @@ describe("suggestDeferralReason", () => {
     expect(suggestDeferralReason("WRONG_DEPOT")).toBeNull();
   });
 
+  it("suggests the workshop when that is the only reason the right vehicles weren't free", () => {
+    expect(suggestDeferralReason("NO_REEFER_AVAILABLE", ["NO_REEFER_AVAILABLE", "VEHICLE_IN_WORKSHOP"])).toBe(
+      "VEHICLE_IN_WORKSHOP",
+    );
+    expect(suggestDeferralReason("NO_VAN_AVAILABLE", ["VEHICLE_IN_WORKSHOP", "NO_VAN_AVAILABLE"])).toBe(
+      "VEHICLE_IN_WORKSHOP",
+    );
+  });
+
+  it("keeps the capacity reason when some suitable vehicle was simply full", () => {
+    expect(
+      suggestDeferralReason("NO_REEFER_AVAILABLE", ["VEHICLE_IN_WORKSHOP", "VOLUME_CAP_EXCEEDED", "NO_REEFER_AVAILABLE"]),
+    ).toBe("REEFER_FULL");
+    expect(suggestDeferralReason("NO_TRIP_SLOT", ["VEHICLE_IN_WORKSHOP", "VOLUME_CAP_EXCEEDED", "NO_TRIP_SLOT"])).toBe(
+      "TIME_BUDGET",
+    );
+    expect(suggestDeferralReason("NO_REEFER_AVAILABLE", ["NO_REEFER_AVAILABLE"])).toBe("REEFER_FULL");
+  });
+
   it("suggests nothing for an unknown or missing cause", () => {
     expect(suggestDeferralReason("SOMETHING_NEW")).toBeNull();
     expect(suggestDeferralReason(null)).toBeNull();
@@ -99,6 +118,16 @@ describe("deferralMessage — what the store manager reads", () => {
     expect(text).toContain("could not be delivered today");
     expect(text).not.toContain("moves to");
     expect(text).not.toContain("planned first");
+  });
+
+  it("asks for smaller orders only when size is the reason given", () => {
+    expect(deferralMessage(order, "ORDER_TOO_LARGE", "2026-09-30", true)).toContain(
+      "Please place it again as smaller orders.",
+    );
+    const cutoff = deferralMessage(order, "AFTER_CUTOFF", "2026-09-30", true);
+    expect(cutoff).not.toContain("smaller orders");
+    expect(cutoff).not.toContain("splitting");
+    expect(cutoff).toContain("Your dispatcher will contact you about what happens next.");
   });
 
   it("falls back to a readable label for an unknown code", () => {

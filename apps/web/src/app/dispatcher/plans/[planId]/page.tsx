@@ -111,7 +111,7 @@ export default async function PlanPage({
 
   return (
     <main className="mx-auto w-full max-w-7xl p-4 sm:p-6 lg:p-8">
-      <Link href="/dispatcher" className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-muted hover:text-ink">
+      <Link href={plan.data.date ? `/dispatcher?date=${plan.data.date}` : "/dispatcher"} className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-muted hover:text-ink">
         <span aria-hidden>←</span> Planning desk
       </Link>
       <header className="mt-3 flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5">
@@ -278,6 +278,7 @@ export default async function PlanPage({
           allReasons={deferralReasons}
           closeHref={home}
           readOnly={plan.data.status !== "DRAFT"}
+          sent={plan.data.status === "PUBLISHED"}
         />
       ) : null}
     </main>
