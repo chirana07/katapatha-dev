@@ -65,6 +65,8 @@ tags:
     description: Offline outbox drain and pull.
   - name: fleet
     description: Which vehicles can run on a day.
+  - name: history
+    description: The decision log, per record.
 
 components:
   securitySchemes:
@@ -108,6 +110,8 @@ paths:
   /plans/{planId}/deferrals:                  { $ref: "./paths/planning.yaml#/planDeferrals" }
   /plans/{planId}/deferrals/{assignmentId}/alternatives: { $ref: "./paths/planning.yaml#/planDeferralAlternatives" }
   /plans/{planId}/publication:                { $ref: "./paths/planning.yaml#/planPublication" }
+
+  /history/{entityType}/{entityId}:           { $ref: "./paths/history.yaml#/history" }
 
   # ---- loading / driver / sync (owner BE3) ----
   /trips:                                     { $ref: "./paths/trips.yaml#/collection" }

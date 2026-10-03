@@ -43,6 +43,30 @@ export async function recordDecision(record: DecisionRecord): Promise<void> {
   });
 }
 
+/**
+ * Several decisions in one write.
+ *
+ * Publishing a plan decides every order on it; writing 85 rows one await at a
+ * time inside a request is slow for no benefit, and createMany keeps them in a
+ * single statement.
+ */
+export async function recordDecisions(records: DecisionRecord[]): Promise<void> {
+  if (records.length === 0) return;
+  await prisma.auditEvent.createMany({
+    data: records.map((record) => ({
+      actorUserId: record.actor?.id ?? null,
+      actorRole: record.actor?.role ?? null,
+      action: record.action,
+      entityType: record.entityType,
+      entityId: record.entityId,
+      reasonCode: record.reasonCode,
+      note: record.note,
+      before: record.before,
+      after: record.after,
+    })),
+  });
+}
+
 /** Everything ever decided about one entity, newest first. */
 export async function historyFor(entityType: string, entityId: string) {
   return prisma.auditEvent.findMany({

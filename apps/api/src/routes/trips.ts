@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { LoadCondition, TripStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { requireLoaderTrip, requireOrderOnTrip } from "../lib/authorization.js";
+import { recordDecisions } from "../lib/audit.js";
 
 /**
  * Owner: BE3
@@ -393,6 +394,34 @@ export default async function (fastify: FastifyInstance) {
         return { loadCheck, shortfallId };
       });
 
+      await recordDecisions([
+        {
+          actor: user,
+          action: "load.check",
+          entityType: "Order",
+          entityId: orderId,
+          reasonCode: body.reasonCode ?? undefined,
+          after: {
+            tripId,
+            expectedUnits: order.units,
+            loadedUnits: result.loadCheck.loadedUnits,
+            condition: result.loadCheck.condition,
+          },
+        },
+        ...(result.shortfallId
+          ? [
+              {
+                actor: user,
+                action: "shortfall.raise",
+                entityType: "Shortfall",
+                entityId: result.shortfallId,
+                reasonCode: body.reasonCode ?? undefined,
+                after: { tripId, orderId, kind: body.condition, missingUnits: missing },
+              },
+            ]
+          : []),
+      ]);
+
       return {
         tripId,
         orderId,
@@ -510,6 +539,17 @@ export default async function (fastify: FastifyInstance) {
           },
         });
       }
+
+      await recordDecisions([
+        {
+          actor: user,
+          action: "trip.ready",
+          entityType: "Trip",
+          entityId: tripId,
+          before: { status: trip.status },
+          after: { status: "READY" },
+        },
+      ]);
 
       return { tripId, status: "READY" as const, releasedAt: now.toISOString() };
     },

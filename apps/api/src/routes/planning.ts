@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { validatePlan } from "@katapatha/core/validation/rules";
 import type { PlanStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
+import { recordDecision, recordDecisions } from "../lib/audit.js";
 import { loadDayContext, loadPlan, runAutoPlan } from "../services/plans.js";
 import { describeDeferrals, laneAlternatives, nextRunDate } from "../services/deferrals.js";
 import { deferralMessage, shortDay } from "@katapatha/core/domain/deferral";
@@ -71,6 +72,31 @@ const PLAN_STATS = {
     deferred: { type: "integer" },
     tripsBuilt: { type: "integer" },
     hash: { type: "string" },
+  },
+} as const;
+
+const VEHICLE_METER = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "vehicleId",
+    "tripsUsed",
+    "predawnUsedMin",
+    "predawnBudgetMin",
+    "daytimeUsedMin",
+    "daytimeBudgetMin",
+    "fuelCommittedL",
+    "fuelQuotaL",
+  ],
+  properties: {
+    vehicleId: { type: "string" },
+    tripsUsed: { type: "integer" },
+    predawnUsedMin: { type: "number" },
+    predawnBudgetMin: { type: "number" },
+    daytimeUsedMin: { type: "number" },
+    daytimeBudgetMin: { type: "number" },
+    fuelCommittedL: { type: "number" },
+    fuelQuotaL: { type: "number" },
   },
 } as const;
 
@@ -278,6 +304,16 @@ function statsFor(plan: PlanWithChildren) {
   };
 }
 
+/**
+ * The allocator's per-vehicle meters, as stored on the plan when it was built.
+ * Plans made before they were kept, and plans nobody has run the allocator on,
+ * have none — an empty list, not an error.
+ */
+function metersOf(objectiveSummary: unknown) {
+  const raw = (objectiveSummary as { meters?: unknown } | null)?.meters;
+  return Array.isArray(raw) ? raw : [];
+}
+
 function asUtcDate(iso: string): Date {
   return new Date(`${iso}T00:00:00.000Z`);
 }
@@ -412,6 +448,8 @@ export default async function (fastify: FastifyInstance) {
               status: { type: "string", enum: ["DRAFT", "PUBLISHED", "SUPERSEDED"] },
               stats: PLAN_STATS,
               trips: { type: "array", items: TRIP },
+              // Additive: each vehicle's trips, time and fuel against budget.
+              meters: { type: "array", items: VEHICLE_METER },
               deferrals: {
                 // The DEFERRED assignments on this plan, including whether a
                 // reason has been attached — the dispatcher needs this to
@@ -464,6 +502,7 @@ export default async function (fastify: FastifyInstance) {
           sumWeightKg: trip.sumWeightKg ?? undefined,
           sumVolumeM3: trip.sumVolumeM3 ?? undefined,
         })),
+        meters: metersOf(plan.objectiveSummary),
         deferrals,
       };
     },
@@ -520,6 +559,19 @@ export default async function (fastify: FastifyInstance) {
           },
         });
       }
+
+      await recordDecision({
+        actor: user,
+        action: "plan.generate",
+        entityType: "Plan",
+        entityId: result.planId,
+        after: {
+          date: body.date,
+          depotCode: body.depotCode,
+          served: result.output.stats.served,
+          deferred: result.output.stats.deferred,
+        },
+      });
 
       return reply.status(201).send({
         planId: result.planId,
@@ -587,6 +639,14 @@ export default async function (fastify: FastifyInstance) {
           closedByUserId: user.id,
           queueSnapshot: { ordersAtClose: orderCount, closedAt: new Date().toISOString() },
         },
+      });
+      await recordDecision({
+        actor: user,
+        action: "queue.close",
+        entityType: "PlanningDay",
+        entityId: updated.id,
+        before: { status: day.status },
+        after: { status: updated.status, ordersAtClose: orderCount },
       });
       return {
         id: updated.id,
@@ -768,7 +828,18 @@ export default async function (fastify: FastifyInstance) {
         });
       }
 
+      const rows = await prisma.assignment.findMany({
+        where: {
+          planId: plan.id,
+          decision: "DEFERRED",
+          id: { in: body.decisions.map((d) => d.assignmentId) },
+        },
+        select: { id: true, orderId: true },
+      });
+      const orderIdByAssignment = new Map(rows.map((r) => [r.id, r.orderId]));
+
       let confirmed = 0;
+      const confirmedDecisions: typeof body.decisions = [];
       for (const decision of body.decisions) {
         const result = await prisma.assignment.updateMany({
           where: {
@@ -782,7 +853,25 @@ export default async function (fastify: FastifyInstance) {
           },
         });
         confirmed += result.count;
+        if (result.count > 0) confirmedDecisions.push(decision);
       }
+      await recordDecisions(
+        confirmedDecisions.flatMap((decision) => {
+          const orderId = orderIdByAssignment.get(decision.assignmentId);
+          if (!orderId) return [];
+          return [
+            {
+              actor: user,
+              action: "deferral.confirm",
+              entityType: "Order",
+              entityId: orderId,
+              reasonCode: decision.reasonCode,
+              note: decision.note?.trim() ? decision.note.trim().slice(0, 500) : undefined,
+              after: { planId: plan.id },
+            },
+          ];
+        }),
+      );
       return { confirmed };
     },
   );
@@ -957,6 +1046,28 @@ export default async function (fastify: FastifyInstance) {
         }
         throw error;
       }
+
+      // After the transaction, not in it: recordDecision uses the shared
+      // client, and a decision log row for a publish that rolled back would be
+      // a record of something that did not happen.
+      await recordDecisions([
+        {
+          actor: user,
+          action: "plan.publish",
+          entityType: "Plan",
+          entityId: plan.id,
+          after: { date: plan.planningDay.date.toISOString().slice(0, 10) },
+        },
+        ...plan.assignments.map((a) => ({
+          actor: user,
+          action: a.decision === "SERVED" ? "order.plan" : "order.defer",
+          entityType: "Order",
+          entityId: a.orderId,
+          reasonCode: a.decision === "DEFERRED" ? (a.reasonCode ?? undefined) : undefined,
+          note: a.decision === "DEFERRED" ? (a.note ?? undefined) : undefined,
+          after: { planId: plan.id },
+        })),
+      ]);
 
       const summary = await prisma.plan.findUnique({
         where: { id: plan.id },

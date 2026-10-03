@@ -47,3 +47,15 @@ Vocabularies:
       type: array
       items: { type: string }
       examples: [["OUTLET_CLOSED","ACCESS_DENIED","VEHICLE_BREAKDOWN","ROAD_BLOCKED","DELIVERY_REFUSED"]]
+    storeProblemKinds:
+      type: array
+      description: >
+        What an outlet can raise against a delivery, as `ProblemKind` values —
+        a subset of the driver's list. Additive.
+      items: { type: string }
+      examples: [["GOODS_DAMAGED","ACCESS_DENIED","OUTLET_CLOSED","DELIVERY_REFUSED","OTHER"]]
+    storeIssueReasons:
+      type: array
+      description: Why a received line does not match what was ordered. Additive.
+      items: { type: string }
+      examples: [["ITEMS_MISSING","ITEMS_DAMAGED","ARRIVED_WARM","WRONG_ITEMS"]]

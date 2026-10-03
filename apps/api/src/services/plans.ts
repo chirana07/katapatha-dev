@@ -247,6 +247,9 @@ export async function runAutoPlan(
           served: output.stats.served,
           deferred: output.stats.deferred,
           trips: output.stats.tripsBuilt,
+          // Kept so the board can draw utilisation after a reload; the
+          // allocator computes it anyway and it is cheaper to keep than redo.
+          meters: output.meters,
         }),
       },
     });

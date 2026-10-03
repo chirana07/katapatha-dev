@@ -4,6 +4,8 @@ import {
   DEFERRAL_REASONS,
   PROBLEM_REASONS,
   SHORTFALL_REASONS,
+  STORE_ISSUE_REASONS,
+  STORE_PROBLEM_KINDS,
 } from "@katapatha/core/domain/reasons";
 import type { SessionUser } from "../lib/auth.js";
 import errorsPlugin from "../plugins/errors.js";
@@ -86,6 +88,8 @@ describe("GET /v1/reference/vocabularies", () => {
       deferralReasons: DEFERRAL_REASONS.map(({ code }) => code),
       shortfallReasons: SHORTFALL_REASONS.map(({ code }) => code),
       problemReasons: PROBLEM_REASONS.map(({ code }) => code),
+      storeProblemKinds: STORE_PROBLEM_KINDS.map(({ code }) => code),
+      storeIssueReasons: STORE_ISSUE_REASONS.map(({ code }) => code),
     });
     expect(requireRole).toHaveBeenCalledOnce();
   });

@@ -3,6 +3,8 @@ import {
   DEFERRAL_REASONS,
   PROBLEM_REASONS,
   SHORTFALL_REASONS,
+  STORE_ISSUE_REASONS,
+  STORE_PROBLEM_KINDS,
 } from "@katapatha/core/domain/reasons";
 import { nextOperatingDate } from "../services/store.js";
 
@@ -162,6 +164,8 @@ export default async function (fastify: FastifyInstance) {
             deferralReasons: { type: "array", items: { type: "string" } },
             shortfallReasons: { type: "array", items: { type: "string" } },
             problemReasons: { type: "array", items: { type: "string" } },
+            storeProblemKinds: { type: "array", items: { type: "string" } },
+            storeIssueReasons: { type: "array", items: { type: "string" } },
           },
         },
       },
@@ -173,6 +177,8 @@ export default async function (fastify: FastifyInstance) {
       deferralReasons: DEFERRAL_REASONS.map(({ code }) => code),
       shortfallReasons: SHORTFALL_REASONS.map(({ code }) => code),
       problemReasons: PROBLEM_REASONS.map(({ code }) => code),
+      storeProblemKinds: STORE_PROBLEM_KINDS.map(({ code }) => code),
+      storeIssueReasons: STORE_ISSUE_REASONS.map(({ code }) => code),
     };
   });
 

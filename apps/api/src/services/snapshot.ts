@@ -2,6 +2,7 @@
 
 import type { PlanSnapshot } from "@katapatha/core/validation/types";
 import { DEFAULT_PLAN_CONFIG } from "@katapatha/core/validation/types";
+import { prisma } from "../lib/db";
 import type { DayContext } from "./plans";
 import type { loadPlan } from "./plans";
 import type { DepotCode, TripNo } from "@katapatha/core/domain/types";
@@ -23,7 +24,19 @@ export async function snapshotFromPlan(
   const orders = new Map(ctx.input.orders.map((o) => [o.ref, o]));
   const idToRef = new Map([...ctx.orderIdByRef].map(([ref, id]) => [id, ref]));
 
-  const openShortfallOrderRefs: string[] = [];
+  // Shortfalls raised on this planning day's published trips that still await
+  // a decision. A draft being published over them would decide the orders
+  // again while the dock is still arguing about them, which is what
+  // OPEN_SHORTFALL_AT_PUBLISH exists to flag. This was declared and returned
+  // but never filled, so the rule could not fire.
+  const openShortfalls = await prisma.shortfall.findMany({
+    where: {
+      status: "OPEN",
+      trip: { plan: { planningDayId: plan.planningDayId, id: { not: plan.id } } },
+    },
+    select: { order: { select: { ref: true } } },
+  });
+  const openShortfallOrderRefs = [...new Set(openShortfalls.map((s) => s.order.ref))];
 
   return {
     date: ctx.input.date,

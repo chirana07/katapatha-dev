@@ -1,0 +1,61 @@
+# Owner: BE2
+history:
+  parameters:
+    - name: entityType
+      in: path
+      required: true
+      schema: { $ref: "../components/schemas/history.yaml#/HistoryEntityType" }
+    - name: entityId
+      in: path
+      required: true
+      schema: { type: string }
+  get:
+    operationId: getHistory
+    summary: Everything decided about one record
+    description: >
+      The decision log for a single order, plan, trip, shortfall, problem,
+      vehicle or outlet — who did what, when and why, newest first. This is
+      what the History tab and the Activity panel read.
+
+      A record the caller cannot see answers 403, the same as one that does not
+      exist, so the log cannot be used to probe for ids.
+    tags: [history]
+    responses:
+      "200":
+        description: The record's decision log.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/history.yaml#/History" }
+            example:
+              entityType: Order
+              entityId: "clx0ord1a2b3c4d5e6f7g8h9"
+              events:
+                - id: "clx0aud3a2b3c4d5e6f7g8h"
+                  at: "2026-04-08T17:05:41.000Z"
+                  action: order.defer
+                  actorName: "Nimal Perera"
+                  actorRole: DISPATCHER
+                  reasonCode: REEFER_FULL
+                  note: null
+                  before: null
+                  after: { planId: "clx0pln1a2b3c4d5e6f7g8h" }
+                - id: "clx0aud2a2b3c4d5e6f7g8h"
+                  at: "2026-04-08T16:58:03.000Z"
+                  action: deferral.confirm
+                  actorName: "Nimal Perera"
+                  actorRole: DISPATCHER
+                  reasonCode: REEFER_FULL
+                  note: "Spoke to the outlet by phone"
+                  before: null
+                  after: { planId: "clx0pln1a2b3c4d5e6f7g8h" }
+                - id: "clx0aud1a2b3c4d5e6f7g8h"
+                  at: "2026-04-08T11:20:00.000Z"
+                  action: order.place
+                  actorName: "Fathima Rizvi"
+                  actorRole: STORE_MANAGER
+                  reasonCode: null
+                  note: null
+                  before: null
+                  after: { ref: "ORD-004312", units: 205, forDate: "2026-04-09" }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }

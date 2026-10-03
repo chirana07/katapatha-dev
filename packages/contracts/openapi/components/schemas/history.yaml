@@ -1,0 +1,48 @@
+# Owner: BE2
+HistoryEntityType:
+  type: string
+  description: >
+    The kinds of record the decision log is kept against. Each is authorised
+    the way the record itself is: a dispatcher for their own depot, a store
+    manager for their own outlet and its orders.
+  enum: [Order, Plan, PlanningDay, Trip, Shortfall, Problem, Vehicle, Outlet]
+
+HistoryEvent:
+  type: object
+  required: [id, at, action]
+  properties:
+    id: { type: string, examples: ["clx0aud1a2b3c4d5e6f7g8h"] }
+    at: { type: string, format: date-time, examples: ["2026-04-08T15:42:10.000Z"] }
+    action:
+      type: string
+      description: >
+        Dotted verb, `noun.verb`: `order.place`, `deferral.confirm`,
+        `plan.publish`, `shortfall.raise`, `trip.ready`. Free-form on purpose —
+        a client shows it, it does not switch on it.
+      examples: ["deferral.confirm"]
+    actorName: { type: [string, "null"], examples: ["Nimal Perera"] }
+    actorRole:
+      oneOf:
+        - { $ref: "./common.yaml#/Role" }
+        - { type: "null" }
+    reasonCode: { type: [string, "null"], examples: ["REEFER_FULL"] }
+    note: { type: [string, "null"], examples: ["Spoke to the outlet by phone"] }
+    before:
+      description: What the record looked like before, where that is meaningful.
+      type: [object, "null"]
+      additionalProperties: true
+    after:
+      description: What it looks like after.
+      type: [object, "null"]
+      additionalProperties: true
+
+History:
+  type: object
+  required: [entityType, entityId, events]
+  properties:
+    entityType: { $ref: "./history.yaml#/HistoryEntityType" }
+    entityId: { type: string, examples: ["clx0ord1a2b3c4d5e6f7g8h9"] }
+    events:
+      type: array
+      description: Newest first.
+      items: { $ref: "./history.yaml#/HistoryEvent" }

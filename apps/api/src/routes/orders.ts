@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Brand, OrderStatus, Prisma, TempRequirement } from "@prisma/client";
 import { prisma } from "../lib/db.js";
+import { recordDecisions } from "../lib/audit.js";
 import type { SessionUser } from "../lib/auth.js";
 import { maxUnitsPerOrder, type FleetVehicle } from "@katapatha/core/domain/orderSize";
 import { nextOperatingDate, unitSizeFor } from "../services/store.js";
@@ -546,6 +547,16 @@ export default async function (fastify: FastifyInstance) {
         include: ORDER_INCLUDE,
       });
 
+      await recordDecisions(
+        created.map((row) => ({
+          actor: user,
+          action: "order.place",
+          entityType: "Order",
+          entityId: row.id,
+          after: { ref: row.ref, units: row.units, forDate: body.forDate },
+        })),
+      );
+
       return reply.status(201).send(withLinkage.map(toOrderResponse));
     },
   );
@@ -662,6 +673,18 @@ export default async function (fastify: FastifyInstance) {
           confirmedAt: new Date(),
         },
       });
+
+      await recordDecisions([
+        {
+          actor: user,
+          action: "order.receive",
+          entityType: "Order",
+          entityId: order.id,
+          reasonCode: body.issueKind ?? undefined,
+          note: body.note ?? undefined,
+          after: { unitsReceived: receipt.unitsReceived, matches: receipt.matches },
+        },
+      ]);
 
       return {
         orderId: receipt.orderId,

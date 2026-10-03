@@ -68,6 +68,8 @@ vocabularies:
               deferralReasons: [REEFER_FULL, NO_VAN, WINDOW_UNREACHABLE, TIME_BUDGET, FUEL_QUOTA, VEHICLE_IN_WORKSHOP, ORDER_TOO_LARGE, AFTER_CUTOFF]
               shortfallReasons: [MISSING, DAMAGED, SHORT_QUANTITY, NOT_COLD_ENOUGH]
               problemReasons: [OUTLET_CLOSED, ACCESS_DENIED, VEHICLE_BREAKDOWN, ROAD_BLOCKED, DELIVERY_REFUSED]
+              storeProblemKinds: [GOODS_DAMAGED, ACCESS_DENIED, OUTLET_CLOSED, DELIVERY_REFUSED, OTHER]
+              storeIssueReasons: [ITEMS_MISSING, ITEMS_DAMAGED, ARRIVED_WARM, WRONG_ITEMS]
       "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
 
 nextOperatingDay:

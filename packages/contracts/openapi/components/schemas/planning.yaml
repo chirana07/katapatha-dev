@@ -32,6 +32,23 @@ PlanStats:
         produce an identical hash, so this doubles as a regression guard in CI.
       examples: ["a3f9c1e70b4d2856"]
 
+VehicleMeter:
+  type: object
+  description: >
+    One vehicle's day against its limits, as the allocator measured it when the
+    plan was built. These are the bars on the board: trips used of two, minutes
+    used of each wave's budget, fuel committed of the weekly quota.
+  required: [vehicleId, tripsUsed, predawnUsedMin, predawnBudgetMin, daytimeUsedMin, daytimeBudgetMin, fuelCommittedL, fuelQuotaL]
+  properties:
+    vehicleId: { type: string, examples: ["VEH043"] }
+    tripsUsed: { type: integer, examples: [2] }
+    predawnUsedMin: { type: number, examples: [212] }
+    predawnBudgetMin: { type: number, examples: [240] }
+    daytimeUsedMin: { type: number, examples: [188.5] }
+    daytimeBudgetMin: { type: number, examples: [360] }
+    fuelCommittedL: { type: number, examples: [212.4] }
+    fuelQuotaL: { type: number, examples: [300] }
+
 PlanSummary:
   type: object
   required: [planId, status, stats]

@@ -447,6 +447,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/history/{entityType}/{entityId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entityType: components["schemas"]["HistoryEntityType"];
+                entityId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Everything decided about one record
+         * @description The decision log for a single order, plan, trip, shortfall, problem, vehicle or outlet — who did what, when and why, newest first. This is what the History tab and the Activity panel read.
+         *     A record the caller cannot see answers 403, the same as one that does not exist, so the log cannot be used to probe for ids.
+         */
+        get: operations["getHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/trips": {
         parameters: {
             query?: never;
@@ -772,6 +796,27 @@ export interface components {
              *     ]
              */
             problemReasons: string[];
+            /**
+             * @description What an outlet can raise against a delivery, as `ProblemKind` values — a subset of the driver's list. Additive.
+             * @example [
+             *       "GOODS_DAMAGED",
+             *       "ACCESS_DENIED",
+             *       "OUTLET_CLOSED",
+             *       "DELIVERY_REFUSED",
+             *       "OTHER"
+             *     ]
+             */
+            storeProblemKinds?: string[];
+            /**
+             * @description Why a received line does not match what was ordered. Additive.
+             * @example [
+             *       "ITEMS_MISSING",
+             *       "ITEMS_DAMAGED",
+             *       "ARRIVED_WARM",
+             *       "WRONG_ITEMS"
+             *     ]
+             */
+            storeIssueReasons?: string[];
         };
         /**
          * Format: date
@@ -1110,6 +1155,25 @@ export interface components {
             /** @example 16.8 */
             sumVolumeM3?: number;
         };
+        /** @description One vehicle's day against its limits, as the allocator measured it when the plan was built. These are the bars on the board: trips used of two, minutes used of each wave's budget, fuel committed of the weekly quota. */
+        VehicleMeter: {
+            /** @example VEH043 */
+            vehicleId: string;
+            /** @example 2 */
+            tripsUsed: number;
+            /** @example 212 */
+            predawnUsedMin: number;
+            /** @example 240 */
+            predawnBudgetMin: number;
+            /** @example 188.5 */
+            daytimeUsedMin: number;
+            /** @example 360 */
+            daytimeBudgetMin: number;
+            /** @example 212.4 */
+            fuelCommittedL: number;
+            /** @example 300 */
+            fuelQuotaL: number;
+        };
         /** @description A DEFERRED assignment on a plan. Everything after `reasonCode` is additive and feeds the dispatcher's "Defer order" drawer (Figma D-05). */
         DeferralRow: {
             /** @example clx0asg1a2b3c4d5e6f7g8h */
@@ -1276,6 +1340,47 @@ export interface components {
                 /** @example deferred yesterday, window shuts 08:00 */
                 why: string;
             }[];
+        };
+        /**
+         * @description The kinds of record the decision log is kept against. Each is authorised the way the record itself is: a dispatcher for their own depot, a store manager for their own outlet and its orders.
+         * @enum {string}
+         */
+        HistoryEntityType: "Order" | "Plan" | "PlanningDay" | "Trip" | "Shortfall" | "Problem" | "Vehicle" | "Outlet";
+        HistoryEvent: {
+            /** @example clx0aud1a2b3c4d5e6f7g8h */
+            id: string;
+            /**
+             * Format: date-time
+             * @example 2026-04-08T15:42:10.000Z
+             */
+            at: string;
+            /**
+             * @description Dotted verb, `noun.verb`: `order.place`, `deferral.confirm`, `plan.publish`, `shortfall.raise`, `trip.ready`. Free-form on purpose — a client shows it, it does not switch on it.
+             * @example deferral.confirm
+             */
+            action: string;
+            /** @example Nimal Perera */
+            actorName?: string | null;
+            actorRole?: components["schemas"]["Role"] | null;
+            /** @example REEFER_FULL */
+            reasonCode?: string | null;
+            /** @example Spoke to the outlet by phone */
+            note?: string | null;
+            /** @description What the record looked like before, where that is meaningful. */
+            before?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description What it looks like after. */
+            after?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        History: {
+            entityType: components["schemas"]["HistoryEntityType"];
+            /** @example clx0ord1a2b3c4d5e6f7g8h9 */
+            entityId: string;
+            /** @description Newest first. */
+            events: components["schemas"]["HistoryEvent"][];
         };
         /** @description Stops are returned in REVERSE delivery order. The driver unloads from the back, so the loader must load the last stop first. This ordering is part of the contract, not a client concern. */
         LoadList: {
@@ -1842,6 +1947,19 @@ export interface operations {
                      *         "VEHICLE_BREAKDOWN",
                      *         "ROAD_BLOCKED",
                      *         "DELIVERY_REFUSED"
+                     *       ],
+                     *       "storeProblemKinds": [
+                     *         "GOODS_DAMAGED",
+                     *         "ACCESS_DENIED",
+                     *         "OUTLET_CLOSED",
+                     *         "DELIVERY_REFUSED",
+                     *         "OTHER"
+                     *       ],
+                     *       "storeIssueReasons": [
+                     *         "ITEMS_MISSING",
+                     *         "ITEMS_DAMAGED",
+                     *         "ARRIVED_WARM",
+                     *         "WRONG_ITEMS"
                      *       ]
                      *     }
                      */
@@ -2517,6 +2635,18 @@ export interface operations {
                      *           "sumVolumeM3": 16.8
                      *         }
                      *       ],
+                     *       "meters": [
+                     *         {
+                     *           "vehicleId": "VEH043",
+                     *           "tripsUsed": 2,
+                     *           "predawnUsedMin": 212,
+                     *           "predawnBudgetMin": 240,
+                     *           "daytimeUsedMin": 188.5,
+                     *           "daytimeBudgetMin": 360,
+                     *           "fuelCommittedL": 212.4,
+                     *           "fuelQuotaL": 300
+                     *         }
+                     *       ],
                      *       "deferrals": [
                      *         {
                      *           "assignmentId": "clx0asg1a2b3c4d5e6f7g8h",
@@ -2572,6 +2702,8 @@ export interface operations {
                         status: "DRAFT" | "PUBLISHED" | "SUPERSEDED";
                         stats: components["schemas"]["PlanStats"];
                         trips: components["schemas"]["Trip"][];
+                        /** @description Per-vehicle utilisation as built. Empty for a plan made before the allocator's meters were kept. Additive. */
+                        meters?: components["schemas"]["VehicleMeter"][];
                         /** @description The DEFERRED assignments on this plan, each with the reason code the dispatcher has attached (null when still pending). The dispatcher UI confirms every pending deferral through PUT /plans/{planId}/deferrals before the publication gate opens. */
                         deferrals: components["schemas"]["DeferralRow"][];
                     };
@@ -2754,6 +2886,80 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entityType: components["schemas"]["HistoryEntityType"];
+                entityId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The record's decision log. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "entityType": "Order",
+                     *       "entityId": "clx0ord1a2b3c4d5e6f7g8h9",
+                     *       "events": [
+                     *         {
+                     *           "id": "clx0aud3a2b3c4d5e6f7g8h",
+                     *           "at": "2026-04-08T17:05:41.000Z",
+                     *           "action": "order.defer",
+                     *           "actorName": "Nimal Perera",
+                     *           "actorRole": "DISPATCHER",
+                     *           "reasonCode": "REEFER_FULL",
+                     *           "note": null,
+                     *           "before": null,
+                     *           "after": {
+                     *             "planId": "clx0pln1a2b3c4d5e6f7g8h"
+                     *           }
+                     *         },
+                     *         {
+                     *           "id": "clx0aud2a2b3c4d5e6f7g8h",
+                     *           "at": "2026-04-08T16:58:03.000Z",
+                     *           "action": "deferral.confirm",
+                     *           "actorName": "Nimal Perera",
+                     *           "actorRole": "DISPATCHER",
+                     *           "reasonCode": "REEFER_FULL",
+                     *           "note": "Spoke to the outlet by phone",
+                     *           "before": null,
+                     *           "after": {
+                     *             "planId": "clx0pln1a2b3c4d5e6f7g8h"
+                     *           }
+                     *         },
+                     *         {
+                     *           "id": "clx0aud1a2b3c4d5e6f7g8h",
+                     *           "at": "2026-04-08T11:20:00.000Z",
+                     *           "action": "order.place",
+                     *           "actorName": "Fathima Rizvi",
+                     *           "actorRole": "STORE_MANAGER",
+                     *           "reasonCode": null,
+                     *           "note": null,
+                     *           "before": null,
+                     *           "after": {
+                     *             "ref": "ORD-004312",
+                     *             "units": 205,
+                     *             "forDate": "2026-04-09"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["History"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     listTrips: {

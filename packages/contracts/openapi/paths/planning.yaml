@@ -130,6 +130,12 @@ planItem:
                 trips:
                   type: array
                   items: { $ref: "../components/schemas/trips.yaml#/Trip" }
+                meters:
+                  type: array
+                  description: >
+                    Per-vehicle utilisation as built. Empty for a plan made
+                    before the allocator's meters were kept. Additive.
+                  items: { $ref: "../components/schemas/planning.yaml#/VehicleMeter" }
                 deferrals:
                   type: array
                   description: >
@@ -156,6 +162,8 @@ planItem:
                   plannedMinutes: 212
                   sumWeightKg: 3210.5
                   sumVolumeM3: 16.8
+              meters:
+                - { vehicleId: VEH043, tripsUsed: 2, predawnUsedMin: 212, predawnBudgetMin: 240, daytimeUsedMin: 188.5, daytimeBudgetMin: 360, fuelCommittedL: 212.4, fuelQuotaL: 300 }
               deferrals:
                 - assignmentId: "clx0asg1a2b3c4d5e6f7g8h"
                   orderId: "clx0ord1a2b3c4d5e6f7g8h9"

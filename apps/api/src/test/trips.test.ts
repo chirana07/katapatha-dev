@@ -20,6 +20,7 @@ vi.mock("../lib/db.js", () => ({
     trip: { findMany: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
     loadCheck: { upsert: vi.fn() },
     shortfall: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    auditEvent: { createMany: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -452,6 +453,10 @@ describe("the loader's trip routes", () => {
       expect(vi.mocked(prisma.trip.updateMany).mock.calls[0]![0]).toMatchObject({
         where: { id: "TRP001", status: { in: ["PLANNED", "LOADING"] } },
         data: { status: "READY" },
+      });
+      // The release is a decision somebody may later be asked about.
+      expect(vi.mocked(prisma.auditEvent.createMany).mock.calls[0]![0]).toMatchObject({
+        data: [{ action: "trip.ready", entityType: "Trip", entityId: "TRP001" }],
       });
     });
 
