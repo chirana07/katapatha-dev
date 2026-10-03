@@ -67,6 +67,20 @@ tags:
     description: Which vehicles can run on a day.
   - name: history
     description: The decision log, per record.
+  - name: vehicles
+    description: The fleet, and where each vehicle was last reported to be.
+  - name: telemetry
+    description: What the field reports back — a phone's last position, a person's chiller reading.
+  - name: exceptions
+    description: Everything that needs a decision before or during delivery.
+  - name: issues
+    description: Problems a store raises against a delivery.
+  - name: notifications
+    description: What a store manager or dispatcher has been told.
+  - name: reports
+    description: Dispatcher reports for the depot.
+  - name: capacity
+    description: Capacity actions proposed from the demand forecast.
 
 components:
   securitySchemes:
@@ -123,3 +137,28 @@ paths:
   /stops/{stopId}/events:                     { $ref: "./paths/stops.yaml#/events" }
   /sync/stop-events:                          { $ref: "./paths/sync.yaml#/stopEvents" }
   /sync/bootstrap:                            { $ref: "./paths/sync.yaml#/bootstrap" }
+
+  # ---- vehicles / map / telemetry ----
+  /vehicles:                                  { $ref: "./paths/vehicles.yaml#/collection" }
+  /vehicles/{vehicleId}:                      { $ref: "./paths/vehicles.yaml#/item" }
+  /fleet/positions:                           { $ref: "./paths/vehicles.yaml#/positions" }
+  /drivers/me/pings:                          { $ref: "./paths/telemetry.yaml#/pings" }
+  /trips/{tripId}/chiller-readings:           { $ref: "./paths/telemetry.yaml#/chillerReadings" }
+
+  # ---- exceptions / issues / notifications ----
+  /exceptions:                                { $ref: "./paths/exceptions.yaml#/collection" }
+  /exceptions/{exceptionId}:                  { $ref: "./paths/exceptions.yaml#/item" }
+  /exceptions/{exceptionId}/decision:         { $ref: "./paths/exceptions.yaml#/decision" }
+  /issues:                                    { $ref: "./paths/issues.yaml#/collection" }
+  /notifications:                             { $ref: "./paths/notifications.yaml#/collection" }
+  /notifications/{notificationId}/read:       { $ref: "./paths/notifications.yaml#/read" }
+
+  # ---- reports / capacity ----
+  /reports/overview:                          { $ref: "./paths/reports.yaml#/overview" }
+  /reports/deliveries:                        { $ref: "./paths/reports.yaml#/deliveries" }
+  /reports/fleet:                             { $ref: "./paths/reports.yaml#/fleet" }
+  /reports/outlets:                           { $ref: "./paths/reports.yaml#/outlets" }
+  /reports/exceptions:                        { $ref: "./paths/reports.yaml#/exceptions" }
+  /reports/capacity-forecast:                 { $ref: "./paths/reports.yaml#/capacityForecast" }
+  /capacity-actions:                          { $ref: "./paths/capacityActions.yaml#/collection" }
+  /capacity-actions/{id}/decision:            { $ref: "./paths/capacityActions.yaml#/decision" }

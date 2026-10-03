@@ -5,7 +5,7 @@ HistoryEntityType:
     The kinds of record the decision log is kept against. Each is authorised
     the way the record itself is: a dispatcher for their own depot, a store
     manager for their own outlet and its orders.
-  enum: [Order, Plan, PlanningDay, Trip, Shortfall, Problem, Vehicle, Outlet]
+  enum: [Order, Plan, PlanningDay, Trip, Shortfall, Problem, Vehicle, Outlet, CapacityAction]
 
 HistoryEvent:
   type: object

@@ -34,6 +34,7 @@ collection:
                 status: QUEUED
                 storeState: queued
       "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
   post:
     operationId: placeOrders
     summary: Place orders for the next operating day

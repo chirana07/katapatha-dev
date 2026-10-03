@@ -22,6 +22,7 @@ planningDays:
                 status: OPEN
                 cutoffAt: "16:00"
       "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
 
 closure:
   parameters:
@@ -73,13 +74,17 @@ plans:
                 status: DRAFT
                 stats: { orders: 85, served: 78, deferred: 7, tripsBuilt: 14, hash: "a3f9c1e70b4d2856" }
       "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
   post:
     operationId: createPlan
     summary: Run the allocator and produce a draft plan
     description: >
       Also the re-run path: an existing DRAFT for the day is replaced, so
       re-running is free and leaves no trail of half-plans. Requires the
-      planning day to be CLOSED or PLANNING.
+      planning day to be CLOSED or PLANNING: an OPEN queue answers 409
+      `QUEUE_OPEN`, and a day whose plan is already published answers 409
+      `ALREADY_PUBLISHED` rather than putting a second draft beside the live
+      plan. No planning day answers 404 `NO_PLANNING_DAY`.
     tags: [planning]
     parameters:
       - $ref: "../components/parameters/common.yaml#/IdempotencyKey"

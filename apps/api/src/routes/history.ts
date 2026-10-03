@@ -25,7 +25,7 @@ import {
  * ids.
  */
 
-const ENTITY_TYPES = ["Order", "Plan", "PlanningDay", "Trip", "Shortfall", "Problem", "Vehicle", "Outlet"] as const;
+const ENTITY_TYPES = ["Order", "Plan", "PlanningDay", "Trip", "Shortfall", "Problem", "Vehicle", "Outlet", "CapacityAction"] as const;
 type EntityType = (typeof ENTITY_TYPES)[number];
 
 const ERROR_RESPONSE = {
@@ -138,6 +138,11 @@ async function authorise(user: SessionUser, entityType: EntityType, entityId: st
     case "Outlet": {
       const outlet = await prisma.outlet.findFirst({ where: { id: entityId, depotCode }, select: { id: true } });
       if (!outlet) deny();
+      return;
+    }
+    case "CapacityAction": {
+      const action = await prisma.capacityAction.findFirst({ where: { id: entityId, depotCode }, select: { id: true } });
+      if (!action) deny();
       return;
     }
   }

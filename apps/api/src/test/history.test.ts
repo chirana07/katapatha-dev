@@ -21,6 +21,7 @@ vi.mock("../lib/db.js", () => ({
     order: { findFirst: vi.fn() },
     trip: { findFirst: vi.fn() },
     outlet: { findFirst: vi.fn() },
+    capacityAction: { findFirst: vi.fn() },
     auditEvent: { findMany: vi.fn() },
   },
 }));
@@ -167,6 +168,21 @@ describe("GET /v1/history/:entityType/:entityId", () => {
 
     expect(response.statusCode).toBe(403);
     expect(requireDispatcherPlan).toHaveBeenCalledWith(dispatcher, "PLN9");
+  });
+
+  it("scopes a capacity action's log to the dispatcher's depot", async () => {
+    const server = await serverFor(dispatcher);
+    vi.mocked(prisma.capacityAction.findFirst).mockResolvedValueOnce({ id: "CAP1" } as never);
+
+    const mine = await server.inject({ method: "GET", url: "/v1/history/CapacityAction/CAP1" });
+    expect(mine.statusCode).toBe(200);
+    expect(vi.mocked(prisma.capacityAction.findFirst).mock.calls[0]![0]).toMatchObject({
+      where: { id: "CAP1", depotCode: "Peliyagoda" },
+    });
+
+    vi.mocked(prisma.capacityAction.findFirst).mockResolvedValueOnce(null);
+    const theirs = await server.inject({ method: "GET", url: "/v1/history/CapacityAction/CAP2" });
+    expect(theirs.statusCode).toBe(403);
   });
 
   it("refuses roles that have no log to read", async () => {

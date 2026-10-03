@@ -330,7 +330,7 @@ export interface paths {
         put?: never;
         /**
          * Run the allocator and produce a draft plan
-         * @description Also the re-run path: an existing DRAFT for the day is replaced, so re-running is free and leaves no trail of half-plans. Requires the planning day to be CLOSED or PLANNING.
+         * @description Also the re-run path: an existing DRAFT for the day is replaced, so re-running is free and leaves no trail of half-plans. Requires the planning day to be CLOSED or PLANNING: an OPEN queue answers 409 `QUEUE_OPEN`, and a day whose plan is already published answers 409 `ALREADY_PUBLISHED` rather than putting a second draft beside the live plan. No planning day answers 404 `NO_PLANNING_DAY`.
          */
         post: operations["createPlan"];
         delete?: never;
@@ -607,6 +607,7 @@ export interface paths {
         /**
          * Record arrival, unloading and completion
          * @description All three driver transitions are one endpoint, because they are all just StopEvents. The client mints each event's ULID, so this is idempotent by construction and the offline outbox has exactly one write shape to replay. `duplicate` in the response is a success, not a failure.
+         *     A POD carries its proof as `pages` (up to 8; see PodPage). An event that fails validation fails the whole request with 422 and writes nothing; an event the stop's state refuses (a delivery for a stop already completed) is reported in `rejected`. A `tripStopId` in an event is accepted and ignored: the URL names the stop.
          */
         post: operations["submitStopEvents"];
         delete?: never;
@@ -624,13 +625,15 @@ export interface paths {
         };
         /**
          * Pull events recorded since a sequence number
-         * @description Lets a reconnecting device learn about changes it missed, such as a stop reassigned to another vehicle while it was offline.
+         * @description Lets a reconnecting device learn about changes it missed, such as a stop reassigned to another vehicle while it was offline. A POD's `pages` are listed as metadata only (no image data): this is a list of up to 500 events.
          */
         get: operations["pullStopEvents"];
         put?: never;
         /**
          * Drain the driver's offline outbox
          * @description The same applier as POST /stops/{stopId}/events, batched and spanning several stops, so the online and offline paths can never diverge. Writes a SyncLog row and measures device clock skew. Replaying an identical batch must report every event as a duplicate and change nothing.
+         *     Every event carries `tripStopId`; the server routes by it and authorises each event against the caller's own run. A stop the caller cannot see rejects THAT event (`STOP_NOT_ON_RUN`), not the batch: the response is 200 and the event is listed under `rejected`. Events apply per stop in `occurredAt` order. A malformed request (shape, a ULID that is not a ULID, a ninth page, non-data-URL page data) is a 422 for the whole batch, since nothing in it can be trusted to route; semantic problems with one event are `rejected` and the rest still apply.
+         *     Retrying an identical batch is safe at any point, including after a response was lost. The request body may be up to 12 MiB.
          */
         post: operations["syncStopEvents"];
         delete?: never;
@@ -653,6 +656,463 @@ export interface paths {
         get: operations["getSyncBootstrap"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vehicles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The depot's vehicles for a day
+         * @description Dispatcher only, own depot only. One row per vehicle with its capacity, driver, trips for the day, utilisation and a derived status, plus the counts above the list.
+         *     Status is derived, not stored: see VehicleDayState for the table. Utilisation is the mean fill of the day's published-plan trips — see VehicleRow.utilisationPct. There is no compliance, make, model or registration data, because the system does not hold any.
+         */
+        get: operations["listFleetVehicles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vehicles/{vehicleId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vehicleId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * One vehicle, with its day
+         * @description Dispatcher only. The vehicle row plus the day's trips, the driver, the latest chiller reading (refrigerated vehicles only) and the last position the driver's phone reported.
+         *     The chiller figure is a person's reading of a gauge and carries who read it and how long ago — it is not a sensor feed. The position is the last report with its age — it is not a live position.
+         *     A vehicle at another depot answers 403, the same as one that does not exist.
+         */
+        get: operations["getVehicle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/fleet/positions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The map's vehicles for a day
+         * @description Dispatcher only, own depot only. One entry per vehicle that has a DEPARTED trip, or one that is READY or LOADING, on the day's published plan — and a departed trip whose stops are all finished (RETURNING). A vehicle with both a departed and a waiting trip is shown on the departed one.
+         *     Positions are whatever the driver's phone last reported, with their age. This is not live tracking: a vehicle that has never reported has a null position, and none is invented for it. The map is schematic — stops are drawn at their district centre and legs are straight lines, not roads.
+         *     State precedence, strongest first: LAMP > LATE > RETURNING > ON_TIME; a trip not yet departed is NOT_STARTED. See MapState.
+         */
+        get: operations["getFleetPositions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/drivers/me/pings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report the vehicle's position (driver)
+         * @description Driver only. Files up to 50 position reports for the driver's current vehicle (the one picked at the dock). Each is the phone's own fix with its own clock; the dispatcher's map shows the newest as "last reported", with its age. Nothing here is, or should be described as, continuous tracking.
+         *     Each report is filed against the vehicle's DEPARTED trip, else its READY or LOADING trip, else against no trip, on a published plan.
+         *     Replay-safe: reports are keyed by the phone's clientPingId, and a repeat is counted in `duplicates` rather than stored again, so an outbox can resend a batch freely.
+         *     A report dated more than 5 minutes ahead of the server clock refuses the whole batch with 422 PING_IN_FUTURE. A driver who has not picked a vehicle gets 403.
+         */
+        post: operations["reportPositions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/trips/{tripId}/chiller-readings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tripId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record a chiller reading for a trip
+         * @description A person's reading of the chiller gauge, taken by a loader at the bay or a driver on arrival. It is a reading, not a sensor feed, and is stored with who read it and when.
+         *     Who may call: a loader or dispatcher for a trip at their depot (like the rest of the dock surface); a driver only for a trip on their own vehicle in a published plan at their depot. A trip the caller cannot see answers 403. LOADER_AT_BAY is accepted only from a loader or dispatcher, and DRIVER_ON_ARRIVAL only from a driver (422 SOURCE_NOT_ALLOWED_FOR_ROLE).
+         *     Only refrigerated vehicles take readings: an ambient vehicle answers 422 CHILLER_NOT_APPLICABLE.
+         *     The target band (2 to 5 °C) is copied onto the reading, so a later policy change cannot rewrite whether it was in range. An out-of-range reading blocks nothing by itself; it is recorded in the decision log and read by the exceptions console.
+         *     Idempotent on clientReadingId: the first send answers 201, a resend answers 200 with the same reading. The same id on a different trip is 409 CLIENT_ID_REUSED. A recordedAt more than 5 minutes ahead of the server clock is 422 READING_IN_FUTURE.
+         */
+        post: operations["recordChillerReading"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/exceptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Everything that needs a decision before or during delivery
+         * @description Dispatcher only, own depot. One list over loading shortfalls, chiller readings, the draft plan's validation, late trips, Lamp Mode vehicles and reported problems, with the figures for the tiles and tabs. `date` defaults to today in Asia/Colombo; `status` to `open`.
+         *     The summary describes the whole day and ignores the filters.
+         *     Everything is derived from what the field has recorded, and says so: a chiller figure is a named person's gauge reading, lateness is measured at the last stop the driver recorded arriving at, and Lamp Mode shows the last reliable update with its time. Nothing here is live tracking.
+         */
+        get: operations["listExceptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/exceptions/{exceptionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description See the id scheme in the exceptions schema file. */
+                exceptionId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * One exception, with its activity
+         * @description The exception as the list shows it, plus `activity`: what the decision log holds about it plus the event that raised it, oldest first. Chiller, late, Lamp and planning items exist only while the condition does, so one that has cleared answers 404 `EXCEPTION_NOT_ACTIVE`. A record the caller cannot see answers 403, the same as one that does not exist.
+         */
+        get: operations["getException"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/exceptions/{exceptionId}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exceptionId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide an exception
+         * @description Dispatcher only, own depot. What each decision does:
+         *     **Shortfall.** `SEND_SHORT` closes the shortfall and lifts the departure block; the order is untouched (it will be delivered, and recorded, as a part-delivery). With `followUp: true` the missing units become a new order for the next operating day, keyed on the shortfall so a retry never creates a second one. `HOLD_ORDER` takes the order off the trip and marks it DEFERRED with a deferral to the next operating day. `CANCEL_LINE` takes it off the trip and marks it CANCELLED. `MOVE_TO_TRIP_2` moves the whole order to the same vehicle's later trip, offered only when that trip is on the same plan, not yet sealed, serves the same brand and district, and has room; the trip's time budget is not re-checked. In each case the affected store is notified.
+         *     **Problem.** `ACKNOWLEDGE` marks it seen (it stays open); `RESOLVE` closes it and needs `note`, kept as the resolution. A store-raised issue notifies the store either way.
+         *     **Chiller, late, Lamp.** `ACKNOWLEDGE` only. It is recorded, and the item stays open until the condition clears.
+         *     **Planning.** No decisions: 409 `NO_DECISION_AVAILABLE`.
+         *     Repeating the same decision returns 200 with `replayed: true` and does nothing; a different decision on a decided exception is 409 `ALREADY_DECIDED`, with the existing resolution in `details`. `consequences` is what was actually done.
+         */
+        post: operations["decideException"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The outlet's own issues
+         * @description Store manager only. Issues raised by this outlet's managers, newest first (at most 100). Status follows the dispatcher: NEW, then ACKNOWLEDGED, then RESOLVED with the dispatcher's note as `resolution`.
+         */
+        get: operations["listIssues"];
+        put?: never;
+        /**
+         * Report a problem with a delivery
+         * @description Store manager only, and only about an order at their own outlet. Creates a problem the dispatcher sees in the Exceptions console (category `store`) and notifies the depot's dispatchers.
+         *     Idempotent on `clientRequestId`: the first call answers 201, a retry of the same request answers 200 with the same issue and creates nothing. The same id used for a different order or kind is 409 `IDEMPOTENCY_KEY_REUSED`. `units` may not exceed the order's units (422 `UNITS_EXCEED_ORDER`).
+         */
+        post: operations["createIssue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's notifications
+         * @description A store manager reads their outlet's notifications; a dispatcher their own. Every other role is 403. Newest first, at most 50. `unread=true` returns only unread ones; omitted or `false` returns all. `unreadCount` always counts every unread notification, not just those returned.
+         */
+        get: operations["listNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/{notificationId}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                notificationId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a notification read
+         * @description Idempotent: reading twice keeps the first read time. A notification the caller does not own answers 403, the same as one that does not exist.
+         */
+        post: operations["markNotificationRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Headline delivery performance for the depot
+         * @description Headline tiles, the daily on-time series, the busiest outlets and the top exceptions. Orders delivered vs planned and deferred; fleet utilisation against the 80% target (only from trips published in this system); discrepancies as a count and a share of orders (only for days run in this system).
+         *
+         *           Dispatcher only, and only for the caller's own depot (the design shows every depot;
+         *           a dispatcher is depot-scoped, so a `depot` naming another is a 403).
+         *
+         *           Days run in this system and days from the analytics history are merged by day, never
+         *           both for one date. "On time" means the vehicle arrived no later than the outlet's
+         *           window closed. A figure the data cannot support is null with a `note`.
+         */
+        get: operations["getReportsOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Delivery volumes and punctuality by day and brand
+         * @description Orders planned, delivered and deferred per day with the on-time share, and the same by brand. Historical days count orders dispatched on the day as delivered: the training data does not record whether an attempt succeeded.
+         *
+         *           Dispatcher only, and only for the caller's own depot (the design shows every depot;
+         *           a dispatcher is depot-scoped, so a `depot` naming another is a 403).
+         *
+         *           Days run in this system and days from the analytics history are merged by day, never
+         *           both for one date. "On time" means the vehicle arrived no later than the outlet's
+         *           window closed. A figure the data cannot support is null with a `note`.
+         */
+        get: operations["getReportsDeliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/fleet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Vehicle use and load for the depot
+         * @description Per vehicle: trips, stops, on-time share, average load against capacity (trips published in this system only) and workshop days. Plus reefer vs ambient totals.
+         *
+         *           Dispatcher only, and only for the caller's own depot (the design shows every depot;
+         *           a dispatcher is depot-scoped, so a `depot` naming another is a 403).
+         *
+         *           Days run in this system and days from the analytics history are merged by day, never
+         *           both for one date. "On time" means the vehicle arrived no later than the outlet's
+         *           window closed. A figure the data cannot support is null with a `note`.
+         */
+        get: operations["getReportsFleet"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/outlets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-outlet punctuality and discrepancies
+         * @description Every outlet with a stop in the range, ordered by `sort`. Orders and discrepancies exist only for days run in this system.
+         *
+         *           Dispatcher only, and only for the caller's own depot (the design shows every depot;
+         *           a dispatcher is depot-scoped, so a `depot` naming another is a 403).
+         *
+         *           Days run in this system and days from the analytics history are merged by day, never
+         *           both for one date. "On time" means the vehicle arrived no later than the outlet's
+         *           window closed. A figure the data cannot support is null with a `note`.
+         */
+        get: operations["getReportsOutlets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/exceptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What went wrong, by kind and by day
+         * @description Exceptions by kind and by day with the fifty most recent. Late arrivals come from both sources; shortfalls, bad receipts and driver problems only from days run in this system. Each order counts once per kind however many records describe it.
+         *
+         *           Dispatcher only, and only for the caller's own depot (the design shows every depot;
+         *           a dispatcher is depot-scoped, so a `depot` naming another is a 403).
+         *
+         *           Days run in this system and days from the analytics history are merged by day, never
+         *           both for one date. "On time" means the vehicle arrived no later than the outlet's
+         *           window closed. A figure the data cannot support is null with a `note`.
+         */
+        get: operations["getReportsExceptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/capacity-forecast": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Weekly demand vs reefer capacity, with recommended actions
+         * @description Weekly demand against reefer capacity for the depot, with the forecast's own measured error and the persisted recommended actions. Weeks with history are `actual`; weeks with a stored forecast are `forecast`. Reefer trips a day needed = chilled m3 per operating day over the planned load per trip (mean reefer capacity x the fill observed in the competition training data); capacity = available reefers x 2 trips. Each assumption is listed in `assumptions`.
+         *     Reading this creates the week's capacity-action proposals the first time it is called (once only), so `recommendedActions` carry ids a decision can name. When `historySource.kind` is `synthetic` every volume is generated for the development fixture, not competition data.
+         *     Dispatcher only, own depot only.
+         */
+        get: operations["getReportsCapacityForecast"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/capacity-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Capacity actions for a week, or the whole forecast horizon
+         * @description Dispatcher only, own depot. Proposals are derived from the forecast for weeks with a reefer shortfall (hire, recall from workshop, ask Fresh stores to order early, move the delivery day, raise a fuel quota that binds) and persisted the first time a week is read. Reading again returns the same rows: it never creates a duplicate, and an open proposal is refreshed in place if the week's numbers move. A decided action is never altered.
+         *     Give both `isoYear` and `isoWeek`, or neither (the stored forecast horizon).
+         */
+        get: operations["listCapacityActions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/capacity-actions/{id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve, reject or apply a capacity action
+         * @description PROPOSED -> APPROVED (APPROVE); PROPOSED or APPROVED -> REJECTED (REJECT); APPROVED -> APPLIED (APPLY). Anything else is a 409; APPLY on a PROPOSED action is `ACTION_NOT_APPROVED`.
+         *     APPLY does only what the system can truly do. RECALL_FROM_WORKSHOP clears the reefer's workshop days in the week (days whose plan is already published are left alone). RAISE_FUEL_QUOTA raises that week's fuel quota in the ledger, never lowers it. HIRE_RELIEF_VEHICLE, SHIFT_BRAND_DAY and PRE_BUILD_ORDERS are recorded only, and `consequences` says plainly that nothing else changes.
+         *     The status change and APPLY's effect happen in one transaction. Every decision is written to the decision log with entityType `CapacityAction`. An action in another depot answers 403, the same as one that does not exist.
+         */
+        post: operations["decideCapacityAction"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1345,7 +1805,7 @@ export interface components {
          * @description The kinds of record the decision log is kept against. Each is authorised the way the record itself is: a dispatcher for their own depot, a store manager for their own outlet and its orders.
          * @enum {string}
          */
-        HistoryEntityType: "Order" | "Plan" | "PlanningDay" | "Trip" | "Shortfall" | "Problem" | "Vehicle" | "Outlet";
+        HistoryEntityType: "Order" | "Plan" | "PlanningDay" | "Trip" | "Shortfall" | "Problem" | "Vehicle" | "Outlet" | "CapacityAction";
         HistoryEvent: {
             /** @example clx0aud1a2b3c4d5e6f7g8h */
             id: string;
@@ -1477,8 +1937,16 @@ export interface components {
                 orderId: string;
                 /** @example ORD-004312 */
                 orderRef: string;
-                /** @example 120 */
+                /**
+                 * @description What is on the vehicle for this order — the units the dock loaded when a load check exists, otherwise the units ordered. After a dispatcher sends a shortfall short the two differ, and this is the figure a handover is counted against.
+                 * @example 120
+                 */
                 expectedUnits: number;
+                /**
+                 * @description What the store ordered. Additive.
+                 * @example 120
+                 */
+                orderedUnits?: number;
             }[];
         };
         Run: {
@@ -1499,7 +1967,33 @@ export interface components {
          * @example 01JB2X8Q9K7YC4V3M0ZQ5T6RWE
          */
         Ulid: string;
-        /** @description One recorded fact about a stop. The client mints the ULID id, so replaying an event — online or from the offline outbox — is idempotent by construction. `occurredAt` is the DEVICE clock and must be presented as "recorded on device"; the server records its own receipt time separately. */
+        /** @description One page of proof of delivery as the driver's phone captured it. The id is client-minted, so replaying a page cannot store it twice. */
+        PodPage: {
+            id: components["schemas"]["Ulid"];
+            /**
+             * @example RECEIPT
+             * @enum {string}
+             */
+            kind: "RECEIPT" | "SIGNATURE" | "PHOTO";
+            /**
+             * @description A base64 image data URL (png, jpeg, webp or svg), at most 1,048,576 characters (about 768 KiB of image). Anything else is rejected; the request-level limit is 12 MiB.
+             * @example data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBD
+             */
+            data: string;
+            /** @description What the capture screen flagged at the time (blurry, cropped, dark), as short upper-case codes, kept so a disputed receipt can be examined with what the driver was told. Empty or omitted when nothing was flagged. */
+            qualityFlags?: string[] | null;
+            /**
+             * Format: date-time
+             * @description Device clock when the page was captured.
+             * @example 2026-09-30T04:55:30Z
+             */
+            capturedAt: string;
+        };
+        /**
+         * @description One recorded fact about a stop. The client mints the ULID id, so replaying an event — online or from the offline outbox — is idempotent by construction. `occurredAt` is the DEVICE clock and must be presented as "recorded on device"; the server records its own receipt time separately.
+         *     The `id` is the row's primary key. An id the server already holds is a `duplicate`: nothing is applied a second time (no order or stop status change, no notification, no decision-log entry). An id that is valid for one stop is `rejected` (`ID_REUSED`) when sent for another.
+         *     Proof of delivery travels on a `POD_CAPTURED` event. Send `pages`; the legacy `signatureData` / `photoData` fields remain accepted for clients that predate pages. If both are sent, `pages` win and the legacy fields on that event are ignored (not stored), so a picture is never held twice.
+         */
         StopEvent: {
             id: components["schemas"]["Ulid"];
             /**
@@ -1519,19 +2013,21 @@ export interface components {
             /** @example null */
             recipientName?: string | null;
             /**
-             * @description Base64 data URL.
+             * @description Base64 data URL. Legacy single-image field; ignored when `pages` is non-empty.
              * @example null
              */
             signatureData?: string | null;
             /**
-             * @description Base64 data URL.
+             * @description Base64 data URL. Legacy single-image field; ignored when `pages` is non-empty.
              * @example null
              */
             photoData?: string | null;
             /** @example null */
             reasonCode?: string | null;
+            /** @description Multi-page proof of delivery (a receipt with several sheets, a signature, a photo of the goods). Only on `POD_CAPTURED`; any other type is rejected (`PAGES_ON_NON_POD`). At most 8. Stored in array order (`seq`), in the same transaction as the event, so the pages exist if and only if the event does. Each page id is a client ULID and idempotent like the event. */
+            pages?: components["schemas"]["PodPage"][];
             /**
-             * @description Required on the batched POST /sync/stop-events path (a batch spans several stops and the server needs to route each event to the right one). Ignored and may be null on POST /stops/{stopId}/events, where the URL already carries the stop. Additive field; existing clients that omit it keep working on the per-stop path.
+             * @description Required on the batched POST /sync/stop-events path (a batch spans several stops and the server needs to route each event to the right one). Ignored and may be null on POST /stops/{stopId}/events, where the URL already carries the stop. Additive field; existing clients that omit it keep working on the per-stop path. On the sync path an event without it is `rejected` (`MISSING_TRIP_STOP_ID`) on its own; it does not fail the batch.
              * @example clx0stp1a2b3c4d5e6f7g8h
              */
             tripStopId?: string | null;
@@ -1552,6 +2048,18 @@ export interface components {
             /** @enum {string|null} */
             conflictState?: "NONE" | "STALE_ASSIGNMENT" | "SUPERSEDED" | null;
         };
+        /** @description An event the server refused for a reason retrying cannot change, so the device should stop sending it and show the reason. */
+        EventRejection: {
+            id: components["schemas"]["Ulid"];
+            /**
+             * @description One of STOP_NOT_ON_RUN (a stop the caller cannot see; same answer whether or not it exists), MISSING_TRIP_STOP_ID, ID_REUSED, ID_COLLISION, DELIVERED_INCOMPLETE, ORDER_NOT_ON_STOP, RECIPIENT_REQUIRED, POD_WITHOUT_DELIVERY, POD_REJECTED, POD_ALREADY_IN_REQUEST, STOP_ALREADY_CLOSED, STATE_MISMATCH, PAGES_ON_NON_POD, TOO_MANY_PAGES, DUPLICATE_PAGE_ID, PAGE_DATA_INVALID, PAGE_TOO_LARGE, INVALID_OCCURRED_AT. Clients should treat unknown codes as terminal.
+             * @example STOP_NOT_ON_RUN
+             */
+            code: string;
+            /** @example Stop clx0stp9z8y7x6w5v4u3t2s is not on this driver's run. */
+            message: string;
+        };
+        /** @description Per-event outcomes. Every event sent is in exactly one of `results` (accepted, duplicate or conflict) or `rejected`. An event in neither failed for an unexpected reason (the database, say): it was NOT applied and is safe to send again. */
         SubmitEventsResult: {
             /** @example 3 */
             accepted: number;
@@ -1560,21 +2068,89 @@ export interface components {
             /** @example 0 */
             conflicts: number;
             results: components["schemas"]["EventResult"][];
+            rejected: components["schemas"]["EventRejection"][];
         };
-        /** @description The offline outbox drain. Events may span several stops. This is the same applier as POST /stops/{stopId}/events, batched and unscoped, so the online and offline paths can never diverge. */
+        /** @description A stored page without its image. Lists carry this; the image is not in a list of up to 500 events. */
+        PodPageSummary: {
+            id: components["schemas"]["Ulid"];
+            /**
+             * @description Position in capture order, starting at 0.
+             * @example 0
+             */
+            seq: number;
+            /**
+             * @example RECEIPT
+             * @enum {string}
+             */
+            kind: "RECEIPT" | "SIGNATURE" | "PHOTO";
+            /**
+             * @example [
+             *       "BLURRY"
+             *     ]
+             */
+            qualityFlags: string[];
+            /**
+             * Format: date-time
+             * @example 2026-09-30T04:55:30Z
+             */
+            capturedAt: string;
+        };
+        /** @description A stored StopEvent as GET /sync/stop-events returns it. Same fields as StopEvent, plus the stop it belongs to, but `pages` carry metadata only. */
+        PulledStopEvent: {
+            id: components["schemas"]["Ulid"];
+            /** @example clx0stp1a2b3c4d5e6f7g8h */
+            tripStopId?: string;
+            /**
+             * @example POD_CAPTURED
+             * @enum {string}
+             */
+            type: "ARRIVED" | "UNLOAD_START" | "DELIVERED" | "PART_DELIVERED" | "FAILED" | "SKIPPED" | "POD_CAPTURED";
+            /**
+             * Format: date-time
+             * @example 2026-09-30T04:56:00Z
+             */
+            occurredAt: string;
+            /** @example null */
+            orderId?: string | null;
+            /** @example null */
+            deliveredUnits?: number | null;
+            /** @example K. Jayasuriya */
+            recipientName?: string | null;
+            /**
+             * @description Legacy single image, present only on events recorded without pages.
+             * @example null
+             */
+            signatureData?: string | null;
+            /**
+             * @description Legacy single image, present only on events recorded without pages.
+             * @example null
+             */
+            photoData?: string | null;
+            /** @example null */
+            reasonCode?: string | null;
+            pages?: components["schemas"]["PodPageSummary"][];
+        };
+        /**
+         * @description The offline outbox drain. Events may span several stops, and each must carry `tripStopId`. This is the same applier as POST /stops/{stopId}/events, batched, so the online and offline paths can never diverge.
+         *     Events are applied per stop in `occurredAt` order (ties keep their position in the batch). Each is judged on its own: a stop the caller cannot see, an invalid payload or a transition the stop refuses puts that event in `rejected` and the rest of the batch still applies. A conflict (STALE_ASSIGNMENT, SUPERSEDED) is recorded but not applied. A replayed batch reports every event as a duplicate and changes nothing.
+         *     A delivery is one act: its DELIVERED/PART_DELIVERED lines and POD_CAPTURED event must travel in the same batch, and succeed or fail together.
+         */
         SyncBatchRequest: {
             /** @example device-7f3a91 */
             deviceId: string;
             /**
              * Format: date-time
-             * @description Device clock at drain time, used to measure skew.
+             * @description Device clock at drain time, used to measure skew. Skew is reported and logged, never used to rewrite `occurredAt`, which stays the device clock.
              * @example 2026-09-30T06:02:11Z
              */
             clientClockAt: string;
             events: components["schemas"]["StopEvent"][];
         };
         SyncBatchResult: components["schemas"]["SubmitEventsResult"] & {
-            /** @example 842 */
+            /**
+             * @description Server time minus `clientClockAt`, in ms, clamped to the 32-bit range (a handset with a reset clock reports decades).
+             * @example 842
+             */
             clockSkewMs: number;
             /**
              * Format: int64
@@ -1582,6 +2158,998 @@ export interface components {
              * @example 10428
              */
             serverSeq: number;
+        };
+        FleetSummary: {
+            /** @example 6 */
+            total: number;
+            /** @example 2 */
+            refrigerated: number;
+            /** @example 4 */
+            ambient: number;
+            /**
+             * @description Vehicles that can run today — everything not in the workshop, including those already loading, out or back. This is the "Available today" figure.
+             * @example 5
+             */
+            available: number;
+            /**
+             * @description Vehicles whose status is exactly AVAILABLE — nothing loading, out or finished.
+             * @example 2
+             */
+            idle: number;
+            /** @example 1 */
+            onRoute: number;
+            /** @example 1 */
+            loading: number;
+            /** @example 1 */
+            returned: number;
+            /** @example 1 */
+            inWorkshop: number;
+        };
+        /**
+         * @description Derived from the day's workshop flag and the trips of the day's published plan (cancelled trips ignored). First match wins:
+         *     | Condition | Status | |---|---| | any trip DEPARTED | ON_ROUTE | | workshop flag set for the day | IN_WORKSHOP | | any trip READY or LOADING | LOADING | | at least one trip, every one COMPLETED | RETURNED | | otherwise (no trips, or only PLANNED trips left) | AVAILABLE |
+         *     A departed trip outranks the workshop flag because the flag can only be edited before publication; a vehicle that is on the road is on the road. RETURNED means done for the day: a vehicle back from trip 1 with trip 2 still planned is AVAILABLE.
+         * @enum {string}
+         */
+        VehicleDayState: "AVAILABLE" | "LOADING" | "ON_ROUTE" | "RETURNED" | "IN_WORKSHOP";
+        VehicleRow: {
+            /** @example VEH014 */
+            vehicleId: string;
+            /** @enum {string} */
+            type: "truck" | "van";
+            /** @enum {string} */
+            temp: "reefer" | "ambient";
+            /** @example Peliyagoda */
+            depotCode: string;
+            /** @example 15 */
+            volumeCapM3: number;
+            /** @example 4800 */
+            weightCapKg: number;
+            /**
+             * @description The user whose default vehicle this is — whoever picked it at the dock. Null when nobody has.
+             * @example Sunil Fernando
+             */
+            driverName: string | null;
+            /**
+             * @description Non-cancelled trips on the day's published plan.
+             * @example 2
+             */
+            tripsToday: number;
+            /**
+             * @description The mean, over the vehicle's non-cancelled published-plan trips that day, of max(trip volume / volume capacity, trip weight / weight capacity), as a whole percentage clamped to 0-100. Zero when the vehicle has no trips. It is how full the day's loads are, not how busy the vehicle is.
+             * @example 82
+             */
+            utilisationPct: number;
+            status: components["schemas"]["VehicleDayState"];
+            /**
+             * @description The dispatcher's note on the workshop flag, when there is one.
+             * @example null
+             */
+            note: string | null;
+        };
+        VehicleList: {
+            date: components["schemas"]["DateOnly"];
+            /** @example Peliyagoda */
+            depotCode: string;
+            summary: components["schemas"]["FleetSummary"];
+            vehicles: components["schemas"]["VehicleRow"][];
+        };
+        VehicleTripSummary: {
+            /** @example clx0trp1a2b3c4d5e6f7g8h9 */
+            tripId: string;
+            /** @example 1 */
+            tripNo: number;
+            /**
+             * @description Depot code, an arrow, and the district.
+             * @example Peliyagoda → Colombo
+             */
+            route: string;
+            plannedDepartAt: components["schemas"]["ClockTime"];
+            /** @example 12 */
+            stops: number;
+            /** @example 28 */
+            orders: number;
+            /** @enum {string} */
+            status: "PLANNED" | "LOADING" | "READY" | "DEPARTED" | "COMPLETED" | "CANCELLED";
+            /** @enum {string} */
+            wave: "PREDAWN" | "DAYTIME";
+        };
+        /**
+         * @description Where the gauge was read. LOADER_AT_BAY is recorded by a loader or dispatcher; DRIVER_ON_ARRIVAL by the driver.
+         * @enum {string}
+         */
+        ChillerSource: "LOADER_AT_BAY" | "DRIVER_ON_ARRIVAL";
+        /** @description A person's reading of a chiller gauge — a loader at the bay or a driver on arrival. It is not a sensor feed; show who read it and how long ago. */
+        ChillerReadingView: {
+            /** @example 3.8 */
+            tempC: number;
+            /** @example 2 */
+            targetMinC: number;
+            /** @example 5 */
+            targetMaxC: number;
+            /** @description tempC within the target band stored on the reading, both ends included. */
+            inRange: boolean;
+            source: components["schemas"]["ChillerSource"];
+            /** @example Ranjith Silva */
+            recordedByName: string | null;
+            /** Format: date-time */
+            recordedAt: string;
+            /** @example 600 */
+            ageSeconds: number;
+        };
+        /** @description The last position the driver's phone reported — not a live position. Show it with its age; plot it as reported. The map is schematic. */
+        ReportedPosition: {
+            /** @example 7.9 */
+            lat: number;
+            /** @example 79.9 */
+            lng: number;
+            /** @example 18 */
+            accuracyM: number | null;
+            /**
+             * Format: date-time
+             * @description When the phone took the fix (its own clock), not when the server received it.
+             */
+            recordedAt: string;
+            /**
+             * @description Whole seconds since recordedAt, measured at the server's clock when the response was made.
+             * @example 60
+             */
+            ageSeconds: number;
+            /** @description The report is older than the Lamp Mode threshold (10 minutes). */
+            lamp: boolean;
+        };
+        VehicleDetail: components["schemas"]["VehicleRow"] & {
+            date: components["schemas"]["DateOnly"];
+            /** @description The day's non-cancelled published-plan trips, in trip order. */
+            trips: components["schemas"]["VehicleTripSummary"][];
+            /** @description The most recent chiller reading for a refrigerated vehicle. Null for an ambient vehicle, or when nobody has recorded one. */
+            chiller: components["schemas"]["ChillerReadingView"] | null;
+            /** @description The last position reported by the driver's phone, or null if it has never reported. */
+            position: components["schemas"]["ReportedPosition"] | null;
+        };
+        /**
+         * @description The state of the vehicle's current trip on the map. Precedence, strongest first: LAMP > LATE > RETURNING > ON_TIME.
+         *     - NOT_STARTED: the trip is READY or LOADING, so the vehicle is at the dock. Reported
+         *       regardless of position; a missing report at the dock is not an alarm.
+         *     - LAMP: the trip has departed and either the phone has never reported, or
+         *       its last report is older than 10 minutes. Outranks everything: when the
+         *       report is stale, every other state is a guess.
+         *     - LATE: lateMinutes is 5 or more. - RETURNING: no stop is left to serve (every stop DONE, SKIPPED or FAILED) but the trip is not COMPLETED. - ON_TIME: otherwise.
+         * @enum {string}
+         */
+        MapState: "ON_TIME" | "LATE" | "RETURNING" | "LAMP" | "NOT_STARTED";
+        /** @description The first stop the driver still has to serve, including one they are standing at. */
+        MapNextStop: {
+            /** @example OUT074 */
+            outletId: string;
+            /** @example Fresh Puttalam */
+            outletName: string;
+            /**
+             * @description 1-based position in the trip.
+             * @example 2
+             */
+            stopNumber: number;
+            /** @example 4 */
+            totalStops: number;
+            /**
+             * @description Stops marked DONE.
+             * @example 1
+             */
+            deliveredStops: number;
+            /** @description The planned arrival pushed back by lateMinutes. A single point estimate: when state is LAMP it rests on a stale position, so show it as an estimate (the arrival is a range once it is uncertain). */
+            eta: components["schemas"]["ClockTime"];
+            windowOpen: components["schemas"]["ClockTime"];
+            windowClose: components["schemas"]["ClockTime"];
+        };
+        MapVehicle: {
+            /** @example VEH025 */
+            vehicleId: string;
+            /** @example K. Fernando */
+            driverName: string | null;
+            state: components["schemas"]["MapState"];
+            /**
+             * @description Minutes behind plan at the last stop the driver arrived at; 0 when on time, before the first arrival, or once no stop is left to serve.
+             * @example 0
+             */
+            lateMinutes: number;
+            trip: {
+                /** @example clx0trp1a2b3c4d5e6f7g8h9 */
+                tripId: string;
+                /** @example 1 */
+                tripNo: number;
+                /** @example Puttalam */
+                districtName: string;
+            };
+            /** @description Null for a vehicle that has never reported. No position is invented for it. */
+            position: components["schemas"]["ReportedPosition"] | null;
+            nextStop: components["schemas"]["MapNextStop"] | null;
+        };
+        FleetPositions: {
+            date: components["schemas"]["DateOnly"];
+            /** @example Peliyagoda */
+            depotCode: string;
+            /**
+             * Format: date-time
+             * @description Server time when this response was assembled. Not a claim that positions are current — each carries its own age.
+             */
+            updatedAt: string;
+            /** @description Counts for the list tabs. */
+            summary: {
+                /** @example 3 */
+                all: number;
+                /** @example 1 */
+                late: number;
+                /** @example 1 */
+                lamp: number;
+            };
+            vehicles: components["schemas"]["MapVehicle"][];
+        };
+        PingBatchRequest: {
+            pings: {
+                /**
+                 * @description Minted by the phone. A resent ping with the same id is counted as a duplicate, not stored twice.
+                 * @example 01JBX3Q7W2R8M5T9K4N6P0ZYAB
+                 */
+                clientPingId: string;
+                /** @example 7.9034 */
+                lat: number;
+                /** @example 79.8312 */
+                lng: number;
+                /** @example 18 */
+                accuracyM?: number;
+                /**
+                 * Format: date-time
+                 * @description The phone's clock when the fix was taken. More than 5 minutes ahead of the server is refused.
+                 */
+                recordedAt: string;
+            }[];
+        };
+        PingBatchResult: {
+            /**
+             * @description Pings stored by this request.
+             * @example 2
+             */
+            accepted: number;
+            /**
+             * @description Pings already stored under the same clientPingId.
+             * @example 1
+             */
+            duplicates: number;
+        };
+        ChillerReadingRequest: {
+            /** @example 3.8 */
+            tempC: number;
+            source: components["schemas"]["ChillerSource"];
+            /** @description The stop the reading was taken at, for an arrival reading. Must belong to the trip. */
+            tripStopId?: string;
+            /** @example Door opened twice at the last stop */
+            note?: string;
+            /** @description Minted by the client. Sending the same id again returns the existing reading with 200 instead of creating another. */
+            clientReadingId?: string;
+            /**
+             * Format: date-time
+             * @description When the gauge was read. Defaults to now; more than 5 minutes ahead of the server is refused.
+             */
+            recordedAt?: string;
+        };
+        ChillerReadingResponse: {
+            /** @example clx0chr1a2b3c4d5e6f7g8h9 */
+            id: string;
+            /** @example clx0trp1a2b3c4d5e6f7g8h9 */
+            tripId: string;
+            /** @example VEH014 */
+            vehicleId: string;
+            /** @example 3.8 */
+            tempC: number;
+            /**
+             * @description The band copied onto the reading when it was taken.
+             * @example 2
+             */
+            targetMinC: number;
+            /** @example 5 */
+            targetMaxC: number;
+            /** @description tempC within the stored band, both ends included. */
+            inRange: boolean;
+            source: components["schemas"]["ChillerSource"];
+            /** Format: date-time */
+            recordedAt: string;
+            /** @example Ranjith Silva */
+            recordedByName: string | null;
+        };
+        /**
+         * @description The console's tabs. `store` is an issue a store manager raised.
+         * @enum {string}
+         */
+        ExceptionCategory: "planning" | "loading" | "on_the_road" | "store";
+        /** @enum {string} */
+        ExceptionSeverity: "critical" | "warning" | "info";
+        /** @description Over the whole day, ignoring the list's filters, so a tab count never shrinks when the dispatcher searches. `resolvedToday` is the resolved items belonging to the date shown. `avgResolveMinutes` is null when none carry a resolution time, never 0. */
+        ExceptionSummary: {
+            /** @example 7 */
+            open: number;
+            /** @example 3 */
+            critical: number;
+            /** @example 11 */
+            ordersAffected: number;
+            /** @example 4 */
+            outletsAffected: number;
+            /** @example 3 */
+            vehiclesAffected: number;
+            /** @example 12 */
+            resolvedToday: number;
+            /** @example 18 */
+            avgResolveMinutes: number | null;
+            countsByCategory: {
+                planning: number;
+                loading: number;
+                on_the_road: number;
+                store: number;
+            };
+            countsBySeverity: {
+                critical: number;
+                warning: number;
+                info: number;
+            };
+        };
+        /** @enum {string} */
+        ExceptionKind: "SHORTFALL" | "CHILLER" | "PLANNING" | "LATE" | "LAMP" | "PROBLEM";
+        /**
+         * @description A problem that is ACKNOWLEDGED is still open. Chiller, late and Lamp items are never resolved: they disappear when the evidence changes.
+         * @enum {string}
+         */
+        ExceptionStatus: "open" | "resolved";
+        /** @description Who reported it. Derived items carry the name System and a null role. */
+        ExceptionActor: {
+            /** @example Ranjith Silva */
+            name: string;
+            role: components["schemas"]["Role"] | null;
+        };
+        ExceptionOutlet: {
+            /** @example OUT027 */
+            outletId: string;
+            /** @example Kandy City Centre */
+            outletName: string | null;
+            /** @example 2 */
+            stopSeq: number | null;
+            /** @example 12 */
+            ordered: number | null;
+            /**
+             * @description Units short at this outlet (negative), where that is known.
+             * @example -3
+             */
+            delta: number | null;
+        };
+        /**
+         * @description SEND_SHORT, HOLD_ORDER, CANCEL_LINE and MOVE_TO_TRIP_2 map onto the shortfall resolutions DOMAIN.md names. ACKNOWLEDGE applies to every kind but planning; RESOLVE to problems. There is deliberately no "substitute": nothing in the system models stock to back it.
+         * @enum {string}
+         */
+        ExceptionDecisionCode: "SEND_SHORT" | "HOLD_ORDER" | "CANCEL_LINE" | "MOVE_TO_TRIP_2" | "ACKNOWLEDGE" | "RESOLVE";
+        /** @description One step of "what happens when you confirm". Every step corresponds to a write the decision really performs. */
+        ExceptionConsequence: {
+            /** @enum {string} */
+            audience: "loader" | "driver" | "store" | "order" | "trip" | "record";
+            /** @example Store · Fresh Mart Kurunegala */
+            title: string;
+            /** @example Told before departure that 16 of 20 units are on the way for S1-082. */
+            detail: string;
+        };
+        ExceptionDecisionOption: {
+            decision: components["schemas"]["ExceptionDecisionCode"];
+            /** @example Send short and notify the store */
+            label: string;
+            description: string;
+            recommended: boolean;
+            /** @description True for RESOLVE, where the note is kept as the resolution. */
+            requiresNote: boolean;
+            /** @description SEND_SHORT only: the optional follow-up order for the missing units, to be requested with `followUp: true`. Null on every other option. */
+            followUp: {
+                forDate: components["schemas"]["DateOnly"];
+                /** @example 4 */
+                units: number;
+                /** @example Add the 4 missing units to Thu, 1 Oct's orders */
+                label: string;
+            } | null;
+            /** @description The preview, shown before the dispatcher confirms. */
+            consequences: components["schemas"]["ExceptionConsequence"][];
+        };
+        Exception: {
+            /** @example shortfall:clx0sf1a2b3c4d5e6f7g8h9 */
+            id: string;
+            kind: components["schemas"]["ExceptionKind"];
+            severity: components["schemas"]["ExceptionSeverity"];
+            category: components["schemas"]["ExceptionCategory"];
+            status: components["schemas"]["ExceptionStatus"];
+            /** @example Short 4 units · S1-082 on VEH017 */
+            title: string;
+            /** @example Kurunegala route · Trip 2 · departs 04:11 */
+            subtitle: string;
+            /** @description A third line of context. For a chiller item it says the figure is a person's gauge reading; for Lamp Mode, that the driver works offline and the ETA is estimated. */
+            detail: string | null;
+            reportedBy: components["schemas"]["ExceptionActor"];
+            /** Format: date-time */
+            raisedAt: string;
+            /** @example 8 */
+            ageMinutes: number;
+            resolvedAt: string | null;
+            /** @example VEH017 */
+            vehicleId: string | null;
+            tripId: string | null;
+            /** @description For a planning item, the draft plan to open. Also set on items tied to a trip. */
+            planId: string | null;
+            /** @description The trip's planned departure, which is what the list sorts by. */
+            departsAt: components["schemas"]["ClockTime"] | null;
+            /**
+             * @example [
+             *       "S1-082"
+             *     ]
+             */
+            orderRefs: string[];
+            affectedOutlets: components["schemas"]["ExceptionOutlet"][];
+            /** @description Loaded, expected and short units. Shortfalls only; null otherwise. */
+            quantities: {
+                /** @example 16 */
+                loaded: number;
+                /** @example 20 */
+                expected: number;
+                /** @example 4 */
+                short: number;
+            } | null;
+            /** @description Set once a dispatcher has acknowledged it. An open item may be acknowledged. */
+            acknowledgement: {
+                /** Format: date-time */
+                at: string;
+                byName: string;
+            } | null;
+            /** @description Set on a resolved item. `decision` is the shortfall resolution, or RESOLVE for a problem. */
+            resolution: {
+                decision: string | null;
+                note: string | null;
+                at: string | null;
+                byName: string | null;
+            } | null;
+            /** @description Empty when nothing can be decided (planning items, resolved items, already-acknowledged trip items). */
+            decisionOptions: components["schemas"]["ExceptionDecisionOption"][];
+        };
+        ExceptionList: {
+            date: components["schemas"]["DateOnly"];
+            summary: components["schemas"]["ExceptionSummary"];
+            /** @description Open before resolved; then by the trip's planned departure; then by when it was raised. Items with no departure to race sort last. */
+            exceptions: components["schemas"]["Exception"][];
+        };
+        ExceptionActivityEvent: {
+            /** Format: date-time */
+            at: string;
+            actorName: string | null;
+            actorRole: components["schemas"]["Role"] | null;
+            /** @example shortfall.raise */
+            action: string;
+            /** @example Ranjith Silva flagged the shortfall at the dock */
+            summary: string;
+            note: string | null;
+        };
+        /** @description An exception with its activity, oldest first. */
+        ExceptionDetail: components["schemas"]["Exception"] & {
+            activity: components["schemas"]["ExceptionActivityEvent"][];
+        };
+        ExceptionDecisionRequest: {
+            decision: components["schemas"]["ExceptionDecisionCode"];
+            /** @description Required for RESOLVE (kept as the resolution); optional elsewhere. */
+            note?: string;
+            /** @description SEND_SHORT only. Creates a next-operating-day order for the missing units. */
+            followUp?: boolean;
+        };
+        ExceptionDecisionResult: {
+            exception: components["schemas"]["Exception"];
+            /** @description What was actually done, in order. */
+            consequences: components["schemas"]["ExceptionConsequence"][];
+            /** @description True when the same decision had already been applied and nothing was done this time. */
+            replayed: boolean;
+        };
+        /**
+         * @description A STORE_PROBLEM_KINDS code, served by GET /reference/vocabularies.
+         * @enum {string}
+         */
+        IssueKind: "GOODS_DAMAGED" | "ACCESS_DENIED" | "OUTLET_CLOSED" | "DELIVERY_REFUSED" | "OTHER";
+        /**
+         * @description A STORE_ISSUE_REASONS code.
+         * @enum {string}
+         */
+        IssueReason: "ITEMS_MISSING" | "ITEMS_DAMAGED" | "ARRIVED_WARM" | "WRONG_ITEMS";
+        /** @enum {string} */
+        IssueStatus: "NEW" | "ACKNOWLEDGED" | "RESOLVED";
+        Issue: {
+            /** @example 01JB2X8Q9K7YC4V3M0ZQ5T6RWE */
+            id: string;
+            orderId: string;
+            /** @example S1-074 */
+            orderRef: string;
+            kind: components["schemas"]["IssueKind"];
+            reasonCode: components["schemas"]["IssueReason"] | null;
+            /** @example 4 */
+            units: number | null;
+            note: string | null;
+            status: components["schemas"]["IssueStatus"];
+            resolution: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            resolvedAt: string | null;
+        };
+        CreateIssueRequest: {
+            /** @example clx0ord1a2b3c4d5e6f7g8h9 */
+            orderId: string;
+            kind: components["schemas"]["IssueKind"];
+            reasonCode?: components["schemas"]["IssueReason"];
+            /**
+             * @description How many units were affected. Must not exceed the order's units.
+             * @example 4
+             */
+            units?: number;
+            note?: string;
+            /**
+             * Format: uuid
+             * @description Makes a retried submit safe. The same id from the same manager about the same order and kind returns the first issue (200); the same id for anything else is 409.
+             */
+            clientRequestId?: string;
+        };
+        Notification: {
+            /** @example clx0ntf1a2b3c4d5e6f7g8h9 */
+            id: string;
+            /**
+             * @description Dotted or plain verb a client may use to pick an icon: `delivered`, `deferred`, `cancelled`, `shortfall.send_short`, `shortfall.moved`, `issue.raised`, `issue.acknowledged`, `issue.resolved`. Free-form on purpose.
+             * @example shortfall.send_short
+             */
+            kind: string;
+            /** @example Order S1-082 is leaving 4 short */
+            title: string;
+            body: string;
+            /** @description Ids a client can use to deep-link (orderId, exceptionId, ...). Shape varies by kind. */
+            payload: {
+                [key: string]: unknown;
+            } | null;
+            /** Format: date-time */
+            createdAt: string;
+            readAt: string | null;
+        };
+        NotificationList: {
+            /**
+             * @description Every unread notification, not just those in `items`.
+             * @example 2
+             */
+            unreadCount: number;
+            /** @description Newest first, at most 50. */
+            items: components["schemas"]["Notification"][];
+        };
+        NotificationRead: {
+            notification: components["schemas"]["Notification"];
+            /** @example 1 */
+            unreadCount: number;
+        };
+        /** @description Where the analytics history behind the historical days came from. `synthetic` means generated for the development fixture and not competition data; a client must show that, not hide it. */
+        HistorySource: {
+            /** @enum {string} */
+            kind: "synthetic" | "competition" | "unknown";
+            /** @example History is SYNTHETIC, generated for the development fixture. It is not the competition data. */
+            label: string;
+        };
+        /** @description How many days of the range each source supplied. */
+        Coverage: {
+            /**
+             * @description Days with orders recorded in this system.
+             * @example 1
+             */
+            liveDays: number;
+            /**
+             * @description Days taken from the analytics history.
+             * @example 6
+             */
+            historyDays: number;
+            /**
+             * @description Days with no data from either source (typically Sundays).
+             * @example 0
+             */
+            emptyDays: number;
+        };
+        DemandCounts: {
+            /**
+             * @description Orders requested for the days, deferred and never-run included.
+             * @example 840
+             */
+            planned: number;
+            /** @example 812 */
+            delivered: number;
+            /** @example 28 */
+            deferred: number;
+            /**
+             * @description Planned but neither delivered nor deferred: still open, failed, or (historical days) never run.
+             * @example 0
+             */
+            undelivered: number;
+        };
+        /** @enum {string} */
+        DaySource: "live" | "history" | "none";
+        /** @description One outlet's performance. `orders` and `discrepancies` exist only for days run in this system and are null for an outlet seen only in the historical legs, which record visits rather than orders. */
+        OutletPerformance: {
+            /** @example OUT074 */
+            outletId: string;
+            displayName: string | null;
+            /** @example Puttalam */
+            districtName: string | null;
+            brand: components["schemas"]["Brand"] | null;
+            /**
+             * @description Visits with a recorded arrival.
+             * @example 14
+             */
+            stops: number;
+            orders: number | null;
+            /**
+             * @description Share of stops that arrived before the window closed, one decimal.
+             * @example 93
+             */
+            onTimePct: number | null;
+            /** @example 1 */
+            late: number;
+            discrepancies: number | null;
+            /**
+             * @description Mean of actual minus planned arrival, in minutes. Negative is earlier than planned. Null when no stop carried a plan.
+             * @example -14
+             */
+            avgArrivalDeltaMin: number | null;
+        };
+        ExceptionCount: {
+            /**
+             * @description SHORT_DELIVERY, LATE_DELIVERY, DAMAGED_ITEMS, TEMPERATURE, WRONG_ITEMS, or a driver problem kind (OUTLET_CLOSED, ACCESS_DENIED, ROAD_BLOCKED, VEHICLE_BREAKDOWN, DELIVERY_REFUSED, OTHER).
+             * @example SHORT_DELIVERY
+             */
+            kind: string;
+            /** @example Short delivery */
+            label: string;
+            /** @example 9 */
+            count: number;
+        };
+        ReportsOverview: {
+            depotCode: string;
+            from: components["schemas"]["DateOnly"];
+            to: components["schemas"]["DateOnly"];
+            historySource: components["schemas"]["HistorySource"];
+            coverage: components["schemas"]["Coverage"];
+            onTime: {
+                /** @description Null when no stop had a recorded arrival. */
+                pct: number | null;
+                onTime: number;
+                total: number;
+                /** @example 95 */
+                targetPct: number;
+                /** @description Percentage points against the previous range of the same length. */
+                vsPreviousPts: number | null;
+                note: string | null;
+            };
+            orders: components["schemas"]["DemandCounts"] & {
+                note: string | null;
+            };
+            utilisation: {
+                /** @description Mean trip load against vehicle volume capacity. Null unless a trip was published in this system in the range. */
+                pct: number | null;
+                /** @example 80 */
+                targetPct: number;
+                vehicles: number;
+                trips: number;
+                note: string | null;
+            };
+            discrepancies: {
+                /** @description Distinct orders with short, damaged, warm, wrong or refused goods. Null when no day in the range was run in this system. */
+                count: number | null;
+                pctOfOrders: number | null;
+                vsPrevious: number | null;
+                note: string | null;
+            };
+            onTimeSeries: {
+                date: components["schemas"]["DateOnly"];
+                source: components["schemas"]["DaySource"];
+                onTimePct: number | null;
+                onTime: number;
+                total: number;
+            }[];
+            /** @description One entry, the caller's own depot. */
+            utilisationByDepot: {
+                depotCode: string;
+                vehicles: number;
+                utilisationPct: number | null;
+                targetPct: number;
+            }[];
+            /** @description The six busiest outlets by stops. */
+            topOutlets: components["schemas"]["OutletPerformance"][];
+            /** @example 93 */
+            totalOutlets: number;
+            topExceptions: {
+                total: number;
+                items: components["schemas"]["ExceptionCount"][];
+            };
+        };
+        ReportsDeliveries: {
+            depotCode: string;
+            from: components["schemas"]["DateOnly"];
+            to: components["schemas"]["DateOnly"];
+            historySource: components["schemas"]["HistorySource"];
+            coverage: components["schemas"]["Coverage"];
+            totals: components["schemas"]["DemandCounts"] & {
+                stops: number;
+                onTimePct: number | null;
+                avgArrivalDeltaMin: number | null;
+            };
+            days: (components["schemas"]["DemandCounts"] & {
+                date: components["schemas"]["DateOnly"];
+                source: components["schemas"]["DaySource"];
+                stops: number;
+                onTime: number;
+                onTimePct: number | null;
+            })[];
+            byBrand: (components["schemas"]["DemandCounts"] & {
+                brand: components["schemas"]["Brand"];
+                stops: number;
+                onTimePct: number | null;
+                avgArrivalDeltaMin: number | null;
+            })[];
+            notes: string[];
+        };
+        ReportsFleet: {
+            depotCode: string;
+            from: components["schemas"]["DateOnly"];
+            to: components["schemas"]["DateOnly"];
+            historySource: components["schemas"]["HistorySource"];
+            coverage: components["schemas"]["Coverage"];
+            utilisation: {
+                pct: number | null;
+                /** @example 80 */
+                targetPct: number;
+                note: string | null;
+            };
+            vehicles: {
+                /** @example VEH101 */
+                vehicleId: string;
+                /** @enum {string} */
+                type: "truck" | "van";
+                temp: components["schemas"]["VehicleTemp"];
+                volumeCapM3: number;
+                /** @description Trips run in this system plus historical routes. */
+                trips: number;
+                stops: number;
+                onTimePct: number | null;
+                /** @description Null without a trip published in this system. */
+                avgLoadPct: number | null;
+                /** @description Days in the range the vehicle was marked in the workshop. */
+                workshopDays: number;
+            }[];
+            byTemp: {
+                temp: components["schemas"]["VehicleTemp"];
+                vehicles: number;
+                trips: number;
+                avgLoadPct: number | null;
+            }[];
+            notes: string[];
+        };
+        /**
+         * @description stops: busiest first. onTime: worst on-time share first. discrepancies: most first.
+         * @enum {string}
+         */
+        OutletSort: "stops" | "onTime" | "discrepancies";
+        ReportsOutlets: {
+            depotCode: string;
+            from: components["schemas"]["DateOnly"];
+            to: components["schemas"]["DateOnly"];
+            historySource: components["schemas"]["HistorySource"];
+            coverage: components["schemas"]["Coverage"];
+            sort: components["schemas"]["OutletSort"];
+            outlets: components["schemas"]["OutletPerformance"][];
+            notes: string[];
+        };
+        ReportsExceptions: {
+            depotCode: string;
+            from: components["schemas"]["DateOnly"];
+            to: components["schemas"]["DateOnly"];
+            historySource: components["schemas"]["HistorySource"];
+            coverage: components["schemas"]["Coverage"];
+            total: number;
+            byKind: components["schemas"]["ExceptionCount"][];
+            byDay: {
+                date: components["schemas"]["DateOnly"];
+                count: number;
+            }[];
+            /** @description The 50 most recent, newest first. */
+            recent: {
+                kind: string;
+                label: string;
+                date: components["schemas"]["DateOnly"];
+                /** @enum {string} */
+                source: "live" | "history";
+                at: string | null;
+                orderRef: string | null;
+                outletId: string | null;
+                note: string | null;
+            }[];
+            notes: string[];
+        };
+        WeekRef: {
+            /** @example 2026 */
+            isoYear: number;
+            /** @example 16 */
+            isoWeek: number;
+            startDate: components["schemas"]["DateOnly"];
+            /** @description The week's last operating weekday (Saturday). */
+            endDate: components["schemas"]["DateOnly"];
+        };
+        /**
+         * @description Trips needed against trips available, using the shared capacity thresholds. `near` is 90% or more.
+         * @enum {string}
+         */
+        CapacityLevel: "ok" | "near" | "over";
+        /** @enum {string} */
+        CapacityActionKind: "RECALL_FROM_WORKSHOP" | "HIRE_RELIEF_VEHICLE" | "SHIFT_BRAND_DAY" | "RAISE_FUEL_QUOTA" | "PRE_BUILD_ORDERS" | "SPLIT_LARGE_ORDER";
+        /** @enum {string} */
+        CapacityActionStatus: "PROPOSED" | "APPROVED" | "APPLIED" | "REJECTED";
+        CapacityWeek: components["schemas"]["WeekRef"] & {
+            /**
+             * @description A week with history shows what happened; otherwise the stored forecast.
+             * @enum {string}
+             */
+            kind: "actual" | "forecast";
+            /** @description Calendar causes, e.g. "Vesak ramp", "Payday", "Monsoon". */
+            signals: string[];
+            /** @example 6 */
+            operatingDays: number;
+            /** @example 306.9 */
+            totalM3: number;
+            /** @example 105.5 */
+            chilledM3: number;
+            ambientM3: number;
+            reeferTripsPerDay: {
+                /**
+                 * @description Chilled m3 per operating day over the planned load per trip, rounded up.
+                 * @example 5
+                 */
+                needed: number;
+                /**
+                 * @description Available reefers x 2 trips a day.
+                 * @example 4
+                 */
+                capacity: number;
+                /** @example 1 */
+                shortfall: number;
+            };
+            /** @description Reefers marked in the workshop on any day of the week; counted out for the whole week. */
+            reefersInWorkshop: number;
+            /** @description Chilled volume the available reefers can carry in the week at the planned load per trip. */
+            chilledCapacityM3: number;
+            /** @description Whole-fleet capacity in the week at observed loading, not nameplate. */
+            fleetCapacityM3: number;
+            level: components["schemas"]["CapacityLevel"];
+            /**
+             * @description A short label. "Covered", "Covered, no slack", "+1 hired reefer", "Recall 1 from workshop, +1 hired reefer".
+             * @example +1 hired reefer
+             */
+            action: string;
+            /** @description The persisted capacity actions for this week, so a row can link to its decisions. */
+            actions: {
+                id: string;
+                kind: components["schemas"]["CapacityActionKind"];
+                status: components["schemas"]["CapacityActionStatus"];
+            }[];
+        };
+        /** @enum {string} */
+        CapacityDecision: "APPROVE" | "REJECT" | "APPLY";
+        CapacityAction: {
+            /** @example clx0cap1a2b3c4d5e6f7g8h9 */
+            id: string;
+            /** @example 2026 */
+            isoYear: number;
+            /** @example 16 */
+            isoWeek: number;
+            /** @example Peliyagoda */
+            depotCode: string;
+            brand: components["schemas"]["Brand"] | null;
+            kind: components["schemas"]["CapacityActionKind"];
+            /** @example Hire 1 reefer for 13–18 Apr */
+            title: string;
+            /** @example Peliyagoda · covers 1 of the 1 short trip a day in W16 */
+            detail: string;
+            /** @description Kind-specific. HIRE_RELIEF_VEHICLE: count, vehicleTemp, fromDate, toDate, shortfallTripsPerDay. RECALL_FROM_WORKSHOP: vehicleIds, dates, count. PRE_BUILD_ORDERS / SHIFT_BRAND_DAY: brand and the assumed share moved (and fromDay/toDay). RAISE_FUEL_QUOTA: vehicles[{vehicleId, quotaL, usedL, proposedQuotaL}]. */
+            params: {
+                [key: string]: unknown;
+            };
+            /** @description tripsPerDay (or litres for fuel), a `basis` sentence, and `estimate`: true when the figure rests on an assumption rather than arithmetic. */
+            expectedRelief: {
+                [key: string]: unknown;
+            };
+            status: components["schemas"]["CapacityActionStatus"];
+            /** @description True for an open proposal the forecast no longer calls for (the week is covered now). Decided actions are never stale. */
+            stale: boolean;
+            availableDecisions: components["schemas"]["CapacityDecision"][];
+            /** @description Name of the dispatcher who last decided. */
+            decidedBy: string | null;
+            decidedAt: string | null;
+            reasonCode: string | null;
+            note: string | null;
+            appliesFromDate: components["schemas"]["DateOnly"] | null;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** @description The depot's capacity forecast. Forecast volumes were produced by a stored, documented method (`forecastMethod`); only `forecastError` is computed at read time. When `historySource.kind` is `synthetic`, every volume here is generated for the development fixture and must be shown as such. */
+        CapacityForecast: {
+            depotCode: string;
+            /** @description The brand filter applied, if any. */
+            brand: components["schemas"]["Brand"] | null;
+            from: components["schemas"]["DateOnly"] | null;
+            to: components["schemas"]["DateOnly"] | null;
+            /** @description The method string stored on the forecast rows. Starts with SYNTHETIC when generated for the fixture. */
+            forecastMethod: string | null;
+            forecastGeneratedAt: string | null;
+            historySource: components["schemas"]["HistorySource"];
+            weeks: components["schemas"]["CapacityWeek"][];
+            /** @example 9 */
+            reeferCount: number;
+            /** @description Whole-fleet capacity for a six-day week at observed loading. */
+            fleetCapacityM3: number;
+            /** @description Reefer capacity for a six-day week at the planned load per trip. */
+            reeferCapacityM3: number;
+            /**
+             * @description Mean reefer volume capacity x the observed fill, in m3.
+             * @example 5.8
+             */
+            loadPerReeferTripM3: number;
+            peakWeek: (components["schemas"]["WeekRef"] & {
+                totalM3: number;
+                signals: string[];
+                /** @description Against the mean of the last four known weeks. */
+                vsRecentPct: number | null;
+            }) | null;
+            chilledPeak: (components["schemas"]["WeekRef"] & {
+                chilledM3: number;
+                vsRecentPct: number | null;
+            }) | null;
+            /** @description Of the forecast weeks in range, how many need more reefer trips a day than the reefers can run. */
+            reeferShortfallWeeks: {
+                /** @example 3 */
+                count: number;
+                /** @example 6 */
+                of: number;
+                /** @example 5 */
+                maxTripsPerDayShort: number;
+            };
+            forecastError: {
+                /** @description Mean absolute percentage error of the same method on the last known weeks. */
+                mapePct: number | null;
+                chilledMapePct: number | null;
+                weeksTested: number;
+                /** @description How far ahead the backtest forecast, matching the real gap to the first forecast week. */
+                leadWeeks: number;
+                note: string;
+            };
+            /** @description Same as forecastError.mapePct, for the headline tile. */
+            forecastErrorPct: number | null;
+            /** @description Up to eight persisted proposals for the forecast weeks that still apply, largest relief first. Rejected and stale ones are left out. */
+            recommendedActions: components["schemas"]["CapacityAction"][];
+            /** @description Each assumption the numbers rest on, in words. */
+            assumptions: string[];
+        };
+        CapacityActionList: {
+            depotCode: string;
+            /** @description Echo of the filter; null when listing the whole stored forecast horizon. */
+            isoYear: number | null;
+            isoWeek: number | null;
+            items: components["schemas"]["CapacityAction"][];
+        };
+        CapacityDecisionRequest: {
+            decision: components["schemas"]["CapacityDecision"];
+            /**
+             * @description A short UPPER_SNAKE code, recorded in the decision log. Optional.
+             * @example COVERED_ELSEWHERE
+             */
+            reasonCode?: string;
+            note?: string;
+        };
+        CapacityDecisionResult: {
+            action: components["schemas"]["CapacityAction"];
+            /** @description What the decision did, in plain words, including what it did NOT do. Show these to the dispatcher. */
+            consequences: string[];
         };
     };
     responses: {
@@ -1621,23 +3189,6 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description Authenticated but not permitted. Either the role is wrong, or the record is not owned by this depot, outlet or vehicle. */
-        Forbidden: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                /**
-                 * @example {
-                 *       "error": {
-                 *         "code": "FORBIDDEN",
-                 *         "message": "You do not own this record."
-                 *       }
-                 *     }
-                 */
-                "application/json": components["schemas"]["Error"];
-            };
-        };
         /** @description The request was well formed but the operation is blocked by business rules. `details.violations` carries the reasons, so the client can render them beside the failed action instead of guessing. */
         ValidationFailed: {
             headers: {
@@ -1659,6 +3210,23 @@ export interface components {
                  *             }
                  *           ]
                  *         }
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Authenticated but not permitted. Either the role is wrong, or the record is not owned by this depot, outlet or vehicle. */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "error": {
+                 *         "code": "FORBIDDEN",
+                 *         "message": "You do not own this record."
                  *       }
                  *     }
                  */
@@ -2040,6 +3608,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     placeOrders: {
@@ -2387,6 +3956,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     closeOrderQueue: {
@@ -2546,6 +4116,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     createPlan: {
@@ -3278,7 +4849,8 @@ export interface operations {
                      *           "status": "accepted",
                      *           "conflictState": "NONE"
                      *         }
-                     *       ]
+                     *       ],
+                     *       "rejected": []
                      *     }
                      */
                     "application/json": components["schemas"]["SubmitEventsResult"];
@@ -3310,13 +4882,42 @@ export interface operations {
                     /**
                      * @example {
                      *       "serverSeq": 10428,
-                     *       "events": []
+                     *       "events": [
+                     *         {
+                     *           "id": "01JB2X8Q9K7YC4V3M0ZQ5T6RWH",
+                     *           "tripStopId": "clx0stp1a2b3c4d5e6f7g8h",
+                     *           "type": "POD_CAPTURED",
+                     *           "occurredAt": "2026-09-30T04:56:00Z",
+                     *           "orderId": null,
+                     *           "deliveredUnits": null,
+                     *           "recipientName": "K. Jayasuriya",
+                     *           "signatureData": null,
+                     *           "photoData": null,
+                     *           "reasonCode": null,
+                     *           "pages": [
+                     *             {
+                     *               "id": "01JB2X8Q9K7YC4V3M0ZQ5T6PG1",
+                     *               "seq": 0,
+                     *               "kind": "RECEIPT",
+                     *               "qualityFlags": [],
+                     *               "capturedAt": "2026-09-30T04:55:20Z"
+                     *             },
+                     *             {
+                     *               "id": "01JB2X8Q9K7YC4V3M0ZQ5T6PG3",
+                     *               "seq": 1,
+                     *               "kind": "SIGNATURE",
+                     *               "qualityFlags": [],
+                     *               "capturedAt": "2026-09-30T04:55:50Z"
+                     *             }
+                     *           ]
+                     *         }
+                     *       ]
                      *     }
                      */
                     "application/json": {
                         /** Format: int64 */
                         serverSeq: number;
-                        events: components["schemas"]["StopEvent"][];
+                        events: components["schemas"]["PulledStopEvent"][];
                     };
                 };
             };
@@ -3332,6 +4933,33 @@ export interface operations {
         };
         requestBody: {
             content: {
+                /**
+                 * @example {
+                 *       "deviceId": "device-7f3a91",
+                 *       "clientClockAt": "2026-09-30T06:02:11Z",
+                 *       "events": [
+                 *         {
+                 *           "id": "01JB2X8Q9K7YC4V3M0ZQ5T6RWE",
+                 *           "type": "ARRIVED",
+                 *           "occurredAt": "2026-09-30T04:12:00Z",
+                 *           "tripStopId": "clx0stp1a2b3c4d5e6f7g8h"
+                 *         },
+                 *         {
+                 *           "id": "01JB2X8Q9K7YC4V3M0ZQ5T6RWF",
+                 *           "type": "UNLOAD_START",
+                 *           "occurredAt": "2026-09-30T04:15:00Z",
+                 *           "tripStopId": "clx0stp1a2b3c4d5e6f7g8h"
+                 *         },
+                 *         {
+                 *           "id": "01JB2X8Q9K7YC4V3M0ZQ5T6RWG",
+                 *           "type": "FAILED",
+                 *           "occurredAt": "2026-09-30T05:20:00Z",
+                 *           "tripStopId": "clx0stp9z8y7x6w5v4u3t2s",
+                 *           "reasonCode": "ROAD_BLOCKED"
+                 *         }
+                 *       ]
+                 *     }
+                 */
                 "application/json": components["schemas"]["SyncBatchRequest"];
             };
         };
@@ -3365,7 +4993,8 @@ export interface operations {
                      *           "status": "accepted",
                      *           "conflictState": "NONE"
                      *         }
-                     *       ]
+                     *       ],
+                     *       "rejected": []
                      *     }
                      */
                     "application/json": components["schemas"]["SyncBatchResult"];
@@ -3427,6 +5056,2393 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
+        };
+    };
+    listFleetVehicles: {
+        parameters: {
+            query?: {
+                /** @description Defaults to today in Asia/Colombo. */
+                date?: components["schemas"]["DateOnly"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The depot's fleet for the day. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "date": "2026-09-29",
+                     *       "depotCode": "Peliyagoda",
+                     *       "summary": {
+                     *         "total": 6,
+                     *         "refrigerated": 2,
+                     *         "ambient": 4,
+                     *         "available": 5,
+                     *         "idle": 2,
+                     *         "onRoute": 1,
+                     *         "loading": 1,
+                     *         "returned": 1,
+                     *         "inWorkshop": 1
+                     *       },
+                     *       "vehicles": [
+                     *         {
+                     *           "vehicleId": "VEH014",
+                     *           "type": "truck",
+                     *           "temp": "reefer",
+                     *           "depotCode": "Peliyagoda",
+                     *           "volumeCapM3": 15,
+                     *           "weightCapKg": 4800,
+                     *           "driverName": "Sunil Fernando",
+                     *           "tripsToday": 2,
+                     *           "utilisationPct": 82,
+                     *           "status": "ON_ROUTE",
+                     *           "note": null
+                     *         },
+                     *         {
+                     *           "vehicleId": "VEH017",
+                     *           "type": "truck",
+                     *           "temp": "ambient",
+                     *           "depotCode": "Peliyagoda",
+                     *           "volumeCapM3": 18,
+                     *           "weightCapKg": 5000,
+                     *           "driverName": "Priya Kumara",
+                     *           "tripsToday": 2,
+                     *           "utilisationPct": 35,
+                     *           "status": "LOADING",
+                     *           "note": null
+                     *         },
+                     *         {
+                     *           "vehicleId": "VEH011",
+                     *           "type": "van",
+                     *           "temp": "ambient",
+                     *           "depotCode": "Peliyagoda",
+                     *           "volumeCapM3": 8,
+                     *           "weightCapKg": 1500,
+                     *           "driverName": null,
+                     *           "tripsToday": 1,
+                     *           "utilisationPct": 100,
+                     *           "status": "RETURNED",
+                     *           "note": null
+                     *         },
+                     *         {
+                     *           "vehicleId": "VEH040",
+                     *           "type": "van",
+                     *           "temp": "ambient",
+                     *           "depotCode": "Peliyagoda",
+                     *           "volumeCapM3": 8,
+                     *           "weightCapKg": 1500,
+                     *           "driverName": null,
+                     *           "tripsToday": 0,
+                     *           "utilisationPct": 0,
+                     *           "status": "AVAILABLE",
+                     *           "note": null
+                     *         },
+                     *         {
+                     *           "vehicleId": "VEH038",
+                     *           "type": "truck",
+                     *           "temp": "reefer",
+                     *           "depotCode": "Peliyagoda",
+                     *           "volumeCapM3": 15,
+                     *           "weightCapKg": 4800,
+                     *           "driverName": null,
+                     *           "tripsToday": 0,
+                     *           "utilisationPct": 0,
+                     *           "status": "IN_WORKSHOP",
+                     *           "note": "Compressor fault, back Thursday"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["VehicleList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getVehicle: {
+        parameters: {
+            query?: {
+                /** @description Defaults to today in Asia/Colombo. */
+                date?: components["schemas"]["DateOnly"];
+            };
+            header?: never;
+            path: {
+                vehicleId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The vehicle. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "date": "2026-09-29",
+                     *       "vehicleId": "VEH014",
+                     *       "type": "truck",
+                     *       "temp": "reefer",
+                     *       "depotCode": "Peliyagoda",
+                     *       "volumeCapM3": 15,
+                     *       "weightCapKg": 4800,
+                     *       "driverName": "Sunil Fernando",
+                     *       "tripsToday": 2,
+                     *       "utilisationPct": 82,
+                     *       "status": "ON_ROUTE",
+                     *       "note": null,
+                     *       "trips": [
+                     *         {
+                     *           "tripId": "clx0trp1a2b3c4d5e6f7g8h9",
+                     *           "tripNo": 1,
+                     *           "route": "Peliyagoda → Colombo",
+                     *           "plannedDepartAt": "06:00",
+                     *           "stops": 12,
+                     *           "orders": 28,
+                     *           "status": "DEPARTED",
+                     *           "wave": "DAYTIME"
+                     *         },
+                     *         {
+                     *           "tripId": "clx0trp2a2b3c4d5e6f7g8h9",
+                     *           "tripNo": 2,
+                     *           "route": "Peliyagoda → Dehiwala",
+                     *           "plannedDepartAt": "12:30",
+                     *           "stops": 6,
+                     *           "orders": 11,
+                     *           "status": "PLANNED",
+                     *           "wave": "DAYTIME"
+                     *         }
+                     *       ],
+                     *       "chiller": {
+                     *         "tempC": 3.8,
+                     *         "targetMinC": 2,
+                     *         "targetMaxC": 5,
+                     *         "inRange": true,
+                     *         "source": "LOADER_AT_BAY",
+                     *         "recordedByName": "Ranjith Silva",
+                     *         "recordedAt": "2026-09-29T00:21:00.000Z",
+                     *         "ageSeconds": 3660
+                     *       },
+                     *       "position": {
+                     *         "lat": 6.9402,
+                     *         "lng": 79.8641,
+                     *         "accuracyM": 18,
+                     *         "recordedAt": "2026-09-29T01:20:00.000Z",
+                     *         "ageSeconds": 60,
+                     *         "lamp": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["VehicleDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getFleetPositions: {
+        parameters: {
+            query?: {
+                /** @description Defaults to today in Asia/Colombo. */
+                date?: components["schemas"]["DateOnly"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The vehicles on the map. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "date": "2026-09-29",
+                     *       "depotCode": "Peliyagoda",
+                     *       "updatedAt": "2026-09-29T01:12:00.000Z",
+                     *       "summary": {
+                     *         "all": 3,
+                     *         "late": 1,
+                     *         "lamp": 1
+                     *       },
+                     *       "vehicles": [
+                     *         {
+                     *           "vehicleId": "VEH025",
+                     *           "driverName": "K. Fernando",
+                     *           "state": "ON_TIME",
+                     *           "lateMinutes": 0,
+                     *           "trip": {
+                     *             "tripId": "clx0trp3a2b3c4d5e6f7g8h9",
+                     *             "tripNo": 1,
+                     *             "districtName": "Puttalam"
+                     *           },
+                     *           "position": {
+                     *             "lat": 7.62,
+                     *             "lng": 79.84,
+                     *             "accuracyM": 12,
+                     *             "recordedAt": "2026-09-29T01:11:00.000Z",
+                     *             "ageSeconds": 60,
+                     *             "lamp": false
+                     *           },
+                     *           "nextStop": {
+                     *             "outletId": "OUT074",
+                     *             "outletName": "Fresh Puttalam",
+                     *             "stopNumber": 2,
+                     *             "totalStops": 4,
+                     *             "deliveredStops": 1,
+                     *             "eta": "07:21",
+                     *             "windowOpen": "05:30",
+                     *             "windowClose": "08:00"
+                     *           }
+                     *         },
+                     *         {
+                     *           "vehicleId": "VEH018",
+                     *           "driverName": "R. Dias",
+                     *           "state": "LATE",
+                     *           "lateMinutes": 12,
+                     *           "trip": {
+                     *             "tripId": "clx0trp4a2b3c4d5e6f7g8h9",
+                     *             "tripNo": 1,
+                     *             "districtName": "Kalutara"
+                     *           },
+                     *           "position": {
+                     *             "lat": 6.62,
+                     *             "lng": 79.97,
+                     *             "accuracyM": 25,
+                     *             "recordedAt": "2026-09-29T01:11:00.000Z",
+                     *             "ageSeconds": 60,
+                     *             "lamp": false
+                     *           },
+                     *           "nextStop": {
+                     *             "outletId": "OUT031",
+                     *             "outletName": "Style Kalutara",
+                     *             "stopNumber": 3,
+                     *             "totalStops": 9,
+                     *             "deliveredStops": 2,
+                     *             "eta": "07:48",
+                     *             "windowOpen": "06:00",
+                     *             "windowClose": "09:00"
+                     *           }
+                     *         },
+                     *         {
+                     *           "vehicleId": "VEH043",
+                     *           "driverName": "S. Perera",
+                     *           "state": "LAMP",
+                     *           "lateMinutes": 0,
+                     *           "trip": {
+                     *             "tripId": "clx0trp5a2b3c4d5e6f7g8h9",
+                     *             "tripNo": 1,
+                     *             "districtName": "Nuwara Eliya"
+                     *           },
+                     *           "position": {
+                     *             "lat": 6.97,
+                     *             "lng": 80.77,
+                     *             "accuracyM": null,
+                     *             "recordedAt": "2026-09-29T00:58:00.000Z",
+                     *             "ageSeconds": 840,
+                     *             "lamp": true
+                     *           },
+                     *           "nextStop": {
+                     *             "outletId": "OUT102",
+                     *             "outletName": "Fresh Nuwara Eliya",
+                     *             "stopNumber": 3,
+                     *             "totalStops": 5,
+                     *             "deliveredStops": 2,
+                     *             "eta": "07:05",
+                     *             "windowOpen": "06:00",
+                     *             "windowClose": "09:30"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["FleetPositions"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    reportPositions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "pings": [
+                 *         {
+                 *           "clientPingId": "01JBX3Q7W2R8M5T9K4N6P0ZYAB",
+                 *           "lat": 7.6201,
+                 *           "lng": 79.8402,
+                 *           "accuracyM": 12,
+                 *           "recordedAt": "2026-09-29T01:11:00.000Z"
+                 *         },
+                 *         {
+                 *           "clientPingId": "01JBX3Q7W2R8M5T9K4N6P0ZYAC",
+                 *           "lat": 7.6188,
+                 *           "lng": 79.8397,
+                 *           "recordedAt": "2026-09-29T01:12:00.000Z"
+                 *         }
+                 *       ]
+                 *     }
+                 */
+                "application/json": components["schemas"]["PingBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description How many reports were stored and how many had already arrived. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "accepted": 1,
+                     *       "duplicates": 1
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PingBatchResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description A report is dated in the future, or the body does not match the contract. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": {
+                     *         "code": "PING_IN_FUTURE",
+                     *         "message": "A report is dated more than 5 minutes ahead of the server clock. Check the phone's date and time.",
+                     *         "details": {
+                     *           "clientPingId": "01JBX3Q7W2R8M5T9K4N6P0ZYAB"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    recordChillerReading: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tripId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "tempC": 3.8,
+                 *       "source": "LOADER_AT_BAY",
+                 *       "note": "Gauge steady",
+                 *       "clientReadingId": "01JBX3Q7W2R8M5T9K4N6P1CHL1"
+                 *     }
+                 */
+                "application/json": components["schemas"]["ChillerReadingRequest"];
+            };
+        };
+        responses: {
+            /** @description The reading already recorded under this clientReadingId. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "clx0chr1a2b3c4d5e6f7g8h9",
+                     *       "tripId": "clx0trp1a2b3c4d5e6f7g8h9",
+                     *       "vehicleId": "VEH014",
+                     *       "tempC": 3.8,
+                     *       "targetMinC": 2,
+                     *       "targetMaxC": 5,
+                     *       "inRange": true,
+                     *       "source": "LOADER_AT_BAY",
+                     *       "recordedAt": "2026-09-29T00:21:00.000Z",
+                     *       "recordedByName": "Ranjith Silva"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ChillerReadingResponse"];
+                };
+            };
+            /** @description The reading was recorded. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "clx0chr2a2b3c4d5e6f7g8h9",
+                     *       "tripId": "clx0trp1a2b3c4d5e6f7g8h9",
+                     *       "vehicleId": "VEH014",
+                     *       "tempC": 6.2,
+                     *       "targetMinC": 2,
+                     *       "targetMaxC": 5,
+                     *       "inRange": false,
+                     *       "source": "LOADER_AT_BAY",
+                     *       "recordedAt": "2026-09-29T00:24:00.000Z",
+                     *       "recordedByName": "Ranjith Silva"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ChillerReadingResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            /** @description The reading cannot be recorded in this state. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": {
+                     *         "code": "CHILLER_NOT_APPLICABLE",
+                     *         "message": "Only refrigerated vehicles take chiller readings."
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listExceptions: {
+        parameters: {
+            query?: {
+                date?: components["schemas"]["DateOnly"];
+                status?: "open" | "resolved" | "all";
+                category?: components["schemas"]["ExceptionCategory"];
+                severity?: components["schemas"]["ExceptionSeverity"];
+                /** @description Matches order ref, vehicle, outlet id or name, and the title. */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The day's exceptions and summary. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "date": "2026-09-29",
+                     *       "summary": {
+                     *         "open": 3,
+                     *         "critical": 1,
+                     *         "ordersAffected": 4,
+                     *         "outletsAffected": 3,
+                     *         "vehiclesAffected": 2,
+                     *         "resolvedToday": 1,
+                     *         "avgResolveMinutes": 18,
+                     *         "countsByCategory": {
+                     *           "planning": 0,
+                     *           "loading": 1,
+                     *           "on_the_road": 1,
+                     *           "store": 1
+                     *         },
+                     *         "countsBySeverity": {
+                     *           "critical": 1,
+                     *           "warning": 1,
+                     *           "info": 1
+                     *         }
+                     *       },
+                     *       "exceptions": [
+                     *         {
+                     *           "id": "shortfall:clx0sf1a2b3c4d5e6f7g8h9",
+                     *           "kind": "SHORTFALL",
+                     *           "severity": "critical",
+                     *           "category": "loading",
+                     *           "status": "open",
+                     *           "title": "Short 4 units · S1-082 on VEH017",
+                     *           "subtitle": "Kurunegala route · Trip 2 · departs 04:11",
+                     *           "detail": "Missing from the dock",
+                     *           "reportedBy": {
+                     *             "name": "Ranjith Silva",
+                     *             "role": "LOADER"
+                     *           },
+                     *           "raisedAt": "2026-09-28T22:32:00.000Z",
+                     *           "ageMinutes": 8,
+                     *           "resolvedAt": null,
+                     *           "vehicleId": "VEH017",
+                     *           "tripId": "clx0trp1a2b3c4d5e6f7g8h9",
+                     *           "planId": "clx0pln1a2b3c4d5e6f7g8h",
+                     *           "departsAt": "04:11",
+                     *           "orderRefs": [
+                     *             "S1-082"
+                     *           ],
+                     *           "affectedOutlets": [
+                     *             {
+                     *               "outletId": "OUT027",
+                     *               "outletName": "Kandy City Centre",
+                     *               "stopSeq": 2,
+                     *               "ordered": 20,
+                     *               "delta": -4
+                     *             }
+                     *           ],
+                     *           "quantities": {
+                     *             "loaded": 16,
+                     *             "expected": 20,
+                     *             "short": 4
+                     *           },
+                     *           "acknowledgement": null,
+                     *           "resolution": null,
+                     *           "decisionOptions": [
+                     *             {
+                     *               "decision": "SEND_SHORT",
+                     *               "label": "Send short and notify the store",
+                     *               "description": "VEH017 leaves on time with 16 of 20 units. The store is told before departure.",
+                     *               "recommended": true,
+                     *               "requiresNote": false,
+                     *               "followUp": {
+                     *                 "forDate": "2026-09-30",
+                     *                 "units": 4,
+                     *                 "label": "Add the 4 missing units to Wed, 30 Sept's orders"
+                     *               },
+                     *               "consequences": [
+                     *                 {
+                     *                   "audience": "loader",
+                     *                   "title": "Loader · Ranjith Silva",
+                     *                   "detail": "The departure block is lifted: VEH017 can be marked ready with 16 of 20 units."
+                     *                 },
+                     *                 {
+                     *                   "audience": "store",
+                     *                   "title": "Store · Kandy City Centre",
+                     *                   "detail": "Told before departure that 16 of 20 units are on the way for S1-082."
+                     *                 },
+                     *                 {
+                     *                   "audience": "record",
+                     *                   "title": "Decision record",
+                     *                   "detail": "Logged by the dispatcher against the shortfall and order S1-082."
+                     *                 }
+                     *               ]
+                     *             },
+                     *             {
+                     *               "decision": "HOLD_ORDER",
+                     *               "label": "Hold the order for the next run",
+                     *               "description": "VEH017 leaves without S1-082; it is deferred to Wed, 30 Sept.",
+                     *               "recommended": false,
+                     *               "requiresNote": false,
+                     *               "followUp": null,
+                     *               "consequences": [
+                     *                 {
+                     *                   "audience": "record",
+                     *                   "title": "Decision record",
+                     *                   "detail": "Logged by the dispatcher against the shortfall and order S1-082."
+                     *                 }
+                     *               ]
+                     *             }
+                     *           ]
+                     *         },
+                     *         {
+                     *           "id": "lamp:clx0trp9a2b3c4d5e6f7g8h9",
+                     *           "kind": "LAMP",
+                     *           "severity": "warning",
+                     *           "category": "on_the_road",
+                     *           "status": "open",
+                     *           "title": "VEH043 in Lamp Mode · no update 14 min",
+                     *           "subtitle": "Nuwara Eliya · last reliable update 06:28",
+                     *           "detail": "Driver works offline; ETA is estimated",
+                     *           "reportedBy": {
+                     *             "name": "System",
+                     *             "role": null
+                     *           },
+                     *           "raisedAt": "2026-09-29T00:58:00.000Z",
+                     *           "ageMinutes": 4,
+                     *           "resolvedAt": null,
+                     *           "vehicleId": "VEH043",
+                     *           "tripId": "clx0trp9a2b3c4d5e6f7g8h9",
+                     *           "planId": "clx0pln1a2b3c4d5e6f7g8h",
+                     *           "departsAt": "05:40",
+                     *           "orderRefs": [
+                     *             "S1-091"
+                     *           ],
+                     *           "affectedOutlets": [
+                     *             {
+                     *               "outletId": "OUT081",
+                     *               "outletName": "Nuwara Eliya Fresh",
+                     *               "stopSeq": 3,
+                     *               "ordered": 24,
+                     *               "delta": null
+                     *             }
+                     *           ],
+                     *           "quantities": null,
+                     *           "acknowledgement": null,
+                     *           "resolution": null,
+                     *           "decisionOptions": [
+                     *             {
+                     *               "decision": "ACKNOWLEDGE",
+                     *               "label": "Acknowledge",
+                     *               "description": "Mark it seen. It stays open while the condition lasts and clears by itself when the evidence changes.",
+                     *               "recommended": true,
+                     *               "requiresNote": false,
+                     *               "followUp": null,
+                     *               "consequences": [
+                     *                 {
+                     *                   "audience": "record",
+                     *                   "title": "Decision record",
+                     *                   "detail": "Acknowledged by the dispatcher. The exception stays open for as long as the condition lasts."
+                     *                 }
+                     *               ]
+                     *             }
+                     *           ]
+                     *         },
+                     *         {
+                     *           "id": "problem:01JB2X8Q9K7YC4V3M0ZQ5T6RWE",
+                     *           "kind": "PROBLEM",
+                     *           "severity": "info",
+                     *           "category": "store",
+                     *           "status": "open",
+                     *           "title": "Items missing reported · S1-074",
+                     *           "subtitle": "Fresh Puttalam · S1-074 · 4 units affected",
+                     *           "detail": "Only 1 bag arrived.",
+                     *           "reportedBy": {
+                     *             "name": "Fathima Rizvi",
+                     *             "role": "STORE_MANAGER"
+                     *           },
+                     *           "raisedAt": "2026-09-28T04:10:00.000Z",
+                     *           "ageMinutes": 1585,
+                     *           "resolvedAt": null,
+                     *           "vehicleId": "VEH025",
+                     *           "tripId": "clx0trp5a2b3c4d5e6f7g8h9",
+                     *           "planId": "clx0pln0a2b3c4d5e6f7g8h",
+                     *           "departsAt": null,
+                     *           "orderRefs": [
+                     *             "S1-074"
+                     *           ],
+                     *           "affectedOutlets": [
+                     *             {
+                     *               "outletId": "OUT074",
+                     *               "outletName": "Fresh Puttalam",
+                     *               "stopSeq": 1,
+                     *               "ordered": 5,
+                     *               "delta": -4
+                     *             }
+                     *           ],
+                     *           "quantities": null,
+                     *           "acknowledgement": null,
+                     *           "resolution": null,
+                     *           "decisionOptions": []
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ExceptionList"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getException: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description See the id scheme in the exceptions schema file. */
+                exceptionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The exception. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "problem:01JB2X8Q9K7YC4V3M0ZQ5T6RWE",
+                     *       "kind": "PROBLEM",
+                     *       "severity": "info",
+                     *       "category": "store",
+                     *       "status": "open",
+                     *       "title": "Items missing reported · S1-074",
+                     *       "subtitle": "Fresh Puttalam · S1-074 · 4 units affected",
+                     *       "detail": "Only 1 bag arrived.",
+                     *       "reportedBy": {
+                     *         "name": "Fathima Rizvi",
+                     *         "role": "STORE_MANAGER"
+                     *       },
+                     *       "raisedAt": "2026-09-28T04:10:00.000Z",
+                     *       "ageMinutes": 1585,
+                     *       "resolvedAt": null,
+                     *       "vehicleId": "VEH025",
+                     *       "tripId": "clx0trp5a2b3c4d5e6f7g8h9",
+                     *       "planId": "clx0pln0a2b3c4d5e6f7g8h",
+                     *       "departsAt": null,
+                     *       "orderRefs": [
+                     *         "S1-074"
+                     *       ],
+                     *       "affectedOutlets": [
+                     *         {
+                     *           "outletId": "OUT074",
+                     *           "outletName": "Fresh Puttalam",
+                     *           "stopSeq": 1,
+                     *           "ordered": 5,
+                     *           "delta": -4
+                     *         }
+                     *       ],
+                     *       "quantities": null,
+                     *       "acknowledgement": {
+                     *         "at": "2026-09-28T04:30:00.000Z",
+                     *         "byName": "Nimal Perera"
+                     *       },
+                     *       "resolution": null,
+                     *       "decisionOptions": [
+                     *         {
+                     *           "decision": "RESOLVE",
+                     *           "label": "Resolve",
+                     *           "description": "Close it. Your note is kept as the resolution and sent to the store.",
+                     *           "recommended": true,
+                     *           "requiresNote": true,
+                     *           "followUp": null,
+                     *           "consequences": [
+                     *             {
+                     *               "audience": "order",
+                     *               "title": "Problem",
+                     *               "detail": "Marked resolved, with your note kept as the resolution."
+                     *             },
+                     *             {
+                     *               "audience": "store",
+                     *               "title": "Store · Fresh Puttalam",
+                     *               "detail": "Told that the issue is resolved, with your note."
+                     *             },
+                     *             {
+                     *               "audience": "record",
+                     *               "title": "Decision record",
+                     *               "detail": "Logged by the dispatcher against the problem."
+                     *             }
+                     *           ]
+                     *         }
+                     *       ],
+                     *       "activity": [
+                     *         {
+                     *           "at": "2026-09-28T04:10:00.000Z",
+                     *           "actorName": "Fathima Rizvi",
+                     *           "actorRole": "STORE_MANAGER",
+                     *           "action": "problem.raise",
+                     *           "summary": "Fathima Rizvi reported the problem",
+                     *           "note": "Only 1 bag arrived."
+                     *         },
+                     *         {
+                     *           "at": "2026-09-28T04:30:00.000Z",
+                     *           "actorName": "Nimal Perera",
+                     *           "actorRole": "DISPATCHER",
+                     *           "action": "problem.acknowledge",
+                     *           "summary": "Nimal Perera acknowledged the problem",
+                     *           "note": null
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ExceptionDetail"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    decideException: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exceptionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "decision": "SEND_SHORT",
+                 *       "note": "Stock is on tomorrow's truck",
+                 *       "followUp": true
+                 *     }
+                 */
+                "application/json": components["schemas"]["ExceptionDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated exception and what was done. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "replayed": false,
+                     *       "exception": {
+                     *         "id": "shortfall:clx0sf1a2b3c4d5e6f7g8h9",
+                     *         "kind": "SHORTFALL",
+                     *         "severity": "warning",
+                     *         "category": "loading",
+                     *         "status": "resolved",
+                     *         "title": "Short 4 units · S1-082 on VEH017",
+                     *         "subtitle": "Kurunegala route · Trip 2 · departs 04:11",
+                     *         "detail": "Missing from the dock",
+                     *         "reportedBy": {
+                     *           "name": "Ranjith Silva",
+                     *           "role": "LOADER"
+                     *         },
+                     *         "raisedAt": "2026-09-28T22:32:00.000Z",
+                     *         "ageMinutes": 9,
+                     *         "resolvedAt": "2026-09-28T22:41:00.000Z",
+                     *         "vehicleId": "VEH017",
+                     *         "tripId": "clx0trp1a2b3c4d5e6f7g8h9",
+                     *         "planId": "clx0pln1a2b3c4d5e6f7g8h",
+                     *         "departsAt": "04:11",
+                     *         "orderRefs": [
+                     *           "S1-082"
+                     *         ],
+                     *         "affectedOutlets": [
+                     *           {
+                     *             "outletId": "OUT027",
+                     *             "outletName": "Kandy City Centre",
+                     *             "stopSeq": 2,
+                     *             "ordered": 20,
+                     *             "delta": -4
+                     *           }
+                     *         ],
+                     *         "quantities": {
+                     *           "loaded": 16,
+                     *           "expected": 20,
+                     *           "short": 4
+                     *         },
+                     *         "acknowledgement": null,
+                     *         "resolution": {
+                     *           "decision": "SEND_SHORT",
+                     *           "note": "Stock is on tomorrow's truck",
+                     *           "at": "2026-09-28T22:41:00.000Z",
+                     *           "byName": "Nimal Perera"
+                     *         },
+                     *         "decisionOptions": []
+                     *       },
+                     *       "consequences": [
+                     *         {
+                     *           "audience": "loader",
+                     *           "title": "Loader · Ranjith Silva",
+                     *           "detail": "The departure block is lifted: VEH017 can be marked ready with 16 of 20 units."
+                     *         },
+                     *         {
+                     *           "audience": "store",
+                     *           "title": "Store · Kandy City Centre",
+                     *           "detail": "Told before departure that 16 of 20 units are on the way for S1-082."
+                     *         },
+                     *         {
+                     *           "audience": "order",
+                     *           "title": "Next run · Wed, 30 Sept",
+                     *           "detail": "The 4 missing units are queued as order ORD-004391 for Kandy City Centre."
+                     *         },
+                     *         {
+                     *           "audience": "record",
+                     *           "title": "Decision record",
+                     *           "detail": "Logged by Nimal Perera against the shortfall and order S1-082."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ExceptionDecisionResult"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description `ALREADY_DECIDED` (a different decision was applied; `details.resolution` says which), `DECISION_NOT_AVAILABLE` (not offered now; `details.offered` lists what is), `NO_DECISION_AVAILABLE` (a planning item) or `RACE_LOST`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": {
+                     *         "code": "ALREADY_DECIDED",
+                     *         "message": "This exception has already been decided: it was resolved as HOLD_ORDER.",
+                     *         "details": {
+                     *           "resolution": "HOLD_ORDER",
+                     *           "decidedBy": "Nimal Perera",
+                     *           "decidedAt": "2026-09-28T22:41:00.000Z"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listIssues: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The outlet's issues. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example [
+                     *       {
+                     *         "id": "01JB2X8Q9K7YC4V3M0ZQ5T6RWE",
+                     *         "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
+                     *         "orderRef": "S1-074",
+                     *         "kind": "GOODS_DAMAGED",
+                     *         "reasonCode": "ITEMS_MISSING",
+                     *         "units": 4,
+                     *         "note": "Only 1 bag of wheat flour arrived.",
+                     *         "status": "ACKNOWLEDGED",
+                     *         "resolution": null,
+                     *         "createdAt": "2026-09-28T04:10:00.000Z",
+                     *         "resolvedAt": null
+                     *       },
+                     *       {
+                     *         "id": "01JB1Q4T8M2ZH6N5R7V0W3X9YA",
+                     *         "orderId": "clx0ord0a2b3c4d5e6f7g8h8",
+                     *         "orderRef": "S1-068",
+                     *         "kind": "GOODS_DAMAGED",
+                     *         "reasonCode": "ITEMS_DAMAGED",
+                     *         "units": 2,
+                     *         "note": null,
+                     *         "status": "RESOLVED",
+                     *         "resolution": "Credit issued by head office.",
+                     *         "createdAt": "2026-09-27T05:02:00.000Z",
+                     *         "resolvedAt": "2026-09-27T09:15:00.000Z"
+                     *       }
+                     *     ]
+                     */
+                    "application/json": components["schemas"]["Issue"][];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createIssue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
+                 *       "kind": "GOODS_DAMAGED",
+                 *       "reasonCode": "ITEMS_MISSING",
+                 *       "units": 4,
+                 *       "note": "Only 1 bag of wheat flour arrived. The driver said the dock was short.",
+                 *       "clientRequestId": "3f2b8e9a-7c41-4d0e-9a52-6b1f0c8d2e11"
+                 *     }
+                 */
+                "application/json": components["schemas"]["CreateIssueRequest"];
+            };
+        };
+        responses: {
+            /** @description A retry of an issue already raised; nothing new was created. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "01JB2X8Q9K7YC4V3M0ZQ5T6RWE",
+                     *       "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
+                     *       "orderRef": "S1-074",
+                     *       "kind": "GOODS_DAMAGED",
+                     *       "reasonCode": "ITEMS_MISSING",
+                     *       "units": 4,
+                     *       "note": "Only 1 bag of wheat flour arrived. The driver said the dock was short.",
+                     *       "status": "NEW",
+                     *       "resolution": null,
+                     *       "createdAt": "2026-09-28T04:10:00.000Z",
+                     *       "resolvedAt": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Issue"];
+                };
+            };
+            /** @description The issue was raised. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "01JB2X8Q9K7YC4V3M0ZQ5T6RWE",
+                     *       "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
+                     *       "orderRef": "S1-074",
+                     *       "kind": "GOODS_DAMAGED",
+                     *       "reasonCode": "ITEMS_MISSING",
+                     *       "units": 4,
+                     *       "note": "Only 1 bag of wheat flour arrived. The driver said the dock was short.",
+                     *       "status": "NEW",
+                     *       "resolution": null,
+                     *       "createdAt": "2026-09-28T04:10:00.000Z",
+                     *       "resolvedAt": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Issue"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listNotifications: {
+        parameters: {
+            query?: {
+                unread?: "true" | "false";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notifications. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "unreadCount": 1,
+                     *       "items": [
+                     *         {
+                     *           "id": "clx0ntf2a2b3c4d5e6f7g8h9",
+                     *           "kind": "shortfall.send_short",
+                     *           "title": "Order S1-082 is leaving 4 short",
+                     *           "body": "VEH017 leaves with 16 of 20 units. The missing 4 are queued for Wed, 30 Sept as ORD-004391.",
+                     *           "payload": {
+                     *             "orderId": "clx0ord2a2b3c4d5e6f7g8h9",
+                     *             "shortfallId": "clx0sf1a2b3c4d5e6f7g8h9",
+                     *             "missingUnits": 4,
+                     *             "followUpOrderId": "clx0ord3a2b3c4d5e6f7g8h9"
+                     *           },
+                     *           "createdAt": "2026-09-28T22:41:00.000Z",
+                     *           "readAt": null
+                     *         },
+                     *         {
+                     *           "id": "clx0ntf1a2b3c4d5e6f7g8h9",
+                     *           "kind": "delivered",
+                     *           "title": "Your delivery has arrived",
+                     *           "body": "VEH025 delivered at 07:38. Please confirm what you received.",
+                     *           "payload": {
+                     *             "tripStopId": "clx0tst1a2b3c4d5e6f7g8h9"
+                     *           },
+                     *           "createdAt": "2026-09-27T02:08:00.000Z",
+                     *           "readAt": "2026-09-27T02:30:00.000Z"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["NotificationList"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    markNotificationRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                notificationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notification, and how many remain unread. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "notification": {
+                     *         "id": "clx0ntf2a2b3c4d5e6f7g8h9",
+                     *         "kind": "shortfall.send_short",
+                     *         "title": "Order S1-082 is leaving 4 short",
+                     *         "body": "VEH017 leaves with 16 of 20 units.",
+                     *         "payload": {
+                     *           "orderId": "clx0ord2a2b3c4d5e6f7g8h9"
+                     *         },
+                     *         "createdAt": "2026-09-28T22:41:00.000Z",
+                     *         "readAt": "2026-09-28T22:50:00.000Z"
+                     *       },
+                     *       "unreadCount": 0
+                     *     }
+                     */
+                    "application/json": components["schemas"]["NotificationRead"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getReportsOverview: {
+        parameters: {
+            query?: {
+                /** @description First day of the range. With neither `from` nor `to`, the seven days ending at the newest day with data. */
+                from?: components["schemas"]["DateOnly"];
+                /** @description Last day of the range, inclusive. At most 366 days after `from`. */
+                to?: components["schemas"]["DateOnly"];
+                /** @description Must be the caller's own depot if given; a dispatcher cannot read another depot's reports (403). */
+                depot?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "depotCode": "Peliyagoda",
+                     *       "from": "2026-04-03",
+                     *       "to": "2026-04-09",
+                     *       "historySource": {
+                     *         "kind": "synthetic",
+                     *         "label": "History is SYNTHETIC, generated for the development fixture. It is not the competition data."
+                     *       },
+                     *       "coverage": {
+                     *         "liveDays": 1,
+                     *         "historyDays": 0,
+                     *         "emptyDays": 6
+                     *       },
+                     *       "onTime": {
+                     *         "pct": 50,
+                     *         "onTime": 1,
+                     *         "total": 2,
+                     *         "targetPct": 95,
+                     *         "vsPreviousPts": -50,
+                     *         "note": null
+                     *       },
+                     *       "orders": {
+                     *         "planned": 12,
+                     *         "delivered": 3,
+                     *         "deferred": 1,
+                     *         "undelivered": 8,
+                     *         "note": null
+                     *       },
+                     *       "utilisation": {
+                     *         "pct": 30,
+                     *         "targetPct": 80,
+                     *         "vehicles": 4,
+                     *         "trips": 1,
+                     *         "note": null
+                     *       },
+                     *       "discrepancies": {
+                     *         "count": 3,
+                     *         "pctOfOrders": 25,
+                     *         "vsPrevious": null,
+                     *         "note": null
+                     *       },
+                     *       "onTimeSeries": [
+                     *         {
+                     *           "date": "2026-04-03",
+                     *           "source": "none",
+                     *           "onTimePct": null,
+                     *           "onTime": 0,
+                     *           "total": 0
+                     *         },
+                     *         {
+                     *           "date": "2026-04-04",
+                     *           "source": "none",
+                     *           "onTimePct": null,
+                     *           "onTime": 0,
+                     *           "total": 0
+                     *         },
+                     *         {
+                     *           "date": "2026-04-05",
+                     *           "source": "none",
+                     *           "onTimePct": null,
+                     *           "onTime": 0,
+                     *           "total": 0
+                     *         },
+                     *         {
+                     *           "date": "2026-04-06",
+                     *           "source": "none",
+                     *           "onTimePct": null,
+                     *           "onTime": 0,
+                     *           "total": 0
+                     *         },
+                     *         {
+                     *           "date": "2026-04-07",
+                     *           "source": "none",
+                     *           "onTimePct": null,
+                     *           "onTime": 0,
+                     *           "total": 0
+                     *         },
+                     *         {
+                     *           "date": "2026-04-08",
+                     *           "source": "none",
+                     *           "onTimePct": null,
+                     *           "onTime": 0,
+                     *           "total": 0
+                     *         },
+                     *         {
+                     *           "date": "2026-04-09",
+                     *           "source": "live",
+                     *           "onTimePct": 50,
+                     *           "onTime": 1,
+                     *           "total": 2
+                     *         }
+                     *       ],
+                     *       "utilisationByDepot": [
+                     *         {
+                     *           "depotCode": "Peliyagoda",
+                     *           "vehicles": 4,
+                     *           "utilisationPct": 30,
+                     *           "targetPct": 80
+                     *         }
+                     *       ],
+                     *       "topOutlets": [
+                     *         {
+                     *           "outletId": "OUT010",
+                     *           "displayName": null,
+                     *           "districtName": "Colombo",
+                     *           "brand": "Fresh",
+                     *           "stops": 1,
+                     *           "orders": 3,
+                     *           "onTimePct": 100,
+                     *           "late": 0,
+                     *           "discrepancies": 2,
+                     *           "avgArrivalDeltaMin": 10
+                     *         },
+                     *         {
+                     *           "outletId": "OUT080",
+                     *           "displayName": null,
+                     *           "districtName": "Gampaha",
+                     *           "brand": "Fresh",
+                     *           "stops": 1,
+                     *           "orders": 1,
+                     *           "onTimePct": 0,
+                     *           "late": 1,
+                     *           "discrepancies": 0,
+                     *           "avgArrivalDeltaMin": 190
+                     *         },
+                     *         {
+                     *           "outletId": "OUT020",
+                     *           "displayName": null,
+                     *           "districtName": "Colombo",
+                     *           "brand": "Style",
+                     *           "stops": 0,
+                     *           "orders": 2,
+                     *           "onTimePct": null,
+                     *           "late": 0,
+                     *           "discrepancies": 0,
+                     *           "avgArrivalDeltaMin": null
+                     *         },
+                     *         {
+                     *           "outletId": "OUT030",
+                     *           "displayName": null,
+                     *           "districtName": "Gampaha",
+                     *           "brand": "Tech",
+                     *           "stops": 0,
+                     *           "orders": 2,
+                     *           "onTimePct": null,
+                     *           "late": 0,
+                     *           "discrepancies": 0,
+                     *           "avgArrivalDeltaMin": null
+                     *         },
+                     *         {
+                     *           "outletId": "OUT040",
+                     *           "displayName": null,
+                     *           "districtName": "Puttalam",
+                     *           "brand": "Fresh",
+                     *           "stops": 0,
+                     *           "orders": 2,
+                     *           "onTimePct": null,
+                     *           "late": 0,
+                     *           "discrepancies": 1,
+                     *           "avgArrivalDeltaMin": null
+                     *         },
+                     *         {
+                     *           "outletId": "OUT074",
+                     *           "displayName": null,
+                     *           "districtName": "Puttalam",
+                     *           "brand": "Fresh",
+                     *           "stops": 0,
+                     *           "orders": 2,
+                     *           "onTimePct": null,
+                     *           "late": 0,
+                     *           "discrepancies": 0,
+                     *           "avgArrivalDeltaMin": null
+                     *         }
+                     *       ],
+                     *       "totalOutlets": 6,
+                     *       "topExceptions": {
+                     *         "total": 5,
+                     *         "items": [
+                     *           {
+                     *             "kind": "SHORT_DELIVERY",
+                     *             "label": "Short delivery",
+                     *             "count": 2
+                     *           },
+                     *           {
+                     *             "kind": "LATE_DELIVERY",
+                     *             "label": "Late delivery",
+                     *             "count": 1
+                     *           },
+                     *           {
+                     *             "kind": "ROAD_BLOCKED",
+                     *             "label": "Road blocked",
+                     *             "count": 1
+                     *           },
+                     *           {
+                     *             "kind": "TEMPERATURE",
+                     *             "label": "Temperature",
+                     *             "count": 1
+                     *           }
+                     *         ]
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ReportsOverview"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getReportsDeliveries: {
+        parameters: {
+            query?: {
+                /** @description First day of the range. With neither `from` nor `to`, the seven days ending at the newest day with data. */
+                from?: components["schemas"]["DateOnly"];
+                /** @description Last day of the range, inclusive. At most 366 days after `from`. */
+                to?: components["schemas"]["DateOnly"];
+                /** @description Must be the caller's own depot if given; a dispatcher cannot read another depot's reports (403). */
+                depot?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "depotCode": "Peliyagoda",
+                     *       "from": "2026-04-03",
+                     *       "to": "2026-04-09",
+                     *       "historySource": {
+                     *         "kind": "synthetic",
+                     *         "label": "History is SYNTHETIC, generated for the development fixture. It is not the competition data."
+                     *       },
+                     *       "coverage": {
+                     *         "liveDays": 1,
+                     *         "historyDays": 0,
+                     *         "emptyDays": 6
+                     *       },
+                     *       "totals": {
+                     *         "planned": 12,
+                     *         "delivered": 3,
+                     *         "deferred": 1,
+                     *         "undelivered": 8,
+                     *         "stops": 2,
+                     *         "onTimePct": 50,
+                     *         "avgArrivalDeltaMin": 100
+                     *       },
+                     *       "days": [
+                     *         {
+                     *           "date": "2026-04-03",
+                     *           "source": "none",
+                     *           "planned": 0,
+                     *           "delivered": 0,
+                     *           "deferred": 0,
+                     *           "undelivered": 0,
+                     *           "stops": 0,
+                     *           "onTime": 0,
+                     *           "onTimePct": null
+                     *         },
+                     *         {
+                     *           "date": "2026-04-04",
+                     *           "source": "none",
+                     *           "planned": 0,
+                     *           "delivered": 0,
+                     *           "deferred": 0,
+                     *           "undelivered": 0,
+                     *           "stops": 0,
+                     *           "onTime": 0,
+                     *           "onTimePct": null
+                     *         },
+                     *         {
+                     *           "date": "2026-04-05",
+                     *           "source": "none",
+                     *           "planned": 0,
+                     *           "delivered": 0,
+                     *           "deferred": 0,
+                     *           "undelivered": 0,
+                     *           "stops": 0,
+                     *           "onTime": 0,
+                     *           "onTimePct": null
+                     *         },
+                     *         {
+                     *           "date": "2026-04-06",
+                     *           "source": "none",
+                     *           "planned": 0,
+                     *           "delivered": 0,
+                     *           "deferred": 0,
+                     *           "undelivered": 0,
+                     *           "stops": 0,
+                     *           "onTime": 0,
+                     *           "onTimePct": null
+                     *         },
+                     *         {
+                     *           "date": "2026-04-07",
+                     *           "source": "none",
+                     *           "planned": 0,
+                     *           "delivered": 0,
+                     *           "deferred": 0,
+                     *           "undelivered": 0,
+                     *           "stops": 0,
+                     *           "onTime": 0,
+                     *           "onTimePct": null
+                     *         },
+                     *         {
+                     *           "date": "2026-04-08",
+                     *           "source": "none",
+                     *           "planned": 0,
+                     *           "delivered": 0,
+                     *           "deferred": 0,
+                     *           "undelivered": 0,
+                     *           "stops": 0,
+                     *           "onTime": 0,
+                     *           "onTimePct": null
+                     *         },
+                     *         {
+                     *           "date": "2026-04-09",
+                     *           "source": "live",
+                     *           "planned": 12,
+                     *           "delivered": 3,
+                     *           "deferred": 1,
+                     *           "undelivered": 8,
+                     *           "stops": 2,
+                     *           "onTime": 1,
+                     *           "onTimePct": 50
+                     *         }
+                     *       ],
+                     *       "byBrand": [
+                     *         {
+                     *           "brand": "Fresh",
+                     *           "planned": 8,
+                     *           "delivered": 3,
+                     *           "deferred": 1,
+                     *           "undelivered": 4,
+                     *           "stops": 2,
+                     *           "onTimePct": 50,
+                     *           "avgArrivalDeltaMin": 100
+                     *         },
+                     *         {
+                     *           "brand": "Style",
+                     *           "planned": 2,
+                     *           "delivered": 0,
+                     *           "deferred": 0,
+                     *           "undelivered": 2,
+                     *           "stops": 0,
+                     *           "onTimePct": null,
+                     *           "avgArrivalDeltaMin": null
+                     *         },
+                     *         {
+                     *           "brand": "Tech",
+                     *           "planned": 2,
+                     *           "delivered": 0,
+                     *           "deferred": 0,
+                     *           "undelivered": 2,
+                     *           "stops": 0,
+                     *           "onTimePct": null,
+                     *           "avgArrivalDeltaMin": null
+                     *         }
+                     *       ],
+                     *       "notes": []
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ReportsDeliveries"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getReportsFleet: {
+        parameters: {
+            query?: {
+                /** @description First day of the range. With neither `from` nor `to`, the seven days ending at the newest day with data. */
+                from?: components["schemas"]["DateOnly"];
+                /** @description Last day of the range, inclusive. At most 366 days after `from`. */
+                to?: components["schemas"]["DateOnly"];
+                /** @description Must be the caller's own depot if given; a dispatcher cannot read another depot's reports (403). */
+                depot?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "depotCode": "Peliyagoda",
+                     *       "from": "2026-04-03",
+                     *       "to": "2026-04-09",
+                     *       "historySource": {
+                     *         "kind": "synthetic",
+                     *         "label": "History is SYNTHETIC, generated for the development fixture. It is not the competition data."
+                     *       },
+                     *       "coverage": {
+                     *         "liveDays": 1,
+                     *         "historyDays": 0,
+                     *         "emptyDays": 6
+                     *       },
+                     *       "utilisation": {
+                     *         "pct": 30,
+                     *         "targetPct": 80,
+                     *         "note": null
+                     *       },
+                     *       "vehicles": [
+                     *         {
+                     *           "vehicleId": "VEH101",
+                     *           "type": "truck",
+                     *           "temp": "reefer",
+                     *           "volumeCapM3": 30,
+                     *           "trips": 1,
+                     *           "stops": 2,
+                     *           "onTimePct": 50,
+                     *           "avgLoadPct": 30,
+                     *           "workshopDays": 0
+                     *         },
+                     *         {
+                     *           "vehicleId": "VEH102",
+                     *           "type": "truck",
+                     *           "temp": "ambient",
+                     *           "volumeCapM3": 34,
+                     *           "trips": 0,
+                     *           "stops": 0,
+                     *           "onTimePct": null,
+                     *           "avgLoadPct": null,
+                     *           "workshopDays": 0
+                     *         },
+                     *         {
+                     *           "vehicleId": "VEH103",
+                     *           "type": "van",
+                     *           "temp": "reefer",
+                     *           "volumeCapM3": 10,
+                     *           "trips": 0,
+                     *           "stops": 0,
+                     *           "onTimePct": null,
+                     *           "avgLoadPct": null,
+                     *           "workshopDays": 0
+                     *         },
+                     *         {
+                     *           "vehicleId": "VEH104",
+                     *           "type": "van",
+                     *           "temp": "ambient",
+                     *           "volumeCapM3": 12,
+                     *           "trips": 0,
+                     *           "stops": 0,
+                     *           "onTimePct": null,
+                     *           "avgLoadPct": null,
+                     *           "workshopDays": 1
+                     *         }
+                     *       ],
+                     *       "byTemp": [
+                     *         {
+                     *           "temp": "reefer",
+                     *           "vehicles": 2,
+                     *           "trips": 1,
+                     *           "avgLoadPct": 30
+                     *         },
+                     *         {
+                     *           "temp": "ambient",
+                     *           "vehicles": 2,
+                     *           "trips": 0,
+                     *           "avgLoadPct": null
+                     *         }
+                     *       ],
+                     *       "notes": []
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ReportsFleet"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getReportsOutlets: {
+        parameters: {
+            query?: {
+                /** @description First day of the range. With neither `from` nor `to`, the seven days ending at the newest day with data. */
+                from?: components["schemas"]["DateOnly"];
+                /** @description Last day of the range, inclusive. At most 366 days after `from`. */
+                to?: components["schemas"]["DateOnly"];
+                /** @description Must be the caller's own depot if given; a dispatcher cannot read another depot's reports (403). */
+                depot?: string;
+                sort?: components["schemas"]["OutletSort"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "depotCode": "Peliyagoda",
+                     *       "from": "2026-04-03",
+                     *       "to": "2026-04-09",
+                     *       "historySource": {
+                     *         "kind": "synthetic",
+                     *         "label": "History is SYNTHETIC, generated for the development fixture. It is not the competition data."
+                     *       },
+                     *       "coverage": {
+                     *         "liveDays": 1,
+                     *         "historyDays": 0,
+                     *         "emptyDays": 6
+                     *       },
+                     *       "sort": "onTime",
+                     *       "outlets": [
+                     *         {
+                     *           "outletId": "OUT080",
+                     *           "displayName": null,
+                     *           "districtName": "Gampaha",
+                     *           "brand": "Fresh",
+                     *           "stops": 1,
+                     *           "orders": 1,
+                     *           "onTimePct": 0,
+                     *           "late": 1,
+                     *           "discrepancies": 0,
+                     *           "avgArrivalDeltaMin": 190
+                     *         },
+                     *         {
+                     *           "outletId": "OUT010",
+                     *           "displayName": null,
+                     *           "districtName": "Colombo",
+                     *           "brand": "Fresh",
+                     *           "stops": 1,
+                     *           "orders": 3,
+                     *           "onTimePct": 100,
+                     *           "late": 0,
+                     *           "discrepancies": 2,
+                     *           "avgArrivalDeltaMin": 10
+                     *         },
+                     *         {
+                     *           "outletId": "OUT020",
+                     *           "displayName": null,
+                     *           "districtName": "Colombo",
+                     *           "brand": "Style",
+                     *           "stops": 0,
+                     *           "orders": 2,
+                     *           "onTimePct": null,
+                     *           "late": 0,
+                     *           "discrepancies": 0,
+                     *           "avgArrivalDeltaMin": null
+                     *         }
+                     *       ],
+                     *       "notes": [
+                     *         "Orders and discrepancies are counted only for days run in this system; for historical days an outlet shows its visits (stops) and on-time share."
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ReportsOutlets"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getReportsExceptions: {
+        parameters: {
+            query?: {
+                /** @description First day of the range. With neither `from` nor `to`, the seven days ending at the newest day with data. */
+                from?: components["schemas"]["DateOnly"];
+                /** @description Last day of the range, inclusive. At most 366 days after `from`. */
+                to?: components["schemas"]["DateOnly"];
+                /** @description Must be the caller's own depot if given; a dispatcher cannot read another depot's reports (403). */
+                depot?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "depotCode": "Peliyagoda",
+                     *       "from": "2026-04-03",
+                     *       "to": "2026-04-09",
+                     *       "historySource": {
+                     *         "kind": "synthetic",
+                     *         "label": "History is SYNTHETIC, generated for the development fixture. It is not the competition data."
+                     *       },
+                     *       "coverage": {
+                     *         "liveDays": 1,
+                     *         "historyDays": 0,
+                     *         "emptyDays": 6
+                     *       },
+                     *       "total": 5,
+                     *       "byKind": [
+                     *         {
+                     *           "kind": "SHORT_DELIVERY",
+                     *           "label": "Short delivery",
+                     *           "count": 2
+                     *         },
+                     *         {
+                     *           "kind": "LATE_DELIVERY",
+                     *           "label": "Late delivery",
+                     *           "count": 1
+                     *         },
+                     *         {
+                     *           "kind": "ROAD_BLOCKED",
+                     *           "label": "Road blocked",
+                     *           "count": 1
+                     *         },
+                     *         {
+                     *           "kind": "TEMPERATURE",
+                     *           "label": "Temperature",
+                     *           "count": 1
+                     *         }
+                     *       ],
+                     *       "byDay": [
+                     *         {
+                     *           "date": "2026-04-03",
+                     *           "count": 0
+                     *         },
+                     *         {
+                     *           "date": "2026-04-04",
+                     *           "count": 0
+                     *         },
+                     *         {
+                     *           "date": "2026-04-05",
+                     *           "count": 0
+                     *         },
+                     *         {
+                     *           "date": "2026-04-06",
+                     *           "count": 0
+                     *         },
+                     *         {
+                     *           "date": "2026-04-07",
+                     *           "count": 0
+                     *         },
+                     *         {
+                     *           "date": "2026-04-08",
+                     *           "count": 0
+                     *         },
+                     *         {
+                     *           "date": "2026-04-09",
+                     *           "count": 5
+                     *         }
+                     *       ],
+                     *       "recent": [
+                     *         {
+                     *           "kind": "SHORT_DELIVERY",
+                     *           "label": "Short delivery",
+                     *           "date": "2026-04-09",
+                     *           "source": "live",
+                     *           "at": "2026-10-03T16:19:36.910Z",
+                     *           "orderRef": "DEMO-001",
+                     *           "outletId": "OUT010",
+                     *           "note": null
+                     *         },
+                     *         {
+                     *           "kind": "TEMPERATURE",
+                     *           "label": "Temperature",
+                     *           "date": "2026-04-09",
+                     *           "source": "live",
+                     *           "at": "2026-10-03T16:19:36.909Z",
+                     *           "orderRef": "DEMO-005",
+                     *           "outletId": "OUT040",
+                     *           "note": null
+                     *         },
+                     *         {
+                     *           "kind": "ROAD_BLOCKED",
+                     *           "label": "Road blocked",
+                     *           "date": "2026-04-09",
+                     *           "source": "live",
+                     *           "at": "2026-04-09T02:30:00.000Z",
+                     *           "orderRef": null,
+                     *           "outletId": "OUT080",
+                     *           "note": "Flooded road"
+                     *         }
+                     *       ],
+                     *       "notes": []
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ReportsExceptions"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getReportsCapacityForecast: {
+        parameters: {
+            query?: {
+                /** @description A date in the first week wanted. With neither `from` nor `to`, eight weeks starting two weeks before the stored forecast. */
+                from?: components["schemas"]["DateOnly"];
+                /** @description A date in the last week wanted. At most 53 weeks. */
+                to?: components["schemas"]["DateOnly"];
+                /** @description Must be the caller's own depot if given (403 otherwise). */
+                depot?: string;
+                /** @description Narrows the demand and the error to one brand. Reefer capacity and the proposals stay the depot's. */
+                brand?: components["schemas"]["Brand"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The capacity forecast. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "depotCode": "Peliyagoda",
+                     *       "brand": null,
+                     *       "from": "2026-04-06",
+                     *       "to": "2026-04-26",
+                     *       "forecastMethod": "SYNTHETIC seasonal-naive+trailing8 v1 (calendar-scaled) on generated fixture history, not competition data",
+                     *       "forecastGeneratedAt": "2026-10-03T16:19:36.733Z",
+                     *       "historySource": {
+                     *         "kind": "synthetic",
+                     *         "label": "History is SYNTHETIC, generated for the development fixture. It is not the competition data."
+                     *       },
+                     *       "weeks": [
+                     *         {
+                     *           "isoYear": 2026,
+                     *           "isoWeek": 16,
+                     *           "startDate": "2026-04-13",
+                     *           "endDate": "2026-04-18",
+                     *           "kind": "forecast",
+                     *           "signals": [
+                     *             "New Year ramp",
+                     *             "Payday",
+                     *             "Monsoon"
+                     *           ],
+                     *           "operatingDays": 5,
+                     *           "totalM3": 283.9,
+                     *           "chilledM3": 100,
+                     *           "ambientM3": 183.9,
+                     *           "reeferTripsPerDay": {
+                     *             "needed": 5,
+                     *             "capacity": 2,
+                     *             "shortfall": 3
+                     *           },
+                     *           "reefersInWorkshop": 1,
+                     *           "chilledCapacityM3": 50,
+                     *           "fleetCapacityM3": 284,
+                     *           "level": "over",
+                     *           "action": "Recall 1 from workshop, +1 hired reefer",
+                     *           "actions": [
+                     *             {
+                     *               "id": "cmuslkzkk0000ufehamunrppq",
+                     *               "kind": "RECALL_FROM_WORKSHOP",
+                     *               "status": "PROPOSED"
+                     *             },
+                     *             {
+                     *               "id": "cmuslkzkk0001ufeh07xkwwou",
+                     *               "kind": "HIRE_RELIEF_VEHICLE",
+                     *               "status": "PROPOSED"
+                     *             },
+                     *             {
+                     *               "id": "cmuslkzkk0002ufeh8m55ryw4",
+                     *               "kind": "PRE_BUILD_ORDERS",
+                     *               "status": "PROPOSED"
+                     *             },
+                     *             {
+                     *               "id": "cmuslkzkk0003ufehsvxdn434",
+                     *               "kind": "SHIFT_BRAND_DAY",
+                     *               "status": "PROPOSED"
+                     *             }
+                     *           ]
+                     *         },
+                     *         {
+                     *           "isoYear": 2026,
+                     *           "isoWeek": 17,
+                     *           "startDate": "2026-04-20",
+                     *           "endDate": "2026-04-25",
+                     *           "kind": "forecast",
+                     *           "signals": [
+                     *             "Vesak ramp",
+                     *             "Payday",
+                     *             "Monsoon"
+                     *           ],
+                     *           "operatingDays": 6,
+                     *           "totalM3": 290.5,
+                     *           "chilledM3": 103,
+                     *           "ambientM3": 187.4,
+                     *           "reeferTripsPerDay": {
+                     *             "needed": 4,
+                     *             "capacity": 4,
+                     *             "shortfall": 0
+                     *           },
+                     *           "reefersInWorkshop": 0,
+                     *           "chilledCapacityM3": 120,
+                     *           "fleetCapacityM3": 340.8,
+                     *           "level": "near",
+                     *           "action": "Covered, no slack",
+                     *           "actions": []
+                     *         }
+                     *       ],
+                     *       "reeferCount": 2,
+                     *       "fleetCapacityM3": 340.8,
+                     *       "reeferCapacityM3": 120,
+                     *       "loadPerReeferTripM3": 5,
+                     *       "peakWeek": {
+                     *         "isoYear": 2026,
+                     *         "isoWeek": 15,
+                     *         "startDate": "2026-04-06",
+                     *         "endDate": "2026-04-11",
+                     *         "totalM3": 306.9,
+                     *         "signals": [
+                     *           "New Year ramp",
+                     *           "Monsoon"
+                     *         ],
+                     *         "vsRecentPct": 7
+                     *       },
+                     *       "chilledPeak": {
+                     *         "isoYear": 2026,
+                     *         "isoWeek": 15,
+                     *         "startDate": "2026-04-06",
+                     *         "endDate": "2026-04-11",
+                     *         "chilledM3": 105.5,
+                     *         "vsRecentPct": 1
+                     *       },
+                     *       "reeferShortfallWeeks": {
+                     *         "count": 1,
+                     *         "of": 3,
+                     *         "maxTripsPerDayShort": 3
+                     *       },
+                     *       "forecastError": {
+                     *         "mapePct": 5.6,
+                     *         "chilledMapePct": 7.2,
+                     *         "weeksTested": 8,
+                     *         "leadWeeks": 1,
+                     *         "note": "Mean absolute error of the same method re-run on the last 8 known weeks, forecasting 1 week ahead, on the depot's total volume."
+                     *       },
+                     *       "forecastErrorPct": 5.6,
+                     *       "recommendedActions": [
+                     *         {
+                     *           "id": "cmuslkzkk0001ufeh07xkwwou",
+                     *           "isoYear": 2026,
+                     *           "isoWeek": 16,
+                     *           "depotCode": "Peliyagoda",
+                     *           "brand": null,
+                     *           "kind": "HIRE_RELIEF_VEHICLE",
+                     *           "title": "Hire 1 reefer for 13–18 Apr",
+                     *           "detail": "Peliyagoda · covers 2 of the 3 short trips a day in W16",
+                     *           "params": {
+                     *             "count": 1,
+                     *             "toDate": "2026-04-18",
+                     *             "fromDate": "2026-04-13",
+                     *             "vehicleTemp": "reefer",
+                     *             "shortfallTripsPerDay": 3
+                     *           },
+                     *           "expectedRelief": {
+                     *             "basis": "1 hired reefer, two trips a day each",
+                     *             "estimate": false,
+                     *             "tripsPerDay": 2
+                     *           },
+                     *           "status": "PROPOSED",
+                     *           "stale": false,
+                     *           "availableDecisions": [
+                     *             "APPROVE",
+                     *             "REJECT"
+                     *           ],
+                     *           "decidedBy": null,
+                     *           "decidedAt": null,
+                     *           "reasonCode": null,
+                     *           "note": null,
+                     *           "appliesFromDate": "2026-04-13",
+                     *           "createdAt": "2026-10-03T16:19:44.277Z"
+                     *         },
+                     *         {
+                     *           "id": "cmuslkzkk0000ufehamunrppq",
+                     *           "isoYear": 2026,
+                     *           "isoWeek": 16,
+                     *           "depotCode": "Peliyagoda",
+                     *           "brand": null,
+                     *           "kind": "RECALL_FROM_WORKSHOP",
+                     *           "title": "Recall VEH103 from the workshop for 13–18 Apr",
+                     *           "detail": "Peliyagoda · frees 2 trips a day in W16",
+                     *           "params": {
+                     *             "count": 1,
+                     *             "dates": [
+                     *               "2026-04-15",
+                     *               "2026-04-16"
+                     *             ],
+                     *             "vehicleIds": [
+                     *               "VEH103"
+                     *             ]
+                     *           },
+                     *           "expectedRelief": {
+                     *             "basis": "1 reefer back in service, two trips a day each",
+                     *             "estimate": false,
+                     *             "tripsPerDay": 2
+                     *           },
+                     *           "status": "PROPOSED",
+                     *           "stale": false,
+                     *           "availableDecisions": [
+                     *             "APPROVE",
+                     *             "REJECT"
+                     *           ],
+                     *           "decidedBy": null,
+                     *           "decidedAt": null,
+                     *           "reasonCode": null,
+                     *           "note": null,
+                     *           "appliesFromDate": "2026-04-13",
+                     *           "createdAt": "2026-10-03T16:19:44.277Z"
+                     *         },
+                     *         {
+                     *           "id": "cmuslkzkk0003ufehsvxdn434",
+                     *           "isoYear": 2026,
+                     *           "isoWeek": 16,
+                     *           "depotCode": "Peliyagoda",
+                     *           "brand": "Fresh",
+                     *           "kind": "SHIFT_BRAND_DAY",
+                     *           "title": "Move Fresh chilled deliveries from Friday to Tuesday",
+                     *           "detail": "W16 · relief is an estimate",
+                     *           "params": {
+                     *             "brand": "Fresh",
+                     *             "toDay": "Tuesday",
+                     *             "fromDay": "Friday",
+                     *             "assumedShiftPct": 25
+                     *           },
+                     *           "expectedRelief": {
+                     *             "basis": "Assumes 25% of the week's chilled volume moves off Friday",
+                     *             "estimate": true,
+                     *             "tripsPerDay": 2
+                     *           },
+                     *           "status": "PROPOSED",
+                     *           "stale": false,
+                     *           "availableDecisions": [
+                     *             "APPROVE",
+                     *             "REJECT"
+                     *           ],
+                     *           "decidedBy": null,
+                     *           "decidedAt": null,
+                     *           "reasonCode": null,
+                     *           "note": null,
+                     *           "appliesFromDate": "2026-04-13",
+                     *           "createdAt": "2026-10-03T16:19:44.277Z"
+                     *         }
+                     *       ],
+                     *       "assumptions": [
+                     *         "A reefer trip is planned to carry 25% of its volume capacity (40% for ambient vehicles), the loading observed in the competition training data. At this depot that is 5 m³ per reefer trip.",
+                     *         "Each vehicle runs at most 2 trips a day, so 2 reefers give 4 trips a day.",
+                     *         "A reefer marked in the workshop on any day of a week is counted out for that whole week.",
+                     *         "Calendar effects on demand: payday +12%, festival ramp +30% x ramp, monsoon -2%.",
+                     *         "Forecast figures are demand for the depot (all orders requested that week), not deliveries completed."
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["CapacityForecast"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listCapacityActions: {
+        parameters: {
+            query?: {
+                isoYear?: string;
+                isoWeek?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The week's actions, oldest week first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "depotCode": "Peliyagoda",
+                     *       "isoYear": 2026,
+                     *       "isoWeek": 16,
+                     *       "items": [
+                     *         {
+                     *           "id": "cmuslkzkk0000ufehamunrppq",
+                     *           "isoYear": 2026,
+                     *           "isoWeek": 16,
+                     *           "depotCode": "Peliyagoda",
+                     *           "brand": null,
+                     *           "kind": "RECALL_FROM_WORKSHOP",
+                     *           "title": "Recall VEH103 from the workshop for 13–18 Apr",
+                     *           "detail": "Peliyagoda · frees 2 trips a day in W16",
+                     *           "params": {
+                     *             "count": 1,
+                     *             "dates": [
+                     *               "2026-04-15",
+                     *               "2026-04-16"
+                     *             ],
+                     *             "vehicleIds": [
+                     *               "VEH103"
+                     *             ]
+                     *           },
+                     *           "expectedRelief": {
+                     *             "basis": "1 reefer back in service, two trips a day each",
+                     *             "estimate": false,
+                     *             "tripsPerDay": 2
+                     *           },
+                     *           "status": "PROPOSED",
+                     *           "stale": false,
+                     *           "availableDecisions": [
+                     *             "APPROVE",
+                     *             "REJECT"
+                     *           ],
+                     *           "decidedBy": null,
+                     *           "decidedAt": null,
+                     *           "reasonCode": null,
+                     *           "note": null,
+                     *           "appliesFromDate": "2026-04-13",
+                     *           "createdAt": "2026-10-03T16:19:44.277Z"
+                     *         },
+                     *         {
+                     *           "id": "cmuslkzkk0001ufeh07xkwwou",
+                     *           "isoYear": 2026,
+                     *           "isoWeek": 16,
+                     *           "depotCode": "Peliyagoda",
+                     *           "brand": null,
+                     *           "kind": "HIRE_RELIEF_VEHICLE",
+                     *           "title": "Hire 1 reefer for 13–18 Apr",
+                     *           "detail": "Peliyagoda · covers 2 of the 3 short trips a day in W16",
+                     *           "params": {
+                     *             "count": 1,
+                     *             "toDate": "2026-04-18",
+                     *             "fromDate": "2026-04-13",
+                     *             "vehicleTemp": "reefer",
+                     *             "shortfallTripsPerDay": 3
+                     *           },
+                     *           "expectedRelief": {
+                     *             "basis": "1 hired reefer, two trips a day each",
+                     *             "estimate": false,
+                     *             "tripsPerDay": 2
+                     *           },
+                     *           "status": "PROPOSED",
+                     *           "stale": false,
+                     *           "availableDecisions": [
+                     *             "APPROVE",
+                     *             "REJECT"
+                     *           ],
+                     *           "decidedBy": null,
+                     *           "decidedAt": null,
+                     *           "reasonCode": null,
+                     *           "note": null,
+                     *           "appliesFromDate": "2026-04-13",
+                     *           "createdAt": "2026-10-03T16:19:44.277Z"
+                     *         },
+                     *         {
+                     *           "id": "cmuslkzkk0002ufeh8m55ryw4",
+                     *           "isoYear": 2026,
+                     *           "isoWeek": 16,
+                     *           "depotCode": "Peliyagoda",
+                     *           "brand": "Fresh",
+                     *           "kind": "PRE_BUILD_ORDERS",
+                     *           "title": "Ask Fresh stores to order chilled a day early",
+                     *           "detail": "Spreads W16 chilled volume across the days before · relief is an estimate",
+                     *           "params": {
+                     *             "brand": "Fresh",
+                     *             "daysEarly": 1,
+                     *             "assumedShiftPct": 15
+                     *           },
+                     *           "expectedRelief": {
+                     *             "basis": "Assumes 15% of the week's chilled volume moves a day earlier",
+                     *             "estimate": true,
+                     *             "tripsPerDay": 1
+                     *           },
+                     *           "status": "PROPOSED",
+                     *           "stale": false,
+                     *           "availableDecisions": [
+                     *             "APPROVE",
+                     *             "REJECT"
+                     *           ],
+                     *           "decidedBy": null,
+                     *           "decidedAt": null,
+                     *           "reasonCode": null,
+                     *           "note": null,
+                     *           "appliesFromDate": "2026-04-13",
+                     *           "createdAt": "2026-10-03T16:19:44.277Z"
+                     *         },
+                     *         {
+                     *           "id": "cmuslkzkk0003ufehsvxdn434",
+                     *           "isoYear": 2026,
+                     *           "isoWeek": 16,
+                     *           "depotCode": "Peliyagoda",
+                     *           "brand": "Fresh",
+                     *           "kind": "SHIFT_BRAND_DAY",
+                     *           "title": "Move Fresh chilled deliveries from Friday to Tuesday",
+                     *           "detail": "W16 · relief is an estimate",
+                     *           "params": {
+                     *             "brand": "Fresh",
+                     *             "toDay": "Tuesday",
+                     *             "fromDay": "Friday",
+                     *             "assumedShiftPct": 25
+                     *           },
+                     *           "expectedRelief": {
+                     *             "basis": "Assumes 25% of the week's chilled volume moves off Friday",
+                     *             "estimate": true,
+                     *             "tripsPerDay": 2
+                     *           },
+                     *           "status": "PROPOSED",
+                     *           "stale": false,
+                     *           "availableDecisions": [
+                     *             "APPROVE",
+                     *             "REJECT"
+                     *           ],
+                     *           "decidedBy": null,
+                     *           "decidedAt": null,
+                     *           "reasonCode": null,
+                     *           "note": null,
+                     *           "appliesFromDate": "2026-04-13",
+                     *           "createdAt": "2026-10-03T16:19:44.277Z"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["CapacityActionList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    decideCapacityAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "decision": "APPROVE",
+                 *       "note": "Book by 10 Apr"
+                 *     }
+                 */
+                "application/json": components["schemas"]["CapacityDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description The action after the decision, and what the decision did. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapacityDecisionResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
 }
