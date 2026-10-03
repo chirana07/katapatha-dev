@@ -173,6 +173,25 @@ export const MIGRATIONS: readonly string[] = [
   -- one must read as "unknown", never as "equal".
   ALTER TABLE stop_order ADD COLUMN ordered_units INTEGER;
   `,
+  // ---- 4 ----------------------------------------------------------------
+  `
+  -- What an order contains, when it was placed from products. DISPLAY DATA only:
+  -- a delivery is still counted in units per order, so nothing reads these rows
+  -- to decide anything. Like stop_order they are replaced wholesale with the run
+  -- and go with their stop. A run cached before this migration simply has none,
+  -- which reads as "no breakdown" and never as an error.
+  CREATE TABLE stop_order_item (
+    stop_id    TEXT NOT NULL REFERENCES stop(id) ON DELETE CASCADE,
+    order_id   TEXT NOT NULL,
+    -- Position in the server's order, from 0, so the list reads as it was sent.
+    seq        INTEGER NOT NULL,
+    sku        TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    quantity   INTEGER NOT NULL,
+    unit_label TEXT NOT NULL,
+    PRIMARY KEY (stop_id, order_id, seq)
+  );
+  `,
 ];
 
 /** The user_version a fully migrated database reports. */

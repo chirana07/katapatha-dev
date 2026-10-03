@@ -46,6 +46,7 @@ describe("migrate", () => {
       "run",
       "stop",
       "stop_order",
+      "stop_order_item",
       "sync_log",
       "trip",
       "vocabulary",
@@ -189,8 +190,16 @@ describe("the cached run", () => {
       120,
     ]);
 
+    await driver.run(
+      "INSERT INTO stop_order_item (stop_id, order_id, seq, sku, name, quantity, unit_label) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ["stop-1", "order-1", 0, "FA001", "White Rice 5 kg", 12, "bag"],
+    );
+
     await driver.run("DELETE FROM run WHERE date = ?", ["2026-10-01"]);
 
+    expect(
+      (await driver.first<{ c: number }>("SELECT COUNT(*) AS c FROM stop_order_item"))?.c,
+    ).toBe(0);
     expect((await driver.first<{ c: number }>("SELECT COUNT(*) AS c FROM trip"))?.c).toBe(0);
     expect((await driver.first<{ c: number }>("SELECT COUNT(*) AS c FROM stop"))?.c).toBe(0);
     expect(
@@ -319,5 +328,47 @@ describe("migration 2: proof-of-delivery pages", () => {
                     VALUES ('01PG1', '01POD', 0, 'RECEIPT', 'now')`;
     expect(await driver.run(insert)).toBe(1);
     expect(await driver.run(insert)).toBe(0);
+  });
+});
+
+describe("migration 4: order products", () => {
+  it("upgrades a version-3 database in place and keeps the cached run", async () => {
+    // A phone that cached today's run before this build: its stop_order rows must
+    // survive, and stop_order_item starts empty ("no breakdown", not an error).
+    const driver = await fresh();
+    for (let version = 0; version < 3; version++) {
+      await driver.exec(MIGRATIONS[version]);
+    }
+    await driver.exec("PRAGMA user_version = 3");
+
+    await driver.run("INSERT INTO run VALUES ('2026-10-01', 'VEH043', 'now')");
+    await driver.run("INSERT INTO trip VALUES ('trip-1', '2026-10-01', 1, 'PREDAWN')");
+    await driver.run(
+      "INSERT INTO stop VALUES ('stop-1', 'trip-1', '2026-10-01', 1, 'OUT074', NULL, 'PENDING', NULL, NULL, NULL, NULL)",
+    );
+    await driver.run(
+      "INSERT INTO stop_order (stop_id, order_id, order_ref, expected_units) VALUES ('stop-1', 'o1', 'S1-082', 69)",
+    );
+
+    expect(await migrate(driver)).toBe(SCHEMA_VERSION);
+
+    expect((await driver.first<{ c: number }>("SELECT COUNT(*) AS c FROM stop_order"))?.c).toBe(1);
+    expect(
+      (await driver.first<{ c: number }>("SELECT COUNT(*) AS c FROM stop_order_item"))?.c,
+    ).toBe(0);
+  });
+
+  it("refuses the same line position twice for one order", async () => {
+    const driver = await fresh();
+    await migrate(driver);
+    await driver.run("INSERT INTO run VALUES ('d', 'V', 'now')");
+    await driver.run("INSERT INTO trip VALUES ('t', 'd', 1, 'PREDAWN')");
+    await driver.run(
+      "INSERT INTO stop VALUES ('s', 't', 'd', 1, 'OUT074', NULL, 'PENDING', NULL, NULL, NULL, NULL)",
+    );
+    const insert =
+      "INSERT INTO stop_order_item (stop_id, order_id, seq, sku, name, quantity, unit_label) VALUES ('s', 'o', 0, 'FA001', 'Rice', 1, 'bag')";
+    await driver.run(insert);
+    await expect(driver.run(insert)).rejects.toThrow();
   });
 });

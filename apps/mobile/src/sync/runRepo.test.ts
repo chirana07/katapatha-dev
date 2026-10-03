@@ -38,6 +38,29 @@ const RUN: Run = {
           accessNote: "Rear dock. Van only.",
           orders: [{ orderId: "order-1", orderRef: "ORD-004312", expectedUnits: 120 }],
         },
+        {
+          // The same shape with a breakdown, as GET /drivers/me/run returns it for
+          // an order placed from products (S1-082 in the demo, 69 units).
+          id: "stop-2",
+          seq: 2,
+          outletId: "OUT075",
+          outletName: "Fresh Maharagama",
+          status: "PENDING",
+          orders: [
+            {
+              orderId: "order-2",
+              orderRef: "S1-082",
+              expectedUnits: 69,
+              orderedUnits: 69,
+              items: [
+                { sku: "FA001", name: "White Rice 5 kg", quantity: 24, unitLabel: "bag" },
+                { sku: "FA003", name: "Wheat Flour 1 kg", quantity: 20, unitLabel: "pack" },
+                { sku: "FA006", name: "Coconut Oil 1 L", quantity: 15, unitLabel: "carton" },
+                { sku: "FA009", name: "Tea Leaves 400 g", quantity: 10, unitLabel: "box" },
+              ],
+            },
+          ],
+        },
       ],
     },
   ],
@@ -63,7 +86,7 @@ describe("replaceRun and readRun", () => {
       vehicleId: "VEH043",
       fetchedAt: FETCHED_AT,
     });
-    expect(cached?.stops).toHaveLength(1);
+    expect(cached?.stops).toHaveLength(2);
     expect(cached?.stops[0]).toMatchObject({
       id: "stop-1",
       tripId: "trip-1",
@@ -81,8 +104,61 @@ describe("replaceRun and readRun", () => {
     // The contract's example carries no orderedUnits, so it caches as unknown --
     // never as "equal to expectedUnits".
     expect(cached?.stops[0].orders).toEqual([
-      { orderId: "order-1", orderRef: "ORD-004312", expectedUnits: 120, orderedUnits: null },
+      {
+        orderId: "order-1",
+        orderRef: "ORD-004312",
+        expectedUnits: 120,
+        orderedUnits: null,
+        // No breakdown caches as an empty list, never as an error.
+        items: [],
+      },
     ]);
+  });
+
+  it("round-trips an order's products, in the server's order, through readRun and readStop", async () => {
+    await replaceRun(sql, RUN, FETCHED_AT);
+
+    const expected = RUN.trips[0].stops[1].orders![0].items;
+    const viaRun = await readRun(sql, "2026-09-30");
+    expect(viaRun?.stops[1].orders[0].items).toEqual(expected);
+    // An order with no `items` reads as an empty list, beside one that has some.
+    expect(viaRun?.stops[0].orders[0].items).toEqual([]);
+
+    const viaStop = await readStop(sql, "stop-2");
+    expect(viaStop?.orders[0].items).toEqual(expected);
+    expect((await readStop(sql, "stop-1"))?.orders[0].items).toEqual([]);
+  });
+
+  it("replaces the products with the run, and drops them with the stop", async () => {
+    await replaceRun(sql, RUN, FETCHED_AT);
+    const count = async () =>
+      (await sql.first<{ c: number }>("SELECT COUNT(*) AS c FROM stop_order_item"))?.c;
+    expect(await count()).toBe(4);
+
+    // A re-bootstrap with the breakdown gone (an order edited out, say) must not
+    // leave the old lines behind.
+    await replaceRun(
+      sql,
+      {
+        ...RUN,
+        trips: [
+          {
+            ...RUN.trips[0],
+            stops: [{ ...RUN.trips[0].stops[1], orders: [{ orderId: "order-2", orderRef: "S1-082", expectedUnits: 69 }] }],
+          },
+        ],
+      },
+      FETCHED_AT,
+    );
+    expect(await count()).toBe(0);
+    expect((await readStop(sql, "stop-2"))?.orders[0].items).toEqual([]);
+  });
+
+  it("reads a run cached before the products table as having no breakdown", async () => {
+    // Simulates the upgrade: rows exist in stop_order, stop_order_item is empty.
+    await replaceRun(sql, RUN, FETCHED_AT);
+    await sql.run("DELETE FROM stop_order_item");
+    expect((await readRun(sql, "2026-09-30"))?.stops[1].orders[0].items).toEqual([]);
   });
 
   it("keeps what the store ordered beside what is on the vehicle", async () => {
@@ -114,7 +190,7 @@ describe("replaceRun and readRun", () => {
     );
     const cached = await readRun(sql, "2026-09-30");
     expect(cached?.stops[0].orders).toEqual([
-      { orderId: "o1", orderRef: "ORD-1", expectedUnits: 18, orderedUnits: 20 },
+      { orderId: "o1", orderRef: "ORD-1", expectedUnits: 18, orderedUnits: 20, items: [] },
     ]);
   });
 

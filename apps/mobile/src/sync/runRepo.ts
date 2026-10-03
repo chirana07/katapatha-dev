@@ -1,6 +1,9 @@
 import type { components } from "@katapatha/contracts/types";
 import type { SqlDriver } from "../db/driver";
 import type { StopStatus } from "../driver/stop-state";
+import type { CachedItem } from "../driver/order-items";
+
+export type { CachedItem };
 
 /**
  * Reads and writes the cached run.
@@ -42,6 +45,11 @@ export type CachedOrder = {
   expectedUnits: number;
   /** What the store ordered; null when the cached run predates the column. */
   orderedUnits?: number | null;
+  /**
+   * What the order contains, in the server's order. Read-only context: empty for
+   * an order placed as units only, and for a run cached before the column.
+   */
+  items?: CachedItem[];
 };
 
 export type CachedRun = {
@@ -73,6 +81,15 @@ type OrderRow = {
   order_ref: string;
   expected_units: number;
   ordered_units: number | null;
+};
+
+type ItemRow = {
+  stop_id: string;
+  order_id: string;
+  sku: string;
+  name: string;
+  quantity: number;
+  unit_label: string;
 };
 
 type RunRow = { date: string; vehicle_id: string; fetched_at: string };
@@ -139,6 +156,15 @@ export async function replaceRun(
               order.orderedUnits ?? null,
             ],
           );
+
+          for (const [seq, item] of (order.items ?? []).entries()) {
+            await tx.run(
+              `INSERT INTO stop_order_item
+                 (stop_id, order_id, seq, sku, name, quantity, unit_label)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              [stop.id, order.orderId, seq, item.sku, item.name, item.quantity, item.unitLabel],
+            );
+          }
         }
       }
     }
@@ -182,6 +208,16 @@ export async function readRun(
     [date],
   );
 
+  const itemRows = await sql.all<ItemRow>(
+    `SELECT i.stop_id, i.order_id, i.sku, i.name, i.quantity, i.unit_label
+       FROM stop_order_item i
+       JOIN stop s ON s.id = i.stop_id
+      WHERE s.date = ?
+      ORDER BY i.seq ASC`,
+    [date],
+  );
+  const itemsByOrder = groupItems(itemRows);
+
   const ordersByStop = new Map<string, CachedOrder[]>();
   for (const row of orderRows) {
     const list = ordersByStop.get(row.stop_id) ?? [];
@@ -190,6 +226,7 @@ export async function readRun(
       orderRef: row.order_ref,
       expectedUnits: row.expected_units,
       orderedUnits: row.ordered_units,
+      items: itemsByOrder.get(itemKey(row.stop_id, row.order_id)) ?? [],
     });
     ordersByStop.set(row.stop_id, list);
   }
@@ -224,6 +261,13 @@ export async function readStop(
     [stopId],
   );
 
+  const itemRows = await sql.all<ItemRow>(
+    `SELECT stop_id, order_id, sku, name, quantity, unit_label
+       FROM stop_order_item WHERE stop_id = ? ORDER BY seq ASC`,
+    [stopId],
+  );
+  const itemsByOrder = groupItems(itemRows);
+
   return toCachedStop(
     row,
     orders.map((order) => ({
@@ -231,8 +275,28 @@ export async function readStop(
       orderRef: order.order_ref,
       expectedUnits: order.expected_units,
       orderedUnits: order.ordered_units,
+      items: itemsByOrder.get(itemKey(order.stop_id, order.order_id)) ?? [],
     })),
   );
+}
+
+const itemKey = (stopId: string, orderId: string) => `${stopId}\u0000${orderId}`;
+
+/** Item rows (already in seq order) grouped by their order. */
+function groupItems(rows: readonly ItemRow[]): Map<string, CachedItem[]> {
+  const byOrder = new Map<string, CachedItem[]>();
+  for (const row of rows) {
+    const key = itemKey(row.stop_id, row.order_id);
+    const list = byOrder.get(key) ?? [];
+    list.push({
+      sku: row.sku,
+      name: row.name,
+      quantity: row.quantity,
+      unitLabel: row.unit_label,
+    });
+    byOrder.set(key, list);
+  }
+  return byOrder;
 }
 
 function toCachedStop(row: StopRow, orders: CachedOrder[]): CachedStop {
