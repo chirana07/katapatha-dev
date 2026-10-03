@@ -1,5 +1,5 @@
 import { Text, type TextProps } from "react-native";
-import { color } from "@katapatha/tokens/tokens";
+import { useTheme } from "./theme";
 
 /**
  * A number, a clock time or an id.
@@ -9,10 +9,6 @@ import { color } from "@katapatha/tokens/tokens";
  * like 118/120 harder to scan on a phone at arm's length on a loading dock.
  */
 export function Numeric({ style, ...rest }: TextProps) {
-  return (
-    <Text
-      {...rest}
-      style={[{ fontVariant: ["tabular-nums"], color: color.ink }, style]}
-    />
-  );
+  const { c } = useTheme();
+  return <Text {...rest} style={[{ fontVariant: ["tabular-nums"], color: c.ink }, style]} />;
 }

@@ -9,9 +9,12 @@ import type { components } from "@katapatha/contracts/types";
  * @katapatha/core is a later move-only PR, because docs/CONVENTIONS.md bounces a
  * PR that both moves and changes code, and packages/core is BE1-owned.
  *
- * The one intended difference from the web copy: STOP_STATUS_STYLE held Tailwind
- * class strings, which mean nothing in React Native. It is replaced by
- * STOP_STATUS_TONE, a semantic union the StatusDot component maps to tokens.
+ * Intended differences from the web copy: STOP_STATUS_STYLE held Tailwind class
+ * strings, which mean nothing in React Native, so it is replaced by
+ * STOP_STATUS_TONE, a semantic union the components map to tokens; and the web's
+ * primaryAction (record arrival, then start unload, then complete) is not carried
+ * over, because "Start delivery" records arrival and unload together here
+ * (driver/start-delivery.ts).
  */
 export type StopStatus = components["schemas"]["StopStatus"];
 
@@ -22,15 +25,6 @@ export const STOP_STATUS_LABEL: Record<StopStatus, string> = {
   DONE: "Delivered",
   SKIPPED: "Skipped",
   FAILED: "Failed",
-};
-
-export const STOP_STATUS_HINT: Record<StopStatus, string> = {
-  PENDING: "Tap Record arrival when you reach the outlet.",
-  ARRIVED: "On the dock. Tap Start unload when the hand-off begins.",
-  UNLOADING: "Hand-off in progress. Complete the delivery when every line is off.",
-  DONE: "Delivery recorded.",
-  SKIPPED: "Skipped. Reason attached to the event.",
-  FAILED: "Problem reported. Reason attached to the event.",
 };
 
 /**
@@ -48,29 +42,6 @@ export const STOP_STATUS_TONE: Record<StopStatus, StatusTone> = {
   SKIPPED: "neutral",
   FAILED: "bad",
 };
-
-export type NextAction =
-  | { kind: "arrive"; label: string }
-  | { kind: "unload"; label: string }
-  | { kind: "complete"; label: string }
-  | { kind: "problem"; label: string }
-  | { kind: "none"; label: string };
-
-export function primaryAction(status: StopStatus): NextAction {
-  switch (status) {
-    case "PENDING":
-      return { kind: "arrive", label: "Record arrival" };
-    case "ARRIVED":
-      return { kind: "unload", label: "Start unload" };
-    case "UNLOADING":
-      return { kind: "complete", label: "Complete delivery" };
-    case "DONE":
-      return { kind: "none", label: "Delivered" };
-    case "SKIPPED":
-    case "FAILED":
-      return { kind: "none", label: STOP_STATUS_LABEL[status] };
-  }
-}
 
 export function isTerminal(status: StopStatus): boolean {
   return status === "DONE" || status === "SKIPPED" || status === "FAILED";

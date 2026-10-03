@@ -5,7 +5,7 @@ import type { SqlDriver } from "../db/driver";
 
 const TOKEN_KEY = "katapatha.session";
 const BASE_URL_OVERRIDE_KEY = "base_url_override";
-const FALLBACK_BASE_URL = "http://localhost:4010";
+const FALLBACK_BASE_URL = "http://localhost:3001/v1";
 
 export async function saveToken(token: string): Promise<void> {
   await SecureStore.setItemAsync(TOKEN_KEY, token);

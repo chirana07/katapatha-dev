@@ -130,6 +130,49 @@ export const MIGRATIONS: readonly string[] = [
     note          TEXT
   );
   `,
+
+  // ---- 2 ----------------------------------------------------------------
+  // Multi-page proof of delivery. A POD_CAPTURED event carries up to eight pages
+  // (a receipt photo, a signature, a photo of the goods). The blobs live here,
+  // not on outbox_event, for three reasons: one event holds several of them, the
+  // contract's PodPage has its own client ULID, and a child table lets every
+  // screen read "how many pages" without ever selecting a data URL.
+  //
+  // `data` is the base64 data URL, selected at drain time only, and set to NULL
+  // the moment the event is confirmed, a conflict or rejected -- the same rule
+  // signature_data / photo_data follow. The row itself stays (kind, seq, flags,
+  // capturedAt) so "2 pages" is still true on the recorded screen after the
+  // blobs are gone; it goes with its event when prune() deletes that.
+  //
+  // signature_data / photo_data stay on outbox_event: a row queued by an older
+  // build may still hold one. New intents write pages only.
+  `
+  CREATE TABLE outbox_page (
+    -- The page's client ULID, idempotent on the server like the event's.
+    id            TEXT PRIMARY KEY,
+    event_id      TEXT NOT NULL REFERENCES outbox_event(id) ON DELETE CASCADE,
+    -- Position in capture order, from 0.
+    seq           INTEGER NOT NULL,
+    kind          TEXT NOT NULL CHECK (kind IN ('RECEIPT','SIGNATURE','PHOTO')),
+    data          TEXT,
+    -- JSON array of upper-case codes, e.g. ["CORNERS_NOT_CONFIRMED"].
+    quality_flags TEXT NOT NULL DEFAULT '[]',
+    captured_at   TEXT NOT NULL,
+    payload_bytes INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX idx_outbox_page_event ON outbox_page(event_id, seq);
+
+  -- Events the server refused for a reason retrying cannot change, per drain.
+  ALTER TABLE sync_log ADD COLUMN rejected INTEGER;
+  `,
+  // ---- 3 ----------------------------------------------------------------
+  `
+  -- What the store ordered, beside expected_units (what is on the vehicle). The
+  -- two differ once the dock sends an order short; the Check items step says so.
+  -- Nullable: a run cached before this migration has no figure, and an absent
+  -- one must read as "unknown", never as "equal".
+  ALTER TABLE stop_order ADD COLUMN ordered_units INTEGER;
+  `,
 ];
 
 /** The user_version a fully migrated database reports. */

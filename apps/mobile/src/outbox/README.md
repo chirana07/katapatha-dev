@@ -1,7 +1,7 @@
 # Offline outbox — owner MOB1
 
-This is the only genuinely unbuilt subsystem in the product, and it is the
-mobile app's whole reason to exist. Everything it needs already exists:
+This is the mobile app's whole reason to exist. The server side it needs is
+built (see "Server side" and "What this app did about it" below):
 
 - `StopEvent.id` is a **client-generated ULID**, so replay is idempotent by
   construction. Use `@katapatha/core/offline/ulid`.
@@ -81,21 +81,80 @@ already stored the client's ULID); what remained is now done:
 
 Regression coverage is in `apps/api/src/test/stopEventReplay.test.ts` (replays
 counted against rows and side effects, not mocks) and `stopsAndSync.test.ts`.
-It still has not been run against a real device or the real endpoint from this
-app, so re-run the acceptance assertions by hand the day the app is pointed at it.
+It was run against the real endpoint from this app's own drain and transport on
+2026-10-03 (see "Verified against the API" below), but never from a device.
 
-**What this app must still do about it** (the server cannot do it from its side):
+## What this app did about it — 2026-10-03
 
-1. `OutboxEventInput` / `toBody` send `signatureData` and `photoData` only. To
-   send a multi-page receipt they must send `pages` instead (see above) and not
-   the legacy fields for the same picture.
-2. `transport.ts` reads only `results`. An event the server `rejected` is absent
-   from `results`, which `settleResults` treats as "not reported" and requeues
-   with backoff forever. `readBatchResult` needs to read `rejected` and settle
-   those rows terminally (the same state `rejectBatch` uses), showing `message`.
-3. A single bad event used to come back as a 403/422 for the whole batch and
-   `drain.ts` held or rejected every row in it. That no longer happens for the
-   per-event causes above; a 403/422 now means the whole request was refused.
-4. `transport.ts` still carries a 501 fallback to `/stops/{stopId}/events`
-   ("routes/sync.ts returns 501"). That is now dead, though harmless: the
-   per-stop route accepts the `tripStopId` the body already carries.
+The four things the server could not do from its side are done in this app, each
+covered by tests that run real SQLite through `node:sqlite`:
+
+1. **Multi-page proof of delivery.** Migration 2 adds `outbox_page` (`id` = the
+   page's client ULID, `event_id` -> `outbox_event` ON DELETE CASCADE, `seq`,
+   `kind` RECEIPT|SIGNATURE|PHOTO, `data` = the base64 data URL, `quality_flags`
+   = JSON text, `captured_at`, `payload_bytes`). `deliveryIntent` takes `pages`
+   (1..`MAX_POD_PAGES` = 8, validated by `podPagesProblem`: data-URL shape,
+   1,048,576-character cap, flag pattern, unique ids) and emits no legacy
+   `signatureData` / `photoData`. `repo.enqueue` writes the events and their
+   pages in one transaction; `claimBatch` attaches `pages` (ordered by `seq`) to
+   the POD rows it claims and nowhere else; `payload_bytes` counts pages. The
+   legacy columns stay for rows queued by an older build, which still send them.
+   The images are selected at drain time only and set to NULL the moment the
+   event is confirmed, a conflict or rejected (`settleResults`, `rejectBatch`);
+   the page row stays, so "2 pages" is still true after the images are gone, and
+   it is deleted with its event by `prune`. A delivery's lines and POD still go
+   in one batch. A group over `MAX_BATCH_BYTES` (8 x 400 KB pages exceeds it by
+   design -- the server allows 12 MiB) is still taken alone; the byte cap decides
+   how many *groups* share a request.
+2. **`rejected` is read and settled terminally.** `readBatchResult` reads
+   `rejected: [{ id, code, message }]`. Each id we sent becomes a `rejected`
+   outcome: state `rejected`, `last_error` the sentence from
+   `describeRejection()` (`src/driver/rejections.ts`: plain wording for every
+   code in the contract, generic terminal wording for an unknown one, never
+   "failed"), images dropped, never claimed again. An id in neither `results`
+   nor `rejected` is still requeued with backoff ("not reported" = not applied =
+   safe to resend). `results` wins if an id appears in both. The ok result and
+   `DrainOutcome` carry `rejected`; `sync_log` has a `rejected` column. A batch
+   in which some rows were refused is still a `sent` drain.
+3. **A whole-request 403/422 keeps its old meaning**: the request itself was
+   refused. 403 holds the rows and retries; 422 rejects the batch (and now drops
+   its images too).
+4. **The 501 per-stop fallback is deleted** (`sendPerStop`, the branch, its
+   tests). A 501 from `/sync/stop-events` is now an ordinary retryable 5xx. The
+   Prism mock's settle-by-position path stays.
+
+Two smaller things came with it: `repo.enqueue` uses `ON CONFLICT DO NOTHING`
+instead of `INSERT OR IGNORE` (which would also have swallowed a CHECK or NOT
+NULL violation and silently dropped a record), and a delivery's line events are
+minted before its POD, so ULID order is event order.
+
+Stop facts for the screens come from `readStopRecords` (`src/sync/stopRecords.ts`):
+arrival and unload times (device clock), completion, recipient, per-order units,
+page count, outcome and reason, from outbox rows only and without ever selecting
+a blob. `startDeliveryIntent` records ARRIVED + UNLOAD_START as one intent.
+
+## Verified against the API — 2026-10-03
+
+`src/outbox/transport.ts`, `drain.ts` and `repo.ts` were driven, unchanged,
+against the running API (`http://localhost:3201/v1`, demo day 2026-04-09) as
+sunil@waypoint.lk with a real `createKatapathaClient` and a bearer token, over
+`node:sqlite`. A throwaway script (not in the repo) queued a start-delivery, a
+two-page delivery (a PNG receipt page with `CORNERS_NOT_CONFIRMED`, an SVG
+signature page) for a PENDING stop with two orders, and one FAILED event for a
+stop that is not on the run:
+
+- Clean drain: `accepted=5, duplicates=0, rejected=1`; the FAILED row landed
+  `rejected` locally with the readable "not on your run" sentence; page images
+  were NULL locally and both page rows kept; `GET /sync/stop-events?sinceSeq=0`
+  listed the POD with two pages (RECEIPT, SIGNATURE, ids, flags, capturedAt) and
+  no legacy fields; re-posting the identical batch gave `accepted=0,
+  duplicates=5` and the event count did not change.
+- Lost response (the server applied the request, the phone never heard): the
+  six rows stayed queued with their images, the next drain sent the same ids and
+  got `duplicates=5, rejected=1, accepted=0`, no new rows, stop `DONE`.
+
+**Still not verified:** this has never run on a device. The camera, a real
+receipt photo's size and encoding, `expo-sqlite` (the tests use `node:sqlite`; the
+SQL is the same, the binding is not), the foreground drain triggers, and the
+network failure modes of a real handset are unexercised. `ON CONFLICT DO NOTHING`
+needs SQLite 3.24+, which expo-sqlite bundles, but that was not run on a device.

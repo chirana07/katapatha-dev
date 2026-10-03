@@ -21,6 +21,7 @@
     "expo-crypto": "57.0.3",
     "expo-image-manipulator": "57.0.20",
     "expo-image-picker": "57.0.20",
+    "expo-location": "57.0.20",
     "expo-router": "57.0.24",
     "expo-secure-store": "57.0.4",
     "expo-sqlite": "57.0.3",

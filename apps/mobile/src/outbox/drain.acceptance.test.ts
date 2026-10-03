@@ -7,6 +7,7 @@ import { enqueue, counts, pendingForStop, type OutboxRow } from "./repo";
 import { projectStopStatus } from "./projection";
 import { createDrain } from "./drain";
 import type { Transport, TransportResult } from "./transport";
+import { receiptPage, signaturePage } from "./test-fixtures";
 
 /**
  * THE ACCEPTANCE TEST.
@@ -68,6 +69,7 @@ function createFakeApplier() {
         accepted,
         duplicates,
         conflicts: 0,
+        rejected: 0,
         outcomes,
         clockSkewMs: 0,
         serverSeq: seen.size,
@@ -238,8 +240,7 @@ describe("the acceptance test from src/outbox/README.md", () => {
         occurredAt: "2026-10-01T04:40:00.000Z",
         recipientName: "Nimali Perera",
         lines: [{ orderId: "order-1", expectedUnits: 120, deliveredUnits: 118 }],
-        signatureData: "data:image/svg+xml;base64,PHN2Zz4=",
-        photoData: "data:image/jpeg;base64,/9j/4AAQ",
+        pages: [receiptPage(), signaturePage()],
       }),
       NOW,
     );
@@ -272,6 +273,16 @@ describe("the acceptance test from src/outbox/README.md", () => {
       expect(row.signature_data).toBe(null);
       expect(row.photo_data).toBe(null);
       expect(row.payload_bytes).toBe(0);
+    }
+
+    // The pages' images are gone too, but the pages are still counted.
+    const pages = await sql.all<{ data: string | null; payload_bytes: number }>(
+      "SELECT data, payload_bytes FROM outbox_page",
+    );
+    expect(pages).toHaveLength(2);
+    for (const page of pages) {
+      expect(page.data).toBe(null);
+      expect(page.payload_bytes).toBe(0);
     }
 
     // And the replay still reports every one as a duplicate.
@@ -362,6 +373,7 @@ describe("a delivery's events", () => {
           accepted: rows.length,
           duplicates: 0,
           conflicts: 0,
+          rejected: 0,
           outcomes: rows.map((row) => ({
             id: row.id,
             status: "accepted" as const,
@@ -384,7 +396,7 @@ describe("a delivery's events", () => {
         { orderId: "a", expectedUnits: 10, deliveredUnits: 10 },
         { orderId: "b", expectedUnits: 10, deliveredUnits: 4 },
       ],
-      signatureData: "data:image/svg+xml;base64,PHN2Zz4=",
+      pages: [receiptPage(), signaturePage()],
     });
     await enqueue(sql, intent, NOW);
 

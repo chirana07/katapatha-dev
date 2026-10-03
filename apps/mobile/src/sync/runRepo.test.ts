@@ -78,8 +78,43 @@ describe("replaceRun and readRun", () => {
       windowClose: "11:00",
       accessNote: "Rear dock. Van only.",
     });
+    // The contract's example carries no orderedUnits, so it caches as unknown --
+    // never as "equal to expectedUnits".
     expect(cached?.stops[0].orders).toEqual([
-      { orderId: "order-1", orderRef: "ORD-004312", expectedUnits: 120 },
+      { orderId: "order-1", orderRef: "ORD-004312", expectedUnits: 120, orderedUnits: null },
+    ]);
+  });
+
+  it("keeps what the store ordered beside what is on the vehicle", async () => {
+    await replaceRun(
+      sql,
+      {
+        date: "2026-09-30",
+        vehicleId: "VEH043",
+        trips: [
+          {
+            tripId: "trip-1",
+            tripNo: 1,
+            wave: "PREDAWN",
+            stops: [
+              {
+                id: "stop-1",
+                seq: 1,
+                outletId: "OUT074",
+                status: "PENDING",
+                orders: [
+                  { orderId: "o1", orderRef: "ORD-1", expectedUnits: 18, orderedUnits: 20 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      FETCHED_AT,
+    );
+    const cached = await readRun(sql, "2026-09-30");
+    expect(cached?.stops[0].orders).toEqual([
+      { orderId: "o1", orderRef: "ORD-1", expectedUnits: 18, orderedUnits: 20 },
     ]);
   });
 

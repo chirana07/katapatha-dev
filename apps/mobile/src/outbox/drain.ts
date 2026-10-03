@@ -31,6 +31,11 @@ export type DrainOutcome = {
   duplicates: number;
   conflicts: number;
   requeued: number;
+  /**
+   * Events refused terminally: either the server listed them under `rejected`
+   * (a "sent" drain -- the rest of the batch applied) or the whole request was
+   * refused with a 422 (outcome "rejected").
+   */
   rejected: number;
   /** Set when the session is no longer valid; the caller routes to sign-in. */
   authExpired: boolean;
@@ -144,6 +149,7 @@ export function createDrain(deps: DrainDeps) {
         await logSync(deps.sql, now(), {
           endpoint: "unsent",
           sent: rows.length,
+          rejected: rows.length,
           outcome: "rejected",
           note: result.reason,
         });
@@ -196,6 +202,7 @@ export function createDrain(deps: DrainDeps) {
           accepted: result.accepted,
           duplicates: result.duplicates,
           conflicts: result.conflicts,
+          rejected: settled.rejected,
           clockSkewMs: result.clockSkewMs,
           serverSeq: result.serverSeq,
           outcome: "sent",
@@ -213,7 +220,9 @@ export function createDrain(deps: DrainDeps) {
           duplicates: result.duplicates,
           conflicts: result.conflicts,
           requeued: settled.requeued,
-          rejected: 0,
+          // A batch where some rows were refused is still a "sent" drain: the
+          // server answered, and the rest of it applied.
+          rejected: settled.rejected,
           authExpired: false,
           clockSkewMs: result.clockSkewMs,
           serverSeq: result.serverSeq,
@@ -297,6 +306,7 @@ async function logSync(
     accepted?: number;
     duplicates?: number;
     conflicts?: number;
+    rejected?: number;
     clockSkewMs?: number | null;
     serverSeq?: number | null;
     outcome: string;
@@ -305,9 +315,9 @@ async function logSync(
 ): Promise<void> {
   await sql.run(
     `INSERT INTO sync_log
-       (at, endpoint, sent, accepted, duplicates, conflicts, clock_skew_ms,
-        server_seq, outcome, note)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (at, endpoint, sent, accepted, duplicates, conflicts, rejected,
+        clock_skew_ms, server_seq, outcome, note)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       at.toISOString(),
       entry.endpoint,
@@ -315,6 +325,7 @@ async function logSync(
       entry.accepted ?? null,
       entry.duplicates ?? null,
       entry.conflicts ?? null,
+      entry.rejected ?? null,
       entry.clockSkewMs ?? null,
       entry.serverSeq ?? null,
       entry.outcome,

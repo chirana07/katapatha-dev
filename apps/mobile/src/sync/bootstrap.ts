@@ -10,10 +10,10 @@ import { replaceRun, replaceVocabulary, type Run } from "./runRepo";
  * run AND the vocabularies, which is "everything the device must cache to work
  * with no connectivity".
  *
- * It is a 501 stub in apps/api today, so there is a fallback to GET
- * /drivers/me/run plus GET /reference/vocabularies. Two calls instead of one and
- * no serverSeq, but the same cache contents -- which means the screens do not
- * have to know which path ran.
+ * apps/api implements it. The fallback to GET /drivers/me/run plus GET
+ * /reference/vocabularies is kept for a server that answers 501 (a build without
+ * the sync routes): two calls instead of one and no serverSeq, but the same
+ * cache contents -- which means the screens do not have to know which path ran.
  */
 
 export type BootstrapResult =
@@ -64,7 +64,7 @@ export async function bootstrap(
   };
 }
 
-/** The 501 path: the run and the vocabularies separately. */
+/** The fallback path (501 from /sync/bootstrap): the run and the vocabularies separately. */
 async function bootstrapViaRun(
   sql: SqlDriver,
   date: string,

@@ -1,5 +1,5 @@
 import type { SqlDriver } from "../db/driver";
-import type { Intent, OutboxEventInput } from "./intents";
+import type { Intent, OutboxEventInput, PodPageKind } from "./intents";
 import { payloadBytes } from "./intents";
 import type { PendingEvent } from "./projection";
 import { MAX_AUTOMATIC_ATTEMPTS, nextAttemptAt } from "./backoff";
@@ -36,7 +36,36 @@ export type OutboxRow = {
   conflict_state: string | null;
   created_at: string;
   settled_at: string | null;
+  /**
+   * The event's proof-of-delivery pages, in capture order. Attached by
+   * claimBatch() to the rows it claims -- never by a read that renders a list --
+   * because they carry the blobs.
+   */
+  pages?: OutboxPageRow[];
 };
+
+/** One stored page. `data` is null once the event has settled. */
+export type OutboxPageRow = {
+  id: string;
+  event_id: string;
+  seq: number;
+  kind: PodPageKind;
+  data: string | null;
+  /** JSON array text. Parse with parseQualityFlags(). */
+  quality_flags: string;
+  captured_at: string;
+  payload_bytes: number;
+};
+
+export function parseQualityFlags(text: string | null | undefined): string[] {
+  if (!text) return [];
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed.filter((flag): flag is string => typeof flag === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 /** How many events one request may carry, and how many bytes. */
 export const MAX_BATCH_EVENTS = 50;
@@ -46,11 +75,14 @@ export const MAX_BATCH_BYTES = 1_500_000;
 const SENDING_STALE_MS = 120_000;
 
 /**
- * Queues one intent.
+ * Queues one intent -- its events and their pages in ONE transaction, so a POD
+ * can never exist without its pages (or the reverse) after a crash.
  *
- * INSERT OR IGNORE, because the primary key is the client ULID: a double-tap
- * that re-submits the same intent is a no-op here for the same reason a replay
- * is a no-op on the server. One key, one rule, enforced at both ends.
+ * ON CONFLICT DO NOTHING, because the primary key is the client ULID: a
+ * double-tap that re-submits the same intent is a no-op here for the same reason
+ * a replay is a no-op on the server. One key, one rule, enforced at both ends.
+ * (Not INSERT OR IGNORE: that would also swallow a CHECK or NOT NULL violation
+ * and silently drop a driver's record or page. Only the key may be ignored.)
  */
 export async function enqueue(
   sql: SqlDriver,
@@ -62,12 +94,13 @@ export async function enqueue(
 
   await sql.tx(async (tx) => {
     for (const event of intent.events) {
-      inserted += await tx.run(
-        `INSERT OR IGNORE INTO outbox_event
+      const eventInserted = await tx.run(
+        `INSERT INTO outbox_event
            (id, batch_key, stop_id, type, occurred_at, order_id, delivered_units,
             recipient_name, reason_code, signature_data, photo_data,
             payload_bytes, state, attempts, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?)
+         ON CONFLICT DO NOTHING`,
         [
           event.id,
           intent.batchKey,
@@ -84,6 +117,28 @@ export async function enqueue(
           createdAt,
         ],
       );
+      inserted += eventInserted;
+
+      // Pages go in only when the event itself was inserted: a replayed intent
+      // is a no-op for its pages for the same reason it is for its events.
+      if (eventInserted === 0) continue;
+      for (const [seq, page] of event.pages.entries()) {
+        await tx.run(
+          `INSERT INTO outbox_page
+             (id, event_id, seq, kind, data, quality_flags, captured_at, payload_bytes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            page.id,
+            event.id,
+            seq,
+            page.kind,
+            page.data,
+            JSON.stringify(page.qualityFlags),
+            page.capturedAt,
+            page.data.length,
+          ],
+        );
+      }
     }
   });
 
@@ -127,6 +182,20 @@ export async function pendingByStop(
     grouped.set(row.stop_id, list);
   }
   return grouped;
+}
+
+/**
+ * Bytes of images the phone is holding for the server: the payload size of every
+ * event still queued or sending. Settled events have had their blobs dropped
+ * (payload_bytes is zeroed with them), so this is what a new page has to fit
+ * alongside. Feeds `checkQueueHeadroom` (src/pod/size.ts). Approximate by design,
+ * like payloadBytes(): it only has to be good enough to cap the queue.
+ */
+export async function queuedBlobBytes(sql: SqlDriver): Promise<number> {
+  const row = await sql.first<{ bytes: number | null }>(
+    `SELECT SUM(payload_bytes) AS bytes FROM outbox_event WHERE state IN ('queued', 'sending')`,
+  );
+  return row?.bytes ?? 0;
 }
 
 export type OutboxCounts = {
@@ -241,6 +310,23 @@ export async function claimBatch(
       );
     }
 
+    // The blobs are read here and nowhere else: only for the rows being sent,
+    // only POD events can have any, and in capture order.
+    const podIds = claimed.filter((row) => row.type === "POD_CAPTURED").map((row) => row.id);
+    if (podIds.length > 0) {
+      const pages = await tx.all<OutboxPageRow>(
+        `SELECT id, event_id, seq, kind, data, quality_flags, captured_at, payload_bytes
+           FROM outbox_page
+          WHERE event_id IN (${podIds.map(() => "?").join(",")}) AND data IS NOT NULL
+          ORDER BY event_id ASC, seq ASC`,
+        podIds,
+      );
+      for (const row of claimed) {
+        if (row.type !== "POD_CAPTURED") continue;
+        row.pages = pages.filter((page) => page.event_id === row.id);
+      }
+    }
+
     return claimed;
   });
 }
@@ -255,11 +341,41 @@ function groupByBatch(rows: readonly OutboxRow[]): OutboxRow[][] {
   return [...groups.values()];
 }
 
-export type SettleOutcome = {
-  id: string;
-  status: "accepted" | "duplicate" | "conflict";
-  conflictState?: string | null;
-};
+export type SettleOutcome =
+  | {
+      id: string;
+      status: "accepted" | "duplicate" | "conflict";
+      conflictState?: string | null;
+    }
+  | {
+      /**
+       * The server read the event and refused it for a reason retrying cannot
+       * change (the response's `rejected` list). `reason` is the sentence the
+       * driver reads, already worded by describeRejection().
+       */
+      id: string;
+      status: "rejected";
+      reason: string;
+    };
+
+/**
+ * Drops every image a row holds. One function, so "blobs are gone the moment an
+ * event settles" is true on every settling path and cannot be forgotten on one.
+ * The page rows stay (kind, seq, flags, capturedAt): "2 pages" is still a fact
+ * on the recorded screen after the images are gone.
+ */
+async function dropBlobs(tx: SqlDriver, id: string): Promise<void> {
+  await tx.run(
+    `UPDATE outbox_event
+        SET signature_data = NULL, photo_data = NULL, payload_bytes = 0
+      WHERE id = ?`,
+    [id],
+  );
+  await tx.run(
+    "UPDATE outbox_page SET data = NULL, payload_bytes = 0 WHERE event_id = ?",
+    [id],
+  );
+}
 
 /**
  * Records a successful request's per-event results.
@@ -268,9 +384,13 @@ export type SettleOutcome = {
  * event as a duplicate and changes nothing, which is the whole point of minting
  * the id on the device. They settle identically.
  *
- * The blobs are nulled the moment an event is confirmed. That reclaims the space
- * a photo took, and it means a signature cannot appear in a later log line or
- * crash report because it is no longer in the database to be read.
+ * The blobs (legacy columns and page data) are nulled the moment an event is
+ * confirmed, a conflict or rejected. That reclaims the space a photo took, and
+ * it means a signature cannot appear in a later log line or crash report because
+ * it is no longer in the database to be read.
+ *
+ * An event in `outcomes` with status `rejected` settles terminally: state
+ * `rejected`, `last_error` the driver-readable sentence. It is a known outcome.
  *
  * A row we sent but that is absent from the response goes back to `queued`. The
  * server did not tell us what happened to it, so the only safe reading is that
@@ -282,7 +402,7 @@ export async function settleResults(
   outcomes: readonly SettleOutcome[],
   now: Date,
   random: () => number = Math.random,
-): Promise<{ settled: number; requeued: number; unknown: string[] }> {
+): Promise<{ settled: number; requeued: number; rejected: number; unknown: string[] }> {
   const settledAt = now.toISOString();
   const byId = new Map(outcomes.map((outcome) => [outcome.id, outcome]));
   const sent = new Set(sentIds);
@@ -290,6 +410,7 @@ export async function settleResults(
   return sql.tx(async (tx) => {
     let settled = 0;
     let requeued = 0;
+    let rejected = 0;
 
     for (const id of sentIds) {
       const outcome = byId.get(id);
@@ -311,16 +432,30 @@ export async function settleResults(
         continue;
       }
 
+      if (outcome.status === "rejected") {
+        // A known outcome, and a final one: the server read this event and
+        // refused it. Re-sending cannot change that, so it is not requeued.
+        await tx.run(
+          `UPDATE outbox_event
+              SET state = 'rejected',
+                  last_error = ?,
+                  server_status = 'rejected',
+                  settled_at = ?
+            WHERE id = ?`,
+          [outcome.reason, settledAt, id],
+        );
+        await dropBlobs(tx, id);
+        rejected += 1;
+        continue;
+      }
+
       if (outcome.status === "conflict") {
         await tx.run(
           `UPDATE outbox_event
               SET state = 'conflict',
                   conflict_state = ?,
                   server_status = 'conflict',
-                  settled_at = ?,
-                  signature_data = NULL,
-                  photo_data = NULL,
-                  payload_bytes = 0
+                  settled_at = ?
             WHERE id = ?`,
           [outcome.conflictState ?? null, settledAt, id],
         );
@@ -330,20 +465,19 @@ export async function settleResults(
               SET state = 'confirmed',
                   server_status = ?,
                   settled_at = ?,
-                  last_error = NULL,
-                  signature_data = NULL,
-                  photo_data = NULL,
-                  payload_bytes = 0
+                  last_error = NULL
             WHERE id = ?`,
           [outcome.status, settledAt, id],
         );
       }
+      await dropBlobs(tx, id);
       settled += 1;
     }
 
     return {
       settled,
       requeued,
+      rejected,
       // Ids the server reported that we never sent. Not an error we can act on,
       // but worth recording: it means the response did not match the request.
       unknown: outcomes.filter((outcome) => !sent.has(outcome.id)).map((o) => o.id),
@@ -380,8 +514,8 @@ export async function releaseBatch(
 /**
  * Marks a batch permanently rejected.
  *
- * Only a 422 reaches here: the server understood the request and refused the
- * content, so retrying cannot help. This is the one outcome that loses the
+ * Only a whole-request 422 reaches here: the server understood the request and
+ * refused the content, so retrying cannot help. This is the one outcome that loses the
  * driver's record, which is why the row is kept with its reason and shown
  * permanently on the outbox screen rather than deleted.
  */
@@ -401,6 +535,7 @@ export async function rejectBatch(
           WHERE id = ?`,
         [reason, settledAt, id],
       );
+      await dropBlobs(tx, id);
     }
   });
 }
@@ -449,6 +584,8 @@ export type SyncLogRow = {
   accepted: number | null;
   duplicates: number | null;
   conflicts: number | null;
+  /** Events the server refused terminally in that drain. Null on older rows. */
+  rejected: number | null;
   outcome: string;
   note: string | null;
 };
@@ -456,7 +593,22 @@ export type SyncLogRow = {
 /** The last drain attempt, so the outbox screen can report what actually happened. */
 export async function readLastSync(sql: SqlDriver): Promise<SyncLogRow | null> {
   return sql.first<SyncLogRow>(
-    `SELECT at, endpoint, sent, accepted, duplicates, conflicts, outcome, note
+    `SELECT at, endpoint, sent, accepted, duplicates, conflicts, rejected, outcome, note
        FROM sync_log ORDER BY seq DESC`,
+  );
+}
+
+/**
+ * The most recent drain that put work on the server (outcome `sent`, sent > 0,
+ * at least one event accepted or already held), for the "Back online" notice. Not the last attempt: an idle poll or a failed
+ * retry since then must not erase the fact that work was delivered.
+ */
+export async function readLastDelivered(sql: SqlDriver): Promise<SyncLogRow | null> {
+  return sql.first<SyncLogRow>(
+    `SELECT at, endpoint, sent, accepted, duplicates, conflicts, rejected, outcome, note
+       FROM sync_log
+      WHERE outcome = 'sent' AND sent > 0
+        AND COALESCE(accepted, 0) + COALESCE(duplicates, 0) > 0
+      ORDER BY seq DESC`,
   );
 }

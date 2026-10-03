@@ -28,8 +28,9 @@ export async function pullSince(
       params: { query: { sinceSeq } },
     });
 
-    // 501 today. Not an error worth surfacing: the driver loses nothing, because
-    // the next bootstrap refreshes the run anyway.
+    // Not an error worth surfacing (a 403 after the vehicle was released, say):
+    // the driver loses nothing, because the next bootstrap refreshes the run
+    // anyway.
     if (!result.response.ok || !result.data) return { kind: "unavailable" };
 
     return {

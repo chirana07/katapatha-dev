@@ -40,6 +40,8 @@ export type CachedOrder = {
   orderId: string;
   orderRef: string;
   expectedUnits: number;
+  /** What the store ordered; null when the cached run predates the column. */
+  orderedUnits?: number | null;
 };
 
 export type CachedRun = {
@@ -70,6 +72,7 @@ type OrderRow = {
   order_id: string;
   order_ref: string;
   expected_units: number;
+  ordered_units: number | null;
 };
 
 type RunRow = { date: string; vehicle_id: string; fetched_at: string };
@@ -126,9 +129,15 @@ export async function replaceRun(
 
         for (const order of stop.orders ?? []) {
           await tx.run(
-            `INSERT INTO stop_order (stop_id, order_id, order_ref, expected_units)
-             VALUES (?, ?, ?, ?)`,
-            [stop.id, order.orderId, order.orderRef, order.expectedUnits],
+            `INSERT INTO stop_order (stop_id, order_id, order_ref, expected_units, ordered_units)
+             VALUES (?, ?, ?, ?, ?)`,
+            [
+              stop.id,
+              order.orderId,
+              order.orderRef,
+              order.expectedUnits,
+              order.orderedUnits ?? null,
+            ],
           );
         }
       }
@@ -165,7 +174,7 @@ export async function readRun(
   );
 
   const orderRows = await sql.all<OrderRow>(
-    `SELECT o.stop_id, o.order_id, o.order_ref, o.expected_units
+    `SELECT o.stop_id, o.order_id, o.order_ref, o.expected_units, o.ordered_units
        FROM stop_order o
        JOIN stop s ON s.id = o.stop_id
       WHERE s.date = ?
@@ -180,6 +189,7 @@ export async function readRun(
       orderId: row.order_id,
       orderRef: row.order_ref,
       expectedUnits: row.expected_units,
+      orderedUnits: row.ordered_units,
     });
     ordersByStop.set(row.stop_id, list);
   }
@@ -209,7 +219,7 @@ export async function readStop(
   if (!row) return null;
 
   const orders = await sql.all<OrderRow>(
-    `SELECT stop_id, order_id, order_ref, expected_units
+    `SELECT stop_id, order_id, order_ref, expected_units, ordered_units
        FROM stop_order WHERE stop_id = ? ORDER BY order_ref ASC`,
     [stopId],
   );
@@ -220,6 +230,7 @@ export async function readStop(
       orderId: order.order_id,
       orderRef: order.order_ref,
       expectedUnits: order.expected_units,
+      orderedUnits: order.ordered_units,
     })),
   );
 }

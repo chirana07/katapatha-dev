@@ -4,9 +4,11 @@
 import "@/platform/install-crypto";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Text, View } from "react-native";
+import { ActivityIndicator, StatusBar, Text, View } from "react-native";
 import { Stack } from "expo-router";
-import { color, space } from "@katapatha/tokens/tokens";
+import { space } from "@katapatha/tokens/tokens";
+import { useInsets } from "@/ui/insets";
+import { useTheme } from "@/ui/theme";
 
 import type { SqlDriver } from "@/db/driver";
 import { openDeviceSqlite } from "@/db/sqlite";
@@ -18,6 +20,7 @@ import { createRunStore } from "@/state/store";
 import { StoreProvider } from "@/state/useStore";
 import { SessionProvider } from "@/state/session";
 import { ConnectivityProvider } from "@/state/connectivity";
+import { PositionProvider } from "@/position/PositionProvider";
 import { createDrain } from "@/outbox/drain";
 import { createTransport } from "@/outbox/transport";
 import { bootstrap } from "@/sync/bootstrap";
@@ -128,53 +131,80 @@ function App({ sql }: { sql: SqlDriver }) {
           // signal has just made obsolete.
           onReconnect={() => void drainRef.current?.({ immediate: true })}
         >
-          <Stack
-            screenOptions={{
-              headerStyle: { backgroundColor: color.navy },
-              headerTintColor: color.surface,
-              headerTitleStyle: { fontWeight: "700" },
-              contentStyle: { backgroundColor: color.canvas },
-            }}
-          />
+          {/* Opt-in, foreground-only position reports (src/position). Inside the
+              session, store and connectivity providers because it reads all
+              three; sharing is off until the driver turns it on. */}
+          <PositionProvider sql={sql} getApi={() => getApi(sql)}>
+            <ThemedStack />
+          </PositionProvider>
         </ConnectivityProvider>
       </StoreProvider>
     </SessionProvider>
   );
 }
 
+/**
+ * The root navigator. The groups below it ((auth), (driver)) own their own
+ * stacks and the screens draw their own headers (TripHeader / StepHeader), so a
+ * native header here would only stack a second bar above them.
+ *
+ * The status-bar default follows the scheme (dark icons on the light canvas,
+ * light icons on the night one); a screen with a navy header declares light
+ * icons itself (StatusBarOnDark) while it is mounted.
+ */
+function ThemedStack() {
+  const { scheme, c } = useTheme();
+  return (
+    <>
+      <StatusBar barStyle={scheme === "dark" ? "light-content" : "dark-content"} />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.canvas } }} />
+    </>
+  );
+}
+
 function Booting() {
+  const { c, scheme } = useTheme();
+  const { top } = useInsets();
   return (
     <View
       style={{
         flex: 1,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: color.canvas,
+        backgroundColor: c.canvas,
+        paddingTop: top,
         gap: space.sm,
       }}
     >
-      <ActivityIndicator color={color.navy} />
-      <Text style={{ color: color.muted }}>Opening this phone&apos;s records…</Text>
+      <StatusBar barStyle={scheme === "dark" ? "light-content" : "dark-content"} />
+      <ActivityIndicator color={c.link} />
+      <Text style={{ color: c.muted }}>Opening this phone&apos;s records…</Text>
     </View>
   );
 }
 
 function Fatal({ message }: { message: string }) {
+  const { c, scheme } = useTheme();
+  const { top } = useInsets();
   return (
     <View
       style={{
         flex: 1,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: color.canvas,
+        backgroundColor: c.canvas,
         padding: space.md,
+        paddingTop: space.md + top,
         gap: space.xs,
       }}
     >
-      <Text style={{ fontSize: 18, fontWeight: "700", color: color.ink }}>
+      <StatusBar barStyle={scheme === "dark" ? "light-content" : "dark-content"} />
+      <Text accessibilityRole="header" style={{ fontSize: 18, fontWeight: "700", color: c.ink }}>
         Katapatha cannot start
       </Text>
-      <Text style={{ color: color.muted, textAlign: "center" }}>{message}</Text>
+      <Text accessibilityRole="alert" style={{ color: c.muted, textAlign: "center" }}>
+        {message}
+      </Text>
     </View>
   );
 }

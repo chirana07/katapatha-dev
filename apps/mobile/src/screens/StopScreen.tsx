@@ -1,203 +1,174 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
-import { color, space } from "@katapatha/tokens/tokens";
-import { Screen } from "@/ui/Screen";
-import { Card, CardTitle, Muted, SectionHeading } from "@/ui/Card";
-import { StatusDot } from "@/ui/StatusDot";
-import { Numeric } from "@/ui/Numeric";
+import { space } from "@katapatha/tokens/tokens";
+import { Banner } from "@/ui/Banner";
 import { PrimaryButton, SecondaryButton, ThumbBar } from "@/ui/Button";
-import { ErrorNote, InfoNote, SavedNote } from "@/ui/Notes";
-import { useRunActions, useStop } from "@/state/useStore";
+import { Card, CardTitle, Muted, SectionHeading } from "@/ui/Card";
+import { StepHeader } from "@/ui/Header";
+import { useInsets } from "@/ui/insets";
+import { Numeric } from "@/ui/Numeric";
+import { Screen } from "@/ui/Screen";
+import { Pill } from "@/ui/Pill";
+import { useTheme } from "@/ui/theme";
+import { useRun, useRunActions, useStop } from "@/state/useStore";
 import { formatClock, formatWindow } from "@/driver/format";
-import { STOP_STATUS_HINT, isTerminal, primaryAction } from "@/driver/stop-state";
-import { arrivalIntent, unloadIntent } from "@/outbox/intents";
+import { startDelivery } from "@/driver/start-delivery";
+import { isTerminal, STOP_STATUS_LABEL, STOP_STATUS_TONE } from "@/driver/stop-state";
+import { toneForStatus } from "@/ui/tokens";
+import {
+  closedSummary,
+  recordedFactRows,
+  statusBadge,
+  STOP_HINT,
+  stopNotices,
+  stopPrimary,
+  stopSubline,
+} from "@/driver/stop-detail";
 import { unsentCopy } from "@/outbox/claims";
+import { OrdersCard } from "./stop/OrdersCard";
+import { RecordCard } from "./stop/RecordCard";
+import { StopNotFound } from "./stop/StopNotFound";
+import { goBack } from "./stop/nav";
+
+/** The pinned bar: a 52px button, 16px padding above and below, and the bottom inset. */
+const THUMB_BAR_HEIGHT = 52 + space.sm * 2;
 
 /**
  * One stop, and the single next thing to do with it.
  *
- * The stop comes from the cache, not a request -- which is why this screen works
- * with no signal at all. The web console has to refetch the whole run to render
- * one stop, because it has nowhere to keep it.
- *
- * Exactly one dominant action, pinned in the thumb zone. Completing a delivery and
- * reporting a problem are separate routes so they never compete for that slot.
+ * The stop comes from the cache, not a request, which is why this screen works
+ * with no signal at all. Exactly one dominant action, pinned in the thumb zone:
+ * "Start delivery" (records the arrival and the start of unloading together, then
+ * opens Check items) or "Continue delivery" on a stop already under way. Reporting
+ * a problem is a separate, quieter button in the page, so the two never compete.
  */
 export function StopScreen() {
   const { stopId } = useLocalSearchParams<{ stopId: string }>();
   const stop = useStop(stopId);
+  const { progress } = useRun();
   const { store, drain } = useRunActions();
+  const { c } = useTheme();
+  const { bottom } = useInsets();
 
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // State is async: two taps in one frame would both see busy === false.
+  const starting = useRef(false);
 
   if (!stop) {
     return (
-      <Screen>
-        <Card>
-          <CardTitle>Stop not on this run</CardTitle>
-          <Muted>
-            It may belong to another vehicle, or have been removed from the plan. Pull
-            down on the run to refresh.
-          </Muted>
-        </Card>
-      </Screen>
+      <StopNotFound detail="It may belong to another vehicle, or have been removed from the plan. Go back to the trip and pull down to refresh." />
     );
   }
 
-  const status = stop.projection.status;
-  const action = primaryAction(status);
+  const { status } = stop.projection;
   const closed = isTerminal(status);
-  const expectedUnits = (stop.orders ?? []).reduce((sum, o) => sum + o.expectedUnits, 0);
+  const primary = stopPrimary(status);
+  const expectedUnits = stop.orders.reduce((sum, order) => sum + order.expectedUnits, 0);
 
-  const record = async (kind: "arrive" | "unload") => {
-    if (busy) return;
+  const facts = recordedFactRows(stop.record);
+  const summary = closed
+    ? closedSummary({
+        status,
+        record: stop.record,
+        expectedUnits,
+        projection: stop.projection,
+      })
+    : null;
+  const recordRows = [...facts, ...(summary?.rows ?? [])];
+  const notices = stopNotices(stop.projection);
+  const planned = formatClock(stop.plannedArrivalAt);
+
+  const proceed = async () => {
+    if (starting.current) return;
+    starting.current = true;
     setBusy(true);
     setError(null);
-    setSaved(null);
-
-    const occurredAt = new Date().toISOString();
-    const intent =
-      kind === "arrive"
-        ? arrivalIntent(stop.id, occurredAt)
-        : unloadIntent(stop.id, occurredAt);
-
-    const inserted = await store.submit(intent);
-    setSaved(
-      inserted === 0
-        ? "Already recorded on this phone."
-        : kind === "arrive"
-          ? "Arrival recorded."
-          : "Unload started.",
-    );
-    // Try to send straight away. If there is no signal this does nothing visible;
-    // the record is already safe in the outbox.
-    void drain();
+    try {
+      await startDelivery({ store, drain, stopId: stop.id, status });
+    } catch {
+      setError("This phone could not store the record, so nothing was recorded. Try again.");
+      starting.current = false;
+      setBusy(false);
+      return;
+    }
+    router.push(`/(driver)/stops/${stop.id}/deliver`);
+    starting.current = false;
     setBusy(false);
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: color.canvas }}>
-      <Screen bottomInset={closed ? space.md : 120}>
+    <View style={{ flex: 1, backgroundColor: c.canvas }}>
+      <Screen
+        bottomInset={closed ? space.md : THUMB_BAR_HEIGHT + bottom + space.md}
+        header={
+          <StepHeader
+            stopNumber={stop.seq}
+            outletId={stop.outletId}
+            subline={stopSubline(stop)}
+            step={statusBadge(status, progress.nextStopId === stop.id)}
+            onBack={goBack}
+          />
+        }
+      >
         <Card>
-          <Numeric style={{ fontSize: 13, color: color.muted }}>
-            Stop {stop.seq} · Trip {stop.tripNo} · {stop.wave === "PREDAWN" ? "Pre-dawn" : "Daytime"}
+          <Numeric style={{ fontSize: 13, color: c.muted }}>
+            Trip {stop.tripNo} · {stop.wave === "PREDAWN" ? "Pre-dawn" : "Daytime"}
           </Numeric>
           <CardTitle>{stop.outletName ?? stop.outletId}</CardTitle>
-          <Numeric style={{ fontSize: 14, color: color.muted }}>
-            Window {formatWindow(stop.windowOpen, stop.windowClose)} · arrive{" "}
-            {formatClock(stop.plannedArrivalAt)}
+          <Numeric style={{ fontSize: 14, color: c.muted }}>
+            Window {formatWindow(stop.windowOpen, stop.windowClose)}
+            {planned !== "—" ? ` · planned ${planned}` : ""}
           </Numeric>
-          <StatusDot status={status} />
-          <Muted>{STOP_STATUS_HINT[status]}</Muted>
+          <Pill label={STOP_STATUS_LABEL[status]} tone={toneForStatus(STOP_STATUS_TONE[status])} />
+          <Muted>{STOP_HINT[status]}</Muted>
+          {stop.projection.unsent > 0 ? <Muted>{unsentCopy(stop.projection.unsent)}</Muted> : null}
         </Card>
 
-        {stop.projection.ahead ? (
-          <InfoNote>
-            This phone has recorded more than the server has accepted for this stop.
-            The server&apos;s version is what counts once it catches up.
-          </InfoNote>
-        ) : null}
+        {notices.map((notice) => (
+          <Banner key={notice.id} compact tone={notice.tone} body={notice.text} />
+        ))}
 
-        {stop.projection.state === "conflict" ? (
-          <InfoNote>
-            The server flagged a conflict on this stop. Pull down on the run to reload
-            before recording anything else.
-          </InfoNote>
-        ) : null}
-
-        {stop.projection.state === "rejected" ? (
-          <ErrorNote>
-            The server would not accept one of these records. Open Unsent records to
-            see what it said, and tell the depot.
-          </ErrorNote>
+        {recordRows.length > 0 || summary ? (
+          <>
+            <SectionHeading>{closed ? "Record" : "Recorded so far"}</SectionHeading>
+            <RecordCard rows={recordRows} status={summary?.status} />
+          </>
         ) : null}
 
         {stop.accessNote ? (
           <Card>
             <SectionHeading>Access</SectionHeading>
-            <Text style={{ color: color.ink, fontSize: 15 }}>{stop.accessNote}</Text>
+            <Text style={{ color: c.ink, fontSize: 15 }}>{stop.accessNote}</Text>
           </Card>
         ) : null}
 
         <SectionHeading>Orders</SectionHeading>
-        {(stop.orders ?? []).length === 0 ? (
-          <Card>
-            <Muted>No order lines recorded against this stop.</Muted>
-          </Card>
-        ) : (
-          <Card>
-            {(stop.orders ?? []).map((order) => (
-              <View
-                key={order.orderId}
-                style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  paddingVertical: 6,
-                }}
-              >
-                <Numeric style={{ fontSize: 15 }}>{order.orderRef}</Numeric>
-                <Numeric style={{ fontSize: 15, color: color.muted }}>
-                  {order.expectedUnits} units
-                </Numeric>
-              </View>
-            ))}
-            <View
-              style={{
-                borderTopWidth: 1,
-                borderTopColor: color.line,
-                paddingTop: 6,
-                flexDirection: "row",
-                justifyContent: "space-between",
-              }}
-            >
-              <Text style={{ fontWeight: "700", color: color.ink }}>Expected</Text>
-              <Numeric style={{ fontWeight: "700" }}>{expectedUnits} units</Numeric>
-            </View>
-          </Card>
-        )}
+        <OrdersCard orders={stop.orders} />
 
-        {saved ? <SavedNote>{saved}</SavedNote> : null}
-        {error ? <ErrorNote>{error}</ErrorNote> : null}
+        {error ? <Banner compact tone="bad" body={error} /> : null}
 
-        {stop.projection.unsent > 0 ? (
-          <Muted>{unsentCopy(stop.projection.unsent)}</Muted>
-        ) : null}
-
-        {closed ? (
-          <Card>
-            <Muted>This stop is closed. The record above shows the outcome.</Muted>
-          </Card>
-        ) : (
+        {closed ? null : (
           <SecondaryButton
-            label="Something wrong? Report a problem"
+            label="Report issue"
             tone="critical"
+            icon="warning"
             onPress={() => router.push(`/(driver)/stops/${stop.id}/problem`)}
           />
         )}
       </Screen>
 
-      {closed ? null : (
+      {primary ? (
         <ThumbBar>
-          {action.kind === "complete" ? (
-            <PrimaryButton
-              label={action.label}
-              onPress={() => router.push(`/(driver)/stops/${stop.id}/deliver`)}
-            />
-          ) : (
-            <PrimaryButton
-              label={action.label}
-              busy={busy}
-              busyLabel="Recording…"
-              onPress={() =>
-                void record(action.kind === "arrive" ? "arrive" : "unload")
-              }
-            />
-          )}
+          <PrimaryButton
+            label={primary.label}
+            busy={busy}
+            busyLabel="Recording…"
+            onPress={() => void proceed()}
+          />
         </ThumbBar>
-      )}
+      ) : null}
     </View>
   );
 }

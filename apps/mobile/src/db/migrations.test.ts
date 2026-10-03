@@ -42,6 +42,7 @@ describe("migrate", () => {
     expect(await tableNames(driver)).toEqual([
       "meta",
       "outbox_event",
+      "outbox_page",
       "run",
       "stop",
       "stop_order",
@@ -73,6 +74,8 @@ describe("migrate", () => {
     expect(rows.map((row) => row.name)).toEqual([
       // claim-ready rows for a drain
       "idx_outbox_batch",
+      // a POD's pages, in capture order (read at drain time only)
+      "idx_outbox_page_event",
       "idx_outbox_ready",
       // pending events for one stop, in ULID order
       "idx_outbox_stop",
@@ -179,7 +182,7 @@ describe("the cached run", () => {
         null,
       ],
     );
-    await driver.run("INSERT INTO stop_order VALUES (?, ?, ?, ?)", [
+    await driver.run("INSERT INTO stop_order (stop_id, order_id, order_ref, expected_units) VALUES (?, ?, ?, ?)", [
       "stop-1",
       "order-1",
       "ORD-004312",
@@ -237,5 +240,84 @@ describe("transactions", () => {
       "SELECT value FROM meta WHERE key = 'device_id'",
     );
     expect(row?.value).toBe("device-abc");
+  });
+});
+
+describe("migration 2: proof-of-delivery pages", () => {
+  async function eventRow(driver: SqlDriver, id: string): Promise<void> {
+    await driver.run(
+      `INSERT INTO outbox_event (id, batch_key, stop_id, type, occurred_at, state, created_at)
+       VALUES (?, ?, 's', 'POD_CAPTURED', 'now', 'queued', 'now')`,
+      [id, id],
+    );
+  }
+
+  it("upgrades a version-1 database in place and keeps its queued rows and blobs", async () => {
+    const driver = await fresh();
+    // Exactly what a phone running the previous build holds.
+    await driver.exec(MIGRATIONS[0]);
+    await driver.exec("PRAGMA user_version = 1");
+    await driver.run(
+      `INSERT INTO outbox_event
+         (id, batch_key, stop_id, type, occurred_at, signature_data, state, created_at)
+       VALUES ('01OLD', '01OLD', 's', 'POD_CAPTURED', 'now', 'data:image/svg+xml;base64,PHN2Zz4=', 'queued', 'now')`,
+    );
+    await driver.run(
+      "INSERT INTO sync_log (at, endpoint, sent, outcome) VALUES ('now', 'e', 1, 'sent')",
+    );
+
+    await migrate(driver);
+
+    expect(await currentVersion(driver)).toBe(SCHEMA_VERSION);
+    const old = await driver.first<{ signature_data: string }>(
+      "SELECT signature_data FROM outbox_event WHERE id = '01OLD'",
+    );
+    expect(old?.signature_data).toBe("data:image/svg+xml;base64,PHN2Zz4=");
+    const log = await driver.first<{ rejected: number | null }>("SELECT rejected FROM sync_log");
+    expect(log?.rejected).toBe(null);
+  });
+
+  it("deletes a page with its event, so prune() leaves no orphan blobs", async () => {
+    const driver = await fresh();
+    await migrate(driver);
+    await eventRow(driver, "01POD");
+    await driver.run(
+      `INSERT INTO outbox_page (id, event_id, seq, kind, data, captured_at)
+       VALUES ('01PG1', '01POD', 0, 'RECEIPT', 'data:image/jpeg;base64,AAAA', 'now')`,
+    );
+
+    await driver.run("DELETE FROM outbox_event WHERE id = '01POD'");
+
+    const left = await driver.first<{ c: number }>("SELECT COUNT(*) AS c FROM outbox_page");
+    expect(left?.c).toBe(0);
+  });
+
+  it("refuses a page for an event that does not exist, and a kind outside the contract", async () => {
+    const driver = await fresh();
+    await migrate(driver);
+    await expect(
+      driver.run(
+        `INSERT INTO outbox_page (id, event_id, seq, kind, captured_at)
+         VALUES ('01PG1', 'nope', 0, 'RECEIPT', 'now')`,
+      ),
+    ).rejects.toThrow();
+
+    await eventRow(driver, "01POD");
+    await expect(
+      driver.run(
+        `INSERT INTO outbox_page (id, event_id, seq, kind, captured_at)
+         VALUES ('01PG2', '01POD', 0, 'SELFIE', 'now')`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("makes a re-queued page id a no-op, like the event's own", async () => {
+    const driver = await fresh();
+    await migrate(driver);
+    await eventRow(driver, "01POD");
+    const insert = `INSERT OR IGNORE INTO outbox_page (id, event_id, seq, kind, captured_at)
+                    VALUES ('01PG1', '01POD', 0, 'RECEIPT', 'now')`;
+    expect(await driver.run(insert)).toBe(1);
+    expect(await driver.run(insert)).toBe(0);
   });
 });

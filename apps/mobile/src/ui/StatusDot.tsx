@@ -1,7 +1,8 @@
 import { View, Text } from "react-native";
-import { color, space } from "@katapatha/tokens/tokens";
+import { space } from "@katapatha/tokens/tokens";
 import { STOP_STATUS_LABEL, STOP_STATUS_TONE, type StopStatus } from "../driver/stop-state";
-import { TONE } from "./tokens";
+import { useTheme } from "./theme";
+import { toneTable } from "./tokens";
 
 /**
  * A stop's status, as a dot AND its label.
@@ -23,12 +24,14 @@ export function StatusDot({
   /** Extra words after the label, e.g. "2 unsent". */
   suffix?: string;
 }) {
-  const tone = TONE[STOP_STATUS_TONE[status]];
+  const { scheme } = useTheme();
+  const tone = toneTable(scheme)[STOP_STATUS_TONE[status]];
   const label = STOP_STATUS_LABEL[status];
   const full = suffix ? `${label} · ${suffix}` : label;
 
   return (
     <View
+      accessible
       accessibilityLabel={`Status: ${full}`}
       style={{
         flexDirection: "row",
@@ -36,18 +39,18 @@ export function StatusDot({
         gap: space.xs,
         alignSelf: "flex-start",
         paddingVertical: 4,
-        paddingHorizontal: space.xs,
+        paddingHorizontal: space.xs + 2,
         borderRadius: 999,
         backgroundColor: tone.surface,
       }}
     >
       <View
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
         style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: tone.dot }}
       />
       <Text style={{ color: tone.text, fontSize: 13, fontWeight: "600" }}>{label}</Text>
-      {suffix ? (
-        <Text style={{ color: color.muted, fontSize: 13 }}>· {suffix}</Text>
-      ) : null}
+      {suffix ? <Text style={{ color: tone.text, fontSize: 13 }}>· {suffix}</Text> : null}
     </View>
   );
 }

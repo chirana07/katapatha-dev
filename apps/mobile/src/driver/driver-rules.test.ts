@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import { mutationError, readError } from "./api-errors";
 import { buildDeliveryEvents } from "./delivery-events";
 import {
+  clockToMinutes,
+  colomboClock,
+  colomboClockNow,
   colomboDateFallback,
   colomboToday,
   formatClock,
@@ -11,11 +14,9 @@ import {
 } from "./format";
 import { FALLBACK_PROBLEM_REASONS, labelFor } from "./reasons";
 import {
-  STOP_STATUS_HINT,
   STOP_STATUS_LABEL,
   STOP_STATUS_TONE,
   isTerminal,
-  primaryAction,
   stopsProgress,
 } from "./stop-state";
 
@@ -24,38 +25,6 @@ import {
  * node:test and -- because apps/web declares no `test` script -- has never once
  * run in CI. This is the first version of these assertions that actually runs.
  */
-
-describe("Stop primary action", () => {
-  const mappings = [
-    ["PENDING", "arrive"],
-    ["ARRIVED", "unload"],
-    ["UNLOADING", "complete"],
-    ["DONE", "none"],
-    ["SKIPPED", "none"],
-    ["FAILED", "none"],
-  ] as const;
-
-  for (const [status, kind] of mappings) {
-    it(`advances ${status} toward ${kind}`, () => {
-      expect(primaryAction(status).kind).toBe(kind);
-    });
-  }
-
-  it("labels the actions as something a driver would recognise", () => {
-    expect(primaryAction("PENDING").label).toBe("Record arrival");
-    expect(primaryAction("ARRIVED").label).toBe("Start unload");
-    expect(primaryAction("UNLOADING").label).toBe("Complete delivery");
-  });
-
-  it("gives every status a hint that doesn't repeat the status label", () => {
-    for (const status of Object.keys(STOP_STATUS_HINT) as Array<
-      keyof typeof STOP_STATUS_HINT
-    >) {
-      expect(STOP_STATUS_HINT[status].length).toBeGreaterThan(0);
-      expect(STOP_STATUS_HINT[status]).not.toBe(STOP_STATUS_LABEL[status]);
-    }
-  });
-});
 
 describe("Terminal state detection", () => {
   for (const status of ["DONE", "SKIPPED", "FAILED"] as const) {
@@ -207,6 +176,21 @@ describe("Device clock presentation", () => {
 });
 
 describe("Proof-of-delivery events", () => {
+  const RECEIPT = {
+    id: "page-1",
+    kind: "RECEIPT" as const,
+    data: "data:image/jpeg;base64,/9j/4AAQ",
+    qualityFlags: ["TEXT_NOT_CONFIRMED"],
+    capturedAt: "2026-10-01T04:09:00.000Z",
+  };
+  const SIGNATURE = {
+    id: "page-2",
+    kind: "SIGNATURE" as const,
+    data: "data:image/svg+xml;base64,PHN2Zz4=",
+    qualityFlags: [],
+    capturedAt: "2026-10-01T04:09:30.000Z",
+  };
+
   it("records every order before the stop-level proof of delivery", () => {
     const events = buildDeliveryEvents({
       lines: [
@@ -216,6 +200,7 @@ describe("Proof-of-delivery events", () => {
       podEventId: "pod",
       occurredAt: "2026-10-01T04:10:00.000Z",
       recipientName: "Nimali Perera",
+      pages: [RECEIPT],
     });
 
     expect(
@@ -228,10 +213,9 @@ describe("Proof-of-delivery events", () => {
     expect(events.every((item) => item.recipientName === "Nimali Perera")).toBe(true);
   });
 
-  it("puts the signature and photo on the POD event only", () => {
-    // The native app's reason to exist for this module: the web copy hard-codes
-    // both to null. Repeating a 200 KB photo per order line would multiply the
-    // payload for no added fact.
+  it("puts every page on the POD event only, in capture order", () => {
+    // Repeating a 200 KB photo per order line would multiply the payload for no
+    // added fact.
     const events = buildDeliveryEvents({
       lines: [
         { orderId: "a", expectedUnits: 1, deliveredUnits: 1, eventId: "line-a" },
@@ -240,32 +224,44 @@ describe("Proof-of-delivery events", () => {
       podEventId: "pod",
       occurredAt: "2026-10-01T04:10:00.000Z",
       recipientName: "Nimali Perera",
-      signatureData: "data:image/svg+xml;base64,PHN2Zz4=",
-      photoData: "data:image/jpeg;base64,/9j/4AAQ",
+      pages: [RECEIPT, SIGNATURE],
     });
 
     const pod = events.at(-1);
     expect(pod?.type).toBe("POD_CAPTURED");
-    expect(pod?.signatureData).toBe("data:image/svg+xml;base64,PHN2Zz4=");
-    expect(pod?.photoData).toBe("data:image/jpeg;base64,/9j/4AAQ");
+    expect(pod?.pages.map((page) => page.id)).toEqual(["page-1", "page-2"]);
+    expect(pod?.pages[0].qualityFlags).toEqual(["TEXT_NOT_CONFIRMED"]);
 
     for (const line of events.slice(0, -1)) {
-      expect(line.signatureData).toBe(null);
-      expect(line.photoData).toBe(null);
+      expect(line.pages).toEqual([]);
     }
   });
 
-  it("treats a photo as optional and a missing signature as null, not undefined", () => {
-    // The contract types both as `string | null`; undefined would serialise as
-    // an absent key, and SubmitEventsRequest sets additionalProperties: false.
-    const [, pod] = buildDeliveryEvents({
+  it("never sets the legacy single-image fields, so a picture is not sent twice", () => {
+    const events = buildDeliveryEvents({
       lines: [{ orderId: "a", expectedUnits: 1, deliveredUnits: 1, eventId: "line-a" }],
       podEventId: "pod",
       occurredAt: "2026-10-01T04:10:00.000Z",
       recipientName: "Nimali Perera",
-      signatureData: "data:image/svg+xml;base64,PHN2Zz4=",
+      pages: [RECEIPT],
     });
-    expect(pod.photoData).toBe(null);
+    for (const event of events) {
+      expect(event.signatureData).toBe(null);
+      expect(event.photoData).toBe(null);
+    }
+  });
+
+  it("copies the pages, so a later edit by the caller cannot change a queued event", () => {
+    const pages = [{ ...RECEIPT, qualityFlags: ["TEXT_NOT_CONFIRMED"] }];
+    const events = buildDeliveryEvents({
+      lines: [{ orderId: "a", expectedUnits: 1, deliveredUnits: 1, eventId: "line-a" }],
+      podEventId: "pod",
+      occurredAt: "2026-10-01T04:10:00.000Z",
+      recipientName: "N",
+      pages,
+    });
+    pages[0].qualityFlags.push("CORNERS_NOT_CONFIRMED");
+    expect(events.at(-1)?.pages[0].qualityFlags).toEqual(["TEXT_NOT_CONFIRMED"]);
   });
 
   it("calls a short delivery PART_DELIVERED, and an over-delivery DELIVERED", () => {
@@ -277,8 +273,47 @@ describe("Proof-of-delivery events", () => {
       podEventId: "pod",
       occurredAt: "2026-10-01T04:10:00.000Z",
       recipientName: "Nimali Perera",
+      pages: [RECEIPT],
     });
     expect(events[0].type).toBe("PART_DELIVERED");
     expect(events[1].type).toBe("DELIVERED");
+  });
+});
+
+describe("Colombo wall-clock", () => {
+  it("renders an instant as Asia/Colombo HH:MM (UTC+05:30, no DST)", () => {
+    expect(colomboClockNow(new Date("2026-10-01T01:00:00.000Z"))).toBe("06:30");
+    expect(colomboClock(new Date("2026-10-01T18:29:59.000Z"))).toBe("23:59");
+  });
+
+  it("rolls past midnight Colombo time", () => {
+    expect(colomboClockNow(new Date("2026-10-01T18:30:00.000Z"))).toBe("00:00");
+    expect(colomboClockNow(new Date("2026-10-01T00:05:00.000Z"))).toBe("05:35");
+  });
+
+  it("agrees with the operating date", () => {
+    // 18:30 UTC is already the next day in Colombo.
+    const at = new Date("2026-10-01T18:30:00.000Z");
+    expect(colomboToday(at)).toBe("2026-10-02");
+    expect(colomboClockNow(at)).toBe("00:00");
+  });
+
+  it("agrees with formatDeviceClock", () => {
+    expect(formatDeviceClock("2026-10-01T04:10:00.000Z")).toBe(
+      `Recorded on device at ${colomboClock(new Date("2026-10-01T04:10:00.000Z"))}`,
+    );
+  });
+
+  it("never throws on a bad date", () => {
+    expect(colomboClock(new Date("nope"))).toBe("—");
+  });
+
+  it("converts HH:MM to minutes and refuses anything else", () => {
+    expect(clockToMinutes("00:00")).toBe(0);
+    expect(clockToMinutes("07:21")).toBe(441);
+    expect(clockToMinutes("23:59")).toBe(1439);
+    for (const bad of [null, undefined, "", "7:21", "24:00", "07:60", "07:21:00", "07-21"]) {
+      expect(clockToMinutes(bad)).toBe(null);
+    }
   });
 });

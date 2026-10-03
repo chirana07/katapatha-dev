@@ -1,9 +1,20 @@
 import { useMemo, useRef, useState } from "react";
 import { PanResponder, View, Text, type LayoutChangeEvent } from "react-native";
 import Svg, { Path } from "react-native-svg";
-import { color, radius, space } from "@katapatha/tokens/tokens";
+import { radius, space } from "@katapatha/tokens/tokens";
 import { SecondaryButton } from "@/ui/Button";
+import { themeFor, useTheme } from "@/ui/theme";
 import { strokesToPaths, type Point, type Stroke } from "./signatureData";
+
+/**
+ * The signature is stored as dark ink on a transparent background (see
+ * signatureData.ts) and is read later on light paper, so the signing surface is
+ * ALWAYS paper-white with dark ink, in night mode too: what the recipient sees
+ * is what is stored. Everything around it (the frame, the hint, the clear
+ * button) follows the theme. The paper colours come from the light theme on
+ * purpose, not by accident.
+ */
+const PAPER = themeFor("light").c;
 
 /**
  * Where the recipient signs.
@@ -28,6 +39,7 @@ export function SignaturePad({
   onSize: (size: { width: number; height: number }) => void;
   disabled?: boolean;
 }) {
+  const { c } = useTheme();
   const current = useRef<Point[]>([]);
   const [live, setLive] = useState<string>("");
 
@@ -83,9 +95,9 @@ export function SignaturePad({
         accessibilityLabel="Signature area. Ask the recipient to sign with a finger."
         style={{
           height: 180,
-          backgroundColor: color.surface,
+          backgroundColor: PAPER.surface,
           borderWidth: 1,
-          borderColor: color.line,
+          borderColor: c.line,
           borderRadius: radius.control,
           overflow: "hidden",
         }}
@@ -95,7 +107,7 @@ export function SignaturePad({
             <Path
               key={index}
               d={path}
-              stroke={color.ink}
+              stroke={PAPER.ink}
               strokeWidth={2}
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -105,7 +117,7 @@ export function SignaturePad({
           {live ? (
             <Path
               d={live}
-              stroke={color.ink}
+              stroke={PAPER.ink}
               strokeWidth={2}
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -125,7 +137,7 @@ export function SignaturePad({
               alignItems: "center",
             }}
           >
-            <Text style={{ color: color.muted, fontSize: 13 }}>
+            <Text style={{ color: PAPER.muted, fontSize: 14 }}>
               Recipient signs here
             </Text>
           </View>

@@ -1,164 +1,176 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Text, View } from "react-native";
-import { color, space } from "@katapatha/tokens/tokens";
+import { space } from "@katapatha/tokens/tokens";
 import { Screen } from "@/ui/Screen";
 import { Card, CardTitle, Muted, SectionHeading } from "@/ui/Card";
 import { Numeric } from "@/ui/Numeric";
 import { PrimaryButton } from "@/ui/Button";
 import { ErrorNote, InfoNote, SavedNote } from "@/ui/Notes";
+import { Pill } from "@/ui/Pill";
+import { useTheme } from "@/ui/theme";
 import { useRun, useRunActions } from "@/state/useStore";
-import { outboxExplainer } from "@/outbox/claims";
+import { outboxExplainer, outboxHeldHeading } from "@/outbox/claims";
 import { formatDeviceClock } from "@/driver/format";
-import { MAX_AUTOMATIC_ATTEMPTS } from "@/outbox/backoff";
+import { ScreenHeader } from "./trip/ScreenHeader";
+import {
+  conflictSentence,
+  eventLabel,
+  groupOutboxRows,
+  lastAttemptLines,
+  lastSentLine,
+  outboxTitle,
+  rejectionSentence,
+  sendNowResult,
+  stoppedRetrying,
+  waitingStateLabel,
+} from "./trip/outboxModel";
 
 /**
- * What is waiting, and what the server said.
+ * Unsent records: what is waiting, and what the server said.
  *
  * This screen exists so a driver never has to trust a spinner. It shows the
- * records held on the phone, the last drain's actual counts from sync_log, and
- * -- in full -- anything the server refused, because a rejection is the one
- * outcome that loses their work and they may need to phone the depot about it.
+ * records held on the phone, the last drain's actual counts from sync_log, and --
+ * in full -- anything the server refused, because a rejection is the one outcome
+ * that does not reach the depot and they may need to phone about it. A refused
+ * record is a KNOWN outcome and is worded as one; an unconfirmed record is never
+ * called failed, because the phone has no answer for it.
  *
  * The explanatory line comes from src/outbox/claims.ts, so what the app promises
  * about offline durability is decided in one place.
  *
  * Everything shown is read from the store snapshot, not fetched here. One read
- * path into SQLite means this screen and the header badge cannot disagree about
- * how many records are waiting.
+ * path into SQLite means this screen and the Trip screen's count cannot disagree
+ * about how many records are waiting.
  */
 export function OutboxScreen() {
   const { snapshot } = useRun();
   const { store, drain } = useRunActions();
+  const { c } = useTheme();
 
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
+  const [result, setResult] = useState<ReturnType<typeof sendNowResult> | null>(null);
 
-  const rows = snapshot.pending;
-  const log = snapshot.lastSync;
+  const groups = useMemo(() => groupOutboxRows(snapshot.pending), [snapshot.pending]);
+  const outletOf = useMemo(
+    () => new Map(snapshot.stops.map((stop) => [stop.id, stop.outletId])),
+    [snapshot.stops],
+  );
+  const sentLine = lastSentLine(snapshot.lastDrainAt);
+  const log = snapshot.lastSync ? lastAttemptLines(snapshot.lastSync) : null;
+  const nothing =
+    groups.waiting.length + groups.rejected.length + groups.conflicts.length === 0;
 
   const sendNow = async () => {
     setBusy(true);
-    setNote(null);
-    await drain({ immediate: true });
-    setBusy(false);
-    setNote("Send attempted. The counts below are what the server reported.");
+    setResult(null);
+    try {
+      await drain({ immediate: true });
+    } finally {
+      setResult(
+        sendNowResult({
+          remaining: store.getSnapshot().outbox.unsent,
+          attemptedAt: new Date(),
+        }),
+      );
+      setBusy(false);
+    }
   };
 
-  const rejected = rows.filter((row) => row.state === "rejected");
-  const conflicts = rows.filter((row) => row.state === "conflict");
-  const waiting = rows.filter((row) => row.state === "queued" || row.state === "sending");
+  const heading = (type: string, stopId: string) => {
+    const outlet = outletOf.get(stopId);
+    return outlet ? `${outlet} · ${eventLabel(type)}` : eventLabel(type);
+  };
 
   return (
-    <Screen onRefresh={() => void store.refresh()}>
+    <Screen
+      onRefresh={() => void store.refresh()}
+      header={<ScreenHeader title="Unsent records" />}
+    >
       <Card>
-        <CardTitle>
-          {snapshot.outbox.unsent === 0
-            ? "Everything has been sent"
-            : `${snapshot.outbox.unsent} waiting to send`}
-        </CardTitle>
+        <CardTitle>{outboxTitle(snapshot.outbox)}</CardTitle>
         <Muted>{outboxExplainer()}</Muted>
-        {snapshot.lastDrainAt ? (
-          <Muted>Last sent {formatDeviceClock(snapshot.lastDrainAt)}.</Muted>
-        ) : null}
+        {sentLine ? <Muted>{sentLine}</Muted> : null}
         <PrimaryButton
           label="Send now"
+          icon="refresh"
           busyLabel="Sending…"
           busy={busy}
-          disabled={rows.length === 0}
+          disabled={groups.waiting.length === 0}
           onPress={() => void sendNow()}
         />
-        {note ? <SavedNote>{note}</SavedNote> : null}
+        {result ? (
+          result.tone === "good" ? (
+            <SavedNote>{result.text}</SavedNote>
+          ) : (
+            <InfoNote>{result.text}</InfoNote>
+          )
+        ) : null}
       </Card>
 
       {log ? (
         <Card>
           <SectionHeading>Last attempt</SectionHeading>
-          <Numeric style={{ fontSize: 14, color: color.muted }}>
-            {log.endpoint} · {log.outcome}
-          </Numeric>
-          {log.sent !== null ? (
-            <Numeric style={{ fontSize: 14 }}>
-              sent {log.sent} · accepted {log.accepted ?? 0} · already held{" "}
-              {log.duplicates ?? 0} · conflicts {log.conflicts ?? 0}
-            </Numeric>
-          ) : null}
-          {log.note ? <Muted>{log.note}</Muted> : null}
+          <Numeric style={{ fontSize: 14, color: c.muted }}>{log.headline}</Numeric>
+          {log.counts ? <Numeric style={{ fontSize: 14, color: c.ink }}>{log.counts}</Numeric> : null}
+          {snapshot.lastSync?.note ? <Muted>{snapshot.lastSync.note}</Muted> : null}
         </Card>
       ) : null}
 
-      {rejected.length > 0 ? (
+      {groups.rejected.length > 0 ? (
         <>
-          <SectionHeading>Not accepted</SectionHeading>
-          {rejected.map((row) => (
+          <SectionHeading>Not accepted by the server</SectionHeading>
+          {groups.rejected.map((row) => (
             <Card key={row.id}>
-              <CardTitle>{row.type.replace("_", " ").toLowerCase()}</CardTitle>
+              <CardTitle>{heading(row.type, row.stop_id)}</CardTitle>
               <Muted>{formatDeviceClock(row.occurred_at)}</Muted>
-              <ErrorNote>
-                {row.last_error ??
-                  "The server would not accept this record and will not be asked again."}
-              </ErrorNote>
-              <Muted>
-                Tell the depot what happened at this stop. This record will not be sent
-                again.
-              </Muted>
+              <ErrorNote>{rejectionSentence(row)}</ErrorNote>
+              <Muted>This record will not be sent again.</Muted>
             </Card>
           ))}
         </>
       ) : null}
 
-      {conflicts.length > 0 ? (
+      {groups.conflicts.length > 0 ? (
         <>
-          <SectionHeading>Superseded by the server</SectionHeading>
-          {conflicts.map((row) => (
+          <SectionHeading>Replaced by the server</SectionHeading>
+          {groups.conflicts.map((row) => (
             <Card key={row.id}>
-              <CardTitle>{row.type.replace("_", " ").toLowerCase()}</CardTitle>
+              <CardTitle>{heading(row.type, row.stop_id)}</CardTitle>
               <Muted>{formatDeviceClock(row.occurred_at)}</Muted>
-              <InfoNote>
-                {row.conflict_state === "STALE_ASSIGNMENT"
-                  ? "This stop had been reassigned, so the server kept its own record. Reload the run."
-                  : "A later record replaced this one on the server."}
-              </InfoNote>
+              <InfoNote>{conflictSentence(row)}</InfoNote>
             </Card>
           ))}
         </>
       ) : null}
 
-      {waiting.length > 0 ? (
+      {groups.waiting.length > 0 ? (
         <>
-          <SectionHeading>Held on this phone</SectionHeading>
-          {waiting.map((row) => (
+          <SectionHeading>{outboxHeldHeading()}</SectionHeading>
+          {groups.waiting.map((row) => (
             <Card key={row.id}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text style={{ fontSize: 15, fontWeight: "600", color: color.ink }}>
-                  {row.type.replace("_", " ").toLowerCase()}
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: space.xs }}>
+                <Text style={{ flexShrink: 1, fontSize: 16, fontWeight: "700", color: c.ink }}>
+                  {heading(row.type, row.stop_id)}
                 </Text>
-                <Numeric style={{ fontSize: 13, color: color.muted }}>
-                  {row.state === "sending" ? "sending" : "waiting"}
-                </Numeric>
+                <Pill tone="warn" icon="phone" label={waitingStateLabel(row.state)} />
               </View>
               <Muted>{formatDeviceClock(row.occurred_at)}</Muted>
-              {row.attempts >= MAX_AUTOMATIC_ATTEMPTS ? (
+              {stoppedRetrying(row.attempts) ? (
                 <InfoNote>
-                  Tried {row.attempts} times without success, so Katapatha has stopped
-                  retrying by itself. Tap Send now when you have a good signal.
+                  Tried {row.attempts} times without an answer, so Katapatha has stopped trying by
+                  itself. Tap Send now when you have a good signal.
                 </InfoNote>
-              ) : row.last_error ? (
-                <Muted>{row.last_error}</Muted>
               ) : null}
             </Card>
           ))}
         </>
       ) : null}
 
-      {rows.length === 0 ? (
+      {nothing ? (
         <Card>
-          <Muted>
-            Nothing is waiting. Every record this phone made has reached Katapatha.
-          </Muted>
+          <Muted>Nothing is waiting. Every record this phone made has reached Katapatha.</Muted>
         </Card>
       ) : null}
-
-      <View style={{ height: space.md }} />
     </Screen>
   );
 }

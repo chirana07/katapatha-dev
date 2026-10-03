@@ -88,3 +88,29 @@ export function formatDeviceClock(occurredAt: string): string {
   const minutes = String(shifted.getUTCMinutes()).padStart(2, "0");
   return `Recorded on device at ${hours}:${minutes}`;
 }
+
+/**
+ * A moment as Asia/Colombo wall-clock "HH:MM".
+ *
+ * Fixed +05:30 arithmetic rather than Intl, for the same reason as the fallback
+ * above: Hermes can lack ICU, Sri Lanka has had no DST since 1996, and a clock
+ * label must never throw. Returns "—" for an invalid date.
+ */
+export function colomboClock(at: Date): string {
+  if (Number.isNaN(at.getTime())) return "—";
+  const shifted = new Date(at.getTime() + COLOMBO_OFFSET_MINUTES * 60_000);
+  const hours = String(shifted.getUTCHours()).padStart(2, "0");
+  const minutes = String(shifted.getUTCMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+/** The current Colombo wall-clock time, "HH:MM". `now` is a parameter so it is testable. */
+export function colomboClockNow(now: Date = new Date()): string {
+  return colomboClock(now);
+}
+
+/** Minutes since midnight for an "HH:MM" string, or null when it is not one. */
+export function clockToMinutes(clock: string | null | undefined): number | null {
+  const match = clock ? /^([01]\d|2[0-3]):([0-5]\d)$/.exec(clock) : null;
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+}

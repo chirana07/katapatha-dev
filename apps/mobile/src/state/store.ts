@@ -5,6 +5,7 @@ import {
   counts,
   enqueue,
   pendingByStop,
+  readLastDelivered,
   readLastSync,
   readPendingRows,
   type OutboxCounts,
@@ -14,6 +15,7 @@ import {
 import { projectRun, type Projection } from "../outbox/projection";
 import type { Intent } from "../outbox/intents";
 import { readRun, readVocabulary, type CachedStop } from "../sync/runRepo";
+import { emptyStopRecord, readStopRecords, type StopRecord } from "../sync/stopRecords";
 
 /**
  * The run, as the screens see it.
@@ -30,7 +32,14 @@ import { readRun, readVocabulary, type CachedStop } from "../sync/runRepo";
  * Dependencies are arguments, which is what lets this be exercised without React.
  */
 
-export type ProjectedStop = CachedStop & { projection: Projection };
+export type ProjectedStop = CachedStop & {
+  projection: Projection;
+  /**
+   * What this phone recorded for the stop (outbox rows only, no blobs). Always
+   * present: an untouched stop has an empty record, never null.
+   */
+  record: StopRecord;
+};
 
 export type RunSnapshot = {
   date: string;
@@ -50,7 +59,15 @@ export type RunSnapshot = {
    * cannot show a different set of records from the badge counting them.
    */
   pending: PendingRow[];
+  /** The last drain ATTEMPT (any outcome), as the outbox screen reports it. */
   lastSync: SyncLogRow | null;
+  /**
+   * When the last drain that put records on the server finished (the server's
+   * `sent` sync_log row, device clock), and how many records it took (accepted
+   * plus already-held). Null until one has. Source for the "Back online" notice.
+   */
+  lastSettledAt: string | null;
+  lastSettledCount: number;
 };
 
 export type StoreDeps = {
@@ -70,7 +87,7 @@ export function createRunStore(deps: StoreDeps) {
   }
 
   async function read(): Promise<RunSnapshot> {
-    const [run, pending, outbox, reasons, meta, pendingRows, lastSync] =
+    const [run, pending, outbox, reasons, meta, pendingRows, lastSync, delivered, records] =
       await Promise.all([
         readRun(deps.sql, date),
         pendingByStop(deps.sql, date),
@@ -79,13 +96,15 @@ export function createRunStore(deps: StoreDeps) {
         readMeta(deps.sql),
         readPendingRows(deps.sql),
         readLastSync(deps.sql),
+        readLastDelivered(deps.sql),
+        readStopRecords(deps.sql, date),
       ]);
 
     const stops = run
       ? projectRun(
           run.stops.map((stop) => ({ ...stop, serverStatus: stop.serverStatus })),
           pending,
-        )
+        ).map((stop) => ({ ...stop, record: records.get(stop.id) ?? emptyStopRecord() }))
       : [];
 
     return {
@@ -102,6 +121,8 @@ export function createRunStore(deps: StoreDeps) {
       lastDrainAt: meta.lastDrainAt,
       pending: pendingRows,
       lastSync,
+      lastSettledAt: delivered?.at ?? null,
+      lastSettledCount: delivered ? (delivered.accepted ?? 0) + (delivered.duplicates ?? 0) : 0,
     };
   }
 
@@ -167,6 +188,8 @@ function empty(date: string): RunSnapshot {
     lastDrainAt: null,
     pending: [],
     lastSync: null,
+    lastSettledAt: null,
+    lastSettledCount: 0,
   };
 }
 
@@ -197,4 +220,49 @@ export function snapshotProgress(snapshot: RunSnapshot): {
   const done = snapshot.stops.filter((stop) => terminal.has(stop.projection.status)).length;
   const next = snapshot.stops.find((stop) => !terminal.has(stop.projection.status));
   return { done, total, remaining: total - done, nextStopId: next?.id ?? null };
+}
+
+/** What the "Delivery recorded" screen shows for one stop. */
+export type DeliveryRecord = {
+  /** Sum of the recorded lines, or null when this phone has no delivery lines for the stop. */
+  unitsDelivered: number | null;
+  /** What was on the vehicle for the stop's orders (the run payload's expectedUnits). */
+  unitsExpected: number;
+  recipientName: string | null;
+  /** Device clock (ISO); present through formatDeviceClock(). */
+  completedAt: string | null;
+  pageCount: number;
+  /**
+   * 'saved-on-phone' while any of the stop's events is queued or sending, else
+   * 'sent'. 'sent' means the server has nothing left to take from this phone for
+   * the stop -- see `attention` for the two cases where that is not good news.
+   */
+  sentState: "saved-on-phone" | "sent";
+  /**
+   * 'rejected' or 'conflict' when the server refused or did not apply one of the
+   * stop's events. A screen must not show a green "Sent" over either.
+   */
+  attention: "none" | "conflict" | "rejected";
+};
+
+export function deliveryRecord(stop: ProjectedStop): DeliveryRecord {
+  const { record, projection } = stop;
+  const unitsDelivered =
+    record.lines.length > 0
+      ? record.lines.reduce((sum, line) => sum + line.deliveredUnits, 0)
+      : null;
+  return {
+    unitsDelivered,
+    unitsExpected: stop.orders.reduce((sum, order) => sum + order.expectedUnits, 0),
+    recipientName: record.recipientName,
+    completedAt: record.completedAt,
+    pageCount: record.pageCount,
+    sentState: projection.unsent > 0 ? "saved-on-phone" : "sent",
+    attention:
+      projection.state === "rejected"
+        ? "rejected"
+        : projection.state === "conflict"
+          ? "conflict"
+          : "none",
+  };
 }

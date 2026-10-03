@@ -1,14 +1,16 @@
 import type { Katapatha } from "@katapatha/api-client/client";
-import type { OutboxRow, SettleOutcome } from "./repo";
+import { describeRejection } from "../driver/rejections";
+import type { PodPageKind } from "./intents";
+import { parseQualityFlags, type OutboxRow, type SettleOutcome } from "./repo";
 
 /**
- * Puts a claimed batch on the wire.
+ * Puts a claimed batch on the wire: one request, POST /sync/stop-events.
  *
- * One shape, two endpoints. POST /sync/stop-events is the real path and the one
- * the outbox is designed around. POST /stops/{stopId}/events is the fallback for
- * today's server, where routes/sync.ts returns 501 -- and because a batch_key
- * never spans stops, falling back is a regrouping of the same events, not a
- * different write. src/outbox/README.md: "There is exactly one write to replay."
+ * The server judges every event on its own. Each one comes back in exactly one
+ * of `results` (accepted, duplicate or conflict) or `rejected` (refused for a
+ * reason retrying cannot change); an event in neither was NOT applied and is safe
+ * to send again. A 403/422 for the WHOLE request means the request itself was
+ * refused (src/outbox/README.md, point 3), which is a different thing.
  */
 
 export type TransportResult =
@@ -18,6 +20,8 @@ export type TransportResult =
       accepted: number;
       duplicates: number;
       conflicts: number;
+      /** Events the server refused terminally (listed in `outcomes` as `rejected`). */
+      rejected: number;
       outcomes: SettleOutcome[];
       clockSkewMs: number | null;
       serverSeq: number | null;
@@ -33,6 +37,14 @@ export interface Transport {
   send(rows: readonly OutboxRow[]): Promise<TransportResult>;
 }
 
+type PageBody = {
+  id: string;
+  kind: PodPageKind;
+  data: string;
+  qualityFlags: string[];
+  capturedAt: string;
+};
+
 type EventBody = {
   id: string;
   type: OutboxRow["type"];
@@ -43,30 +55,48 @@ type EventBody = {
   signatureData: string | null;
   photoData: string | null;
   reasonCode: string | null;
-  // Additive field. Required on POST /sync/stop-events (a batch spans
-  // several stops and the server routes each event by this id). Ignored on
-  // POST /stops/{stopId}/events where the URL carries the stop.
-  tripStopId: string | null;
+  /** POD_CAPTURED only, and only when it has pages. Absent otherwise. */
+  pages?: PageBody[];
+  // Required on POST /sync/stop-events: a batch spans several stops and the
+  // server routes each event by this id (an event without it is rejected,
+  // MISSING_TRIP_STOP_ID).
+  tripStopId: string;
 };
 
 /**
  * Exactly the fields SubmitEventsRequest declares, and no others.
  * The contract sets additionalProperties: false, so a stray key is a 422 -- and
  * a 422 is the one outcome that permanently loses the driver's record.
+ *
+ * A picture is sent once. When an event has pages they are the picture and the
+ * legacy signatureData / photoData go out null (the server would ignore them
+ * anyway); a row queued by an older build has no pages, and keeps sending its
+ * legacy fields.
  */
-function toBody(row: OutboxRow): EventBody {
-  return {
+export function toBody(row: OutboxRow): EventBody {
+  const pages = (row.pages ?? []).filter((page) => page.data !== null);
+  const body: EventBody = {
     id: row.id,
     type: row.type,
     occurredAt: row.occurred_at,
     orderId: row.order_id,
     deliveredUnits: row.delivered_units,
     recipientName: row.recipient_name,
-    signatureData: row.signature_data,
-    photoData: row.photo_data,
+    signatureData: pages.length > 0 ? null : row.signature_data,
+    photoData: pages.length > 0 ? null : row.photo_data,
     reasonCode: row.reason_code,
     tripStopId: row.stop_id,
   };
+  if (pages.length > 0) {
+    body.pages = pages.map((page) => ({
+      id: page.id,
+      kind: page.kind,
+      data: page.data as string,
+      qualityFlags: parseQualityFlags(page.quality_flags),
+      capturedAt: page.captured_at,
+    }));
+  }
+  return body;
 }
 
 export function createTransport(options: {
@@ -92,6 +122,7 @@ export function createTransport(options: {
           accepted: 0,
           duplicates: 0,
           conflicts: 0,
+          rejected: 0,
           outcomes: [],
           clockSkewMs: null,
           serverSeq: null,
@@ -119,12 +150,6 @@ export function createTransport(options: {
         return { kind: "offline", error: describe(error) };
       }
 
-      // Today's API: routes/sync.ts is a 501 stub. Regroup by stop and use the
-      // online endpoint, which shares the server's applier.
-      if (result.response.status === 501) {
-        return sendPerStop(client, deviceId, rows, isMock);
-      }
-
       const failure = classify(result.response.status);
       if (failure) return failure;
 
@@ -137,77 +162,12 @@ export function createTransport(options: {
   };
 }
 
-/**
- * The 501 fallback: one request per stop, results merged.
- *
- * A batch_key never spans stops, so no intent is split by this grouping.
- */
-async function sendPerStop(
-  client: Katapatha,
-  deviceId: string,
-  rows: readonly OutboxRow[],
-  isMock: boolean,
-): Promise<TransportResult> {
-  const byStop = new Map<string, OutboxRow[]>();
-  for (const row of rows) {
-    const list = byStop.get(row.stop_id) ?? [];
-    list.push(row);
-    byStop.set(row.stop_id, list);
-  }
-
-  const merged: SettleOutcome[] = [];
-  let accepted = 0;
-  let duplicates = 0;
-  let conflicts = 0;
-
-  for (const [stopId, stopRows] of byStop) {
-    let result;
-    try {
-      result = await client.POST("/stops/{stopId}/events", {
-        params: { path: { stopId } },
-        body: { deviceId, events: stopRows.map(toBody) },
-      });
-    } catch (error) {
-      // Partial progress is safe to keep: anything already accepted will come
-      // back as a duplicate on the retry.
-      if (merged.length === 0) return { kind: "offline", error: describe(error) };
-      break;
-    }
-
-    const failure = classify(result.response.status);
-    if (failure) {
-      if (merged.length === 0) return failure;
-      break;
-    }
-    if (!result.data) break;
-
-    const read = readBatchResult("/stops/{stopId}/events", result.data, stopRows, isMock);
-    if (read.kind !== "ok") return read;
-
-    accepted += read.accepted;
-    duplicates += read.duplicates;
-    conflicts += read.conflicts;
-    merged.push(...read.outcomes);
-  }
-
-  return {
-    kind: "ok",
-    endpoint: "/stops/{stopId}/events",
-    accepted,
-    duplicates,
-    conflicts,
-    outcomes: merged,
-    clockSkewMs: null,
-    serverSeq: null,
-    note: "sync endpoint returned 501; sent per stop",
-  };
-}
-
 type RawResult = {
   accepted?: number;
   duplicates?: number;
   conflicts?: number;
   results?: Array<{ id?: string; status?: string; conflictState?: string | null }>;
+  rejected?: Array<{ id?: string; code?: string; message?: string }>;
   clockSkewMs?: number;
   serverSeq?: number;
 };
@@ -222,7 +182,7 @@ function readBatchResult(
   const results = raw.results ?? [];
 
   const sentIds = new Set(rows.map((row) => row.id));
-  const outcomes: SettleOutcome[] = [];
+  const outcomes: AppliedOutcome[] = [];
   for (const item of results) {
     if (!item.id || !isStatus(item.status)) continue;
     outcomes.push({
@@ -230,6 +190,16 @@ function readBatchResult(
       status: item.status,
       conflictState: item.conflictState ?? null,
     });
+  }
+
+  // `rejected` is read AFTER `results` and never overrides it: an id the server
+  // reports as applied is applied. Only ids we actually sent are settled.
+  const reported = new Set(outcomes.map((outcome) => outcome.id));
+  const refusals: SettleOutcome[] = [];
+  for (const item of raw.rejected ?? []) {
+    if (!item.id || !sentIds.has(item.id) || reported.has(item.id)) continue;
+    reported.add(item.id);
+    refusals.push({ id: item.id, status: "rejected", reason: describeRejection(item) });
   }
 
   // The Prism mock returns a STATIC example: three hard-coded ULIDs and fixed
@@ -247,6 +217,7 @@ function readBatchResult(
       accepted: raw.accepted ?? 0,
       duplicates: raw.duplicates ?? 0,
       conflicts: raw.conflicts ?? 0,
+      rejected: 0,
       outcomes: rows.map((row, index) => ({
         id: row.id,
         status: outcomes[Math.min(index, outcomes.length - 1)].status,
@@ -264,14 +235,18 @@ function readBatchResult(
     accepted: raw.accepted ?? 0,
     duplicates: raw.duplicates ?? 0,
     conflicts: raw.conflicts ?? 0,
-    outcomes,
+    rejected: refusals.length,
+    outcomes: [...outcomes, ...refusals],
     clockSkewMs: raw.clockSkewMs ?? null,
     serverSeq: raw.serverSeq ?? null,
     note: null,
   };
 }
 
-function isStatus(value: unknown): value is SettleOutcome["status"] {
+/** An outcome from `results`: the server applied (or already held) the event, or recorded a conflict. */
+type AppliedOutcome = Exclude<SettleOutcome, { status: "rejected" }>;
+
+function isStatus(value: unknown): value is AppliedOutcome["status"] {
   return value === "accepted" || value === "duplicate" || value === "conflict";
 }
 

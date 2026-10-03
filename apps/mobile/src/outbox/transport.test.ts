@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createKatapathaClient } from "@katapatha/api-client/client";
 import { createTransport } from "./transport";
-import type { OutboxRow } from "./repo";
+import type { OutboxPageRow, OutboxRow } from "./repo";
 
 /**
  * What goes on the wire.
@@ -198,64 +198,226 @@ describe("how failures are classified", () => {
   });
 });
 
-describe("the 501 fallback", () => {
-  it("falls back to the per-stop endpoint, which shares the server's applier", async () => {
-    // Today's reality: apps/api/src/routes/sync.ts is a 501 stub. Because a
-    // batch_key never spans stops, this regroups the same events rather than
-    // writing something different.
+describe("there is no per-stop fallback any more", () => {
+  it("treats a 501 from the sync endpoint like any 5xx: retry later, one request, nothing regrouped", async () => {
+    // routes/sync.ts is real. A 501 now would be a misconfigured proxy, and the
+    // rows must simply stay queued -- not be re-sent to a second endpoint.
     const urls: string[] = [];
     const fetchImpl = (async (input: RequestInfo | URL) => {
-      const url = input instanceof Request ? input.url : String(input);
-      urls.push(url);
-      if (url.endsWith("/sync/stop-events")) {
-        return jsonResponse({ error: { code: "NOT_IMPLEMENTED" } }, 501);
-      }
-      return jsonResponse({
+      urls.push(input instanceof Request ? input.url : String(input));
+      return jsonResponse({ error: { code: "NOT_IMPLEMENTED" } }, 501);
+    }) as unknown as typeof fetch;
+
+    const result = await transportFor(fetchImpl).send([row()]);
+
+    expect(urls).toEqual([`${BASE}/sync/stop-events`]);
+    expect(result).toMatchObject({ kind: "server", status: 501 });
+  });
+});
+
+function page(over: Partial<OutboxPageRow> = {}): OutboxPageRow {
+  return {
+    id: "01JP0000000000000000000000",
+    event_id: "01JA0000000000000000000000",
+    seq: 0,
+    kind: "RECEIPT",
+    data: "data:image/jpeg;base64,/9j/4AAQ",
+    quality_flags: '["TEXT_NOT_CONFIRMED"]',
+    captured_at: "2026-10-01T04:09:00.000Z",
+    payload_bytes: 31,
+    ...over,
+  };
+}
+
+describe("multi-page proof of delivery on the wire", () => {
+  it("sends the pages (id, kind, data, qualityFlags, capturedAt) on the POD and not the legacy fields", async () => {
+    const transport = transportFor(capturingFetch(OK_BODY));
+
+    await transport.send([
+      row({
+        type: "POD_CAPTURED",
+        recipient_name: "Nimali Perera",
+        pages: [
+          page(),
+          page({ id: "01JP0000000000000000000001", seq: 1, kind: "SIGNATURE", quality_flags: "[]" }),
+        ],
+      }),
+    ]);
+
+    const [event] = JSON.parse(String(captured?.init.body)).events;
+    expect(event.pages).toEqual([
+      {
+        id: "01JP0000000000000000000000",
+        kind: "RECEIPT",
+        data: "data:image/jpeg;base64,/9j/4AAQ",
+        qualityFlags: ["TEXT_NOT_CONFIRMED"],
+        capturedAt: "2026-10-01T04:09:00.000Z",
+      },
+      {
+        id: "01JP0000000000000000000001",
+        kind: "SIGNATURE",
+        data: "data:image/jpeg;base64,/9j/4AAQ",
+        qualityFlags: [],
+        capturedAt: "2026-10-01T04:09:00.000Z",
+      },
+    ]);
+    expect(Object.keys(event.pages[0]).sort()).toEqual([
+      "capturedAt",
+      "data",
+      "id",
+      "kind",
+      "qualityFlags",
+    ]);
+    expect(event.signatureData).toBe(null);
+    expect(event.photoData).toBe(null);
+    expect(event.tripStopId).toBe("stop-1");
+  });
+
+  it("never sends the same picture twice: pages win over legacy columns on one row", async () => {
+    const transport = transportFor(capturingFetch(OK_BODY));
+
+    await transport.send([
+      row({
+        type: "POD_CAPTURED",
+        signature_data: "data:image/svg+xml;base64,PHN2Zz4=",
+        photo_data: "data:image/jpeg;base64,/9j/4AAQ",
+        pages: [page()],
+      }),
+    ]);
+
+    const [event] = JSON.parse(String(captured?.init.body)).events;
+    expect(event.signatureData).toBe(null);
+    expect(event.photoData).toBe(null);
+    expect(event.pages).toHaveLength(1);
+  });
+
+  it("still sends a legacy row's single images, and no pages key", async () => {
+    const transport = transportFor(capturingFetch(OK_BODY));
+
+    await transport.send([
+      row({ type: "POD_CAPTURED", signature_data: "data:image/svg+xml;base64,PHN2Zz4=" }),
+    ]);
+
+    const [event] = JSON.parse(String(captured?.init.body)).events;
+    expect(event.signatureData).toBe("data:image/svg+xml;base64,PHN2Zz4=");
+    expect("pages" in event).toBe(false);
+  });
+
+  it("omits pages on every event that is not a POD", async () => {
+    const transport = transportFor(capturingFetch(OK_BODY));
+    await transport.send([row(), row({ id: "01JB", type: "UNLOAD_START" })]);
+    for (const event of JSON.parse(String(captured?.init.body)).events) {
+      expect("pages" in event).toBe(false);
+    }
+  });
+});
+
+describe("events the server refused", () => {
+  const A = "01JA0000000000000000000000";
+  const B = "01JB0000000000000000000000";
+
+  it("settles a rejected id terminally, with a sentence the driver can read, and counts it", async () => {
+    const transport = transportFor(
+      capturingFetch({
         accepted: 1,
         duplicates: 0,
         conflicts: 0,
-        results: [
-          { id: "01JA0000000000000000000000", status: "accepted", conflictState: null },
+        results: [{ id: A, status: "accepted", conflictState: "NONE" }],
+        rejected: [
+          { id: B, code: "STOP_NOT_ON_RUN", message: "Stop clx0stp9z8y7 is not on this driver's run." },
         ],
-      });
-    }) as unknown as typeof fetch;
+        clockSkewMs: 10,
+        serverSeq: 7,
+      }),
+    );
 
-    const transport = transportFor(fetchImpl);
-    const result = await transport.send([row()]);
+    const result = await transport.send([row({ id: A }), row({ id: B })]);
 
-    expect(urls).toEqual([
-      `${BASE}/sync/stop-events`,
-      `${BASE}/stops/stop-1/events`,
-    ]);
-    expect(result).toMatchObject({
-      kind: "ok",
-      endpoint: "/stops/{stopId}/events",
-      accepted: 1,
-    });
-    if (result.kind === "ok") {
-      expect(result.note).toMatch(/501/);
-    }
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.rejected).toBe(1);
+    expect(result.accepted).toBe(1);
+    const refusal = result.outcomes.find((o) => o.id === B);
+    expect(refusal).toMatchObject({ status: "rejected" });
+    if (refusal?.status !== "rejected") throw new Error("expected a rejection");
+    expect(refusal.reason).toMatch(/not on your run/i);
+    // Not the server's developer wording, and not "failed": a rejection is a known outcome.
+    expect(refusal.reason).not.toMatch(/clx0stp|failed/i);
   });
 
-  it("groups the fallback by stop, one request each", async () => {
-    const urls: string[] = [];
-    const fetchImpl = (async (input: RequestInfo | URL) => {
-      const url = input instanceof Request ? input.url : String(input);
-      urls.push(url);
-      if (url.endsWith("/sync/stop-events")) return jsonResponse({}, 501);
-      return jsonResponse({ accepted: 1, duplicates: 0, conflicts: 0, results: [] });
-    }) as unknown as typeof fetch;
+  it("leaves an id that is in neither list out of the outcomes, so it is requeued", async () => {
+    const transport = transportFor(
+      capturingFetch({
+        accepted: 1,
+        duplicates: 0,
+        conflicts: 0,
+        results: [{ id: A, status: "accepted" }],
+        rejected: [],
+      }),
+    );
 
-    const transport = transportFor(fetchImpl);
-    await transport.send([
-      row({ id: "01JA", stop_id: "stop-1" }),
-      row({ id: "01JB", stop_id: "stop-2" }),
-    ]);
+    const result = await transport.send([row({ id: A }), row({ id: B })]);
 
-    expect(urls.slice(1).sort()).toEqual([
-      `${BASE}/stops/stop-1/events`,
-      `${BASE}/stops/stop-2/events`,
-    ]);
+    if (result.kind !== "ok") throw new Error("expected ok");
+    expect(result.outcomes.map((o) => o.id)).toEqual([A]);
+  });
+
+  it("never lets a rejection override an id the server reports as applied", async () => {
+    const transport = transportFor(
+      capturingFetch({
+        accepted: 1,
+        duplicates: 0,
+        conflicts: 0,
+        results: [{ id: A, status: "accepted" }],
+        rejected: [{ id: A, code: "STATE_MISMATCH", message: "x" }],
+      }),
+    );
+
+    const result = await transport.send([row({ id: A })]);
+
+    if (result.kind !== "ok") throw new Error("expected ok");
+    expect(result.rejected).toBe(0);
+    expect(result.outcomes).toEqual([{ id: A, status: "accepted", conflictState: null }]);
+  });
+
+  it("ignores a rejected id it never sent", async () => {
+    const transport = transportFor(
+      capturingFetch({
+        accepted: 1,
+        duplicates: 0,
+        conflicts: 0,
+        results: [{ id: A, status: "accepted" }],
+        rejected: [{ id: B, code: "STATE_MISMATCH", message: "x" }],
+      }),
+    );
+
+    const result = await transport.send([row({ id: A })]);
+
+    if (result.kind !== "ok") throw new Error("expected ok");
+    expect(result.rejected).toBe(0);
+  });
+
+  it("treats an unknown code as terminal, with generic wording", async () => {
+    const transport = transportFor(
+      capturingFetch({
+        accepted: 0,
+        duplicates: 0,
+        conflicts: 0,
+        results: [],
+        rejected: [{ id: A, code: "SOMETHING_NEW", message: "" }],
+      }),
+    );
+
+    const result = await transport.send([row({ id: A })]);
+
+    if (result.kind !== "ok") throw new Error("expected ok");
+    expect(result.outcomes[0]).toMatchObject({ id: A, status: "rejected" });
+  });
+
+  it("reads a response with no `rejected` key (an older server) as no rejections", async () => {
+    const result = await transportFor(capturingFetch(OK_BODY)).send([row()]);
+    if (result.kind !== "ok") throw new Error("expected ok");
+    expect(result.rejected).toBe(0);
   });
 });
 

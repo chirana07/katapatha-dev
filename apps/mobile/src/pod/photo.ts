@@ -3,7 +3,8 @@ import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { MAX_PHOTO_BYTES, dataUrlBytes } from "./size";
 
 /**
- * A delivery photo, as a JPEG data URL.
+ * One page's photo, as a JPEG data URL. The Receipt step calls this once per page
+ * (a receipt can have several sheets).
  *
  * expo-image-picker's camera rather than expo-camera: the OS camera UI removes a
  * viewfinder screen, a preview-and-retake flow and a permissions edge case, none
@@ -19,7 +20,12 @@ const TARGET_WIDTH = 1280;
 const COMPRESS = 0.5;
 
 export type PhotoResult =
-  | { kind: "ok"; dataUrl: string }
+  | {
+      kind: "ok";
+      dataUrl: string;
+      /** Device clock (ISO) the moment the camera handed the photo back, before it was resized. */
+      capturedAt: string;
+    }
   | { kind: "cancelled" }
   | { kind: "denied" }
   | { kind: "too-large" }
@@ -38,6 +44,9 @@ export async function capturePhoto(): Promise<PhotoResult> {
   });
 
   if (captured.canceled || captured.assets.length === 0) return { kind: "cancelled" };
+  // The device clock when the photo was taken. Read before the resize, which can
+  // take a second on a slow phone, so the page is not stamped after the fact.
+  const capturedAt = new Date().toISOString();
 
   try {
     const context = ImageManipulator.manipulate(captured.assets[0].uri).resize({
@@ -57,7 +66,7 @@ export async function capturePhoto(): Promise<PhotoResult> {
     const dataUrl = `data:image/jpeg;base64,${saved.base64}`;
     if (dataUrlBytes(dataUrl) > MAX_PHOTO_BYTES) return { kind: "too-large" };
 
-    return { kind: "ok", dataUrl };
+    return { kind: "ok", dataUrl, capturedAt };
   } catch (error) {
     return {
       kind: "failed",

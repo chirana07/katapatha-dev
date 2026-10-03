@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { router } from "expo-router";
 import { Screen } from "@/ui/Screen";
+import { ScreenHeader } from "./trip/ScreenHeader";
 import { Card, CardTitle, Muted } from "@/ui/Card";
 import { Field } from "@/ui/Field";
 import { PrimaryButton, SecondaryButton } from "@/ui/Button";
 import { ErrorNote, SavedNote } from "@/ui/Notes";
 import { useRun, useRunActions } from "@/state/useStore";
 import { getApi } from "@/api/client";
+import { releaseVehicleNote } from "@/outbox/claims";
 import { mutationError } from "@/driver/api-errors";
 
 /**
@@ -83,9 +85,16 @@ export function VehicleScreen() {
   };
 
   return (
-    <Screen>
+    <Screen
+      header={
+        <ScreenHeader
+          title={snapshot.vehicleId ? "Change vehicle" : "Claim a vehicle"}
+          subtitle={snapshot.vehicleId ? `Now on ${snapshot.vehicleId}` : "No vehicle claimed yet"}
+        />
+      }
+    >
       <Card>
-        <CardTitle>{snapshot.vehicleId ? "Change vehicle" : "Claim a vehicle"}</CardTitle>
+        <CardTitle>Which vehicle are you driving?</CardTitle>
         <Muted>
           The id is on the dock card, next to the loader&apos;s signature.
         </Muted>
@@ -103,6 +112,7 @@ export function VehicleScreen() {
         {saved ? <SavedNote>{saved}</SavedNote> : null}
         <PrimaryButton
           label="Claim vehicle"
+          icon="truck"
           busyLabel="Claiming…"
           busy={busy}
           onPress={() => void claim()}
@@ -113,8 +123,7 @@ export function VehicleScreen() {
         <Card>
           <CardTitle>Finished for the day?</CardTitle>
           <Muted>
-            Releasing {snapshot.vehicleId} hands it back to the depot. Anything you have
-            recorded stays on this phone.
+            {releaseVehicleNote(snapshot.vehicleId)}
           </Muted>
           <SecondaryButton
             label="Release vehicle"

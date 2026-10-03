@@ -3,14 +3,18 @@ import { openNodeSqlite } from "../db/node-sqlite";
 import { migrate } from "../db/migrations";
 import type { SqlDriver } from "../db/driver";
 import { arrivalIntent, deliveryIntent } from "./intents";
+import { receiptPage, signaturePage } from "./test-fixtures";
 import { MAX_AUTOMATIC_ATTEMPTS } from "./backoff";
 import {
+  MAX_BATCH_BYTES,
   MAX_BATCH_EVENTS,
   claimBatch,
   counts,
   enqueue,
   pendingForStop,
   prune,
+  queuedBlobBytes,
+  readLastDelivered,
   rejectBatch,
   releaseBatch,
   releaseStaleSending,
@@ -31,6 +35,18 @@ afterEach(async () => {
   await sql.close();
 });
 
+/** Pages stay (so "2 pages" is still true) but their images are gone. */
+async function expectPageBlobsGone(expectedPages: number): Promise<void> {
+  const pages = await sql.all<{ data: string | null; payload_bytes: number }>(
+    "SELECT data, payload_bytes FROM outbox_page",
+  );
+  expect(pages).toHaveLength(expectedPages);
+  for (const page of pages) {
+    expect(page.data).toBe(null);
+    expect(page.payload_bytes).toBe(0);
+  }
+}
+
 async function rows(): Promise<OutboxRow[]> {
   return sql.all<OutboxRow>("SELECT * FROM outbox_event ORDER BY id ASC");
 }
@@ -45,7 +61,7 @@ describe("enqueue", () => {
         { orderId: "a", expectedUnits: 10, deliveredUnits: 10 },
         { orderId: "b", expectedUnits: 10, deliveredUnits: 3 },
       ],
-      signatureData: "data:image/svg+xml;base64,PHN2Zz4=",
+      pages: [signaturePage()],
     });
 
     expect(await enqueue(sql, intent, NOW)).toBe(3);
@@ -67,7 +83,7 @@ describe("enqueue", () => {
         occurredAt: NOW.toISOString(),
         recipientName: "N",
         lines: [{ orderId: "a", expectedUnits: 1, deliveredUnits: 1 }],
-        signatureData: "x".repeat(1000),
+        pages: [receiptPage({ data: `data:image/jpeg;base64,${"A".repeat(1000)}` })],
       }),
       NOW,
     );
@@ -191,6 +207,7 @@ describe("claimBatch", () => {
             { orderId: `a${index}`, expectedUnits: 1, deliveredUnits: 1 },
             { orderId: `b${index}`, expectedUnits: 1, deliveredUnits: 1 },
           ],
+          pages: [receiptPage()],
         }),
         NOW,
       );
@@ -208,8 +225,10 @@ describe("claimBatch", () => {
   });
 
   it("takes an oversized intent alone rather than stranding it forever", async () => {
-    // A delivery with a large photo can exceed the byte cap on its own. Refusing
-    // it would mean that delivery never reaches the server.
+    // A delivery with eight 400 KB pages exceeds the byte cap on its own, by
+    // design (the server allows 12 MiB). Refusing it would mean that delivery
+    // never reaches the server.
+    const big = `data:image/jpeg;base64,${"A".repeat(400_000)}`;
     await enqueue(
       sql,
       deliveryIntent({
@@ -217,12 +236,15 @@ describe("claimBatch", () => {
         occurredAt: NOW.toISOString(),
         recipientName: "N",
         lines: [{ orderId: "a", expectedUnits: 1, deliveredUnits: 1 }],
-        photoData: "x".repeat(2_000_000),
+        pages: Array.from({ length: 8 }, () => receiptPage({ data: big })),
       }),
       NOW,
     );
 
-    expect(await claimBatch(sql, NOW)).toHaveLength(2);
+    const claimed = await claimBatch(sql, NOW);
+    expect(claimed).toHaveLength(2);
+    expect(claimed.reduce((sum, row) => sum + row.payload_bytes, 0)).toBeGreaterThan(MAX_BATCH_BYTES);
+    expect(claimed.find((row) => row.type === "POD_CAPTURED")?.pages).toHaveLength(8);
   });
 });
 
@@ -254,8 +276,7 @@ describe("settleResults", () => {
         occurredAt: NOW.toISOString(),
         recipientName: "N",
         lines: [{ orderId: "a", expectedUnits: 1, deliveredUnits: 1 }],
-        signatureData: "data:image/svg+xml;base64,PHN2Zz4=",
-        photoData: "data:image/jpeg;base64,/9j/4AAQ",
+        pages: [receiptPage(), signaturePage()],
       }),
       NOW,
     );
@@ -272,6 +293,7 @@ describe("settleResults", () => {
       expect(stored.photo_data).toBe(null);
       expect(stored.payload_bytes).toBe(0);
     }
+    await expectPageBlobsGone(2);
   });
 
   it("marks a conflict terminal and keeps the reason", async () => {
@@ -416,5 +438,217 @@ describe("pendingForStop", () => {
     const pending = await pendingForStop(sql, "stop-1");
     expect(pending).toHaveLength(2);
     expect([...pending].sort((a, b) => a.id.localeCompare(b.id))).toEqual(pending);
+  });
+});
+
+describe("proof-of-delivery pages", () => {
+  const pod = (pages = [receiptPage({ qualityFlags: ["TEXT_NOT_CONFIRMED"] }), signaturePage()]) =>
+    deliveryIntent({
+      stopId: "stop-1",
+      occurredAt: NOW.toISOString(),
+      recipientName: "N",
+      lines: [{ orderId: "a", expectedUnits: 1, deliveredUnits: 1 }],
+      pages,
+    });
+
+  it("stores the pages with the events, in capture order, and nothing in the legacy columns", async () => {
+    const intent = pod();
+    await enqueue(sql, intent, NOW);
+
+    const stored = await sql.all<{ id: string; seq: number; kind: string; quality_flags: string; data: string }>(
+      "SELECT id, seq, kind, quality_flags, data FROM outbox_page ORDER BY seq",
+    );
+    expect(stored.map((page) => [page.seq, page.kind])).toEqual([[0, "RECEIPT"], [1, "SIGNATURE"]]);
+    expect(stored[0].quality_flags).toBe('["TEXT_NOT_CONFIRMED"]');
+    expect(stored[0].id).toBe(intent.events.at(-1)?.pages[0].id);
+
+    for (const row of await rows()) {
+      expect(row.signature_data).toBe(null);
+      expect(row.photo_data).toBe(null);
+    }
+  });
+
+  it("writes events and pages in one transaction: a failing page leaves neither", async () => {
+    const intent = pod();
+    // The second page reuses the first one's id, which the primary key refuses
+    // only if it is a different row; force a hard failure with a bad kind.
+    (intent.events.at(-1)?.pages[1] as { kind: string }).kind = "SELFIE";
+
+    await expect(enqueue(sql, intent, NOW)).rejects.toThrow();
+
+    expect(await rows()).toHaveLength(0);
+    expect(await sql.all("SELECT id FROM outbox_page")).toHaveLength(0);
+  });
+
+  it("is a no-op for the pages when the same intent is enqueued twice", async () => {
+    const intent = pod();
+    expect(await enqueue(sql, intent, NOW)).toBe(2);
+    expect(await enqueue(sql, intent, NOW)).toBe(0);
+    expect(await sql.all("SELECT id FROM outbox_page")).toHaveLength(2);
+  });
+
+  it("counts every page's bytes in the POD's payload_bytes", async () => {
+    const a = receiptPage({ data: `data:image/jpeg;base64,${"A".repeat(5000)}` });
+    const b = receiptPage({ data: `data:image/jpeg;base64,${"B".repeat(7000)}` });
+    await enqueue(sql, pod([a, b]), NOW);
+
+    const row = (await rows()).find((r) => r.type === "POD_CAPTURED");
+    expect(row?.payload_bytes).toBeGreaterThan(a.data.length + b.data.length);
+  });
+
+  it("attaches pages to claimed POD rows only, ordered by seq", async () => {
+    await enqueue(sql, pod(), NOW);
+    const claimed = await claimBatch(sql, NOW);
+
+    const podRow = claimed.find((row) => row.type === "POD_CAPTURED");
+    expect(podRow?.pages?.map((page) => page.kind)).toEqual(["RECEIPT", "SIGNATURE"]);
+    expect(podRow?.pages?.every((page) => page.data !== null)).toBe(true);
+    expect(claimed.find((row) => row.type === "DELIVERED")?.pages).toBeUndefined();
+  });
+
+  it("does not read page data when nothing is claimed", async () => {
+    await enqueue(sql, pod(), NOW);
+    await sql.run("UPDATE outbox_event SET next_attempt_at = ?", [
+      new Date(NOW.getTime() + 60_000).toISOString(),
+    ]);
+    expect(await claimBatch(sql, NOW)).toHaveLength(0);
+  });
+
+  it("drops page images on a conflict, a rejection and a whole-request rejection", async () => {
+    for (const settle of ["conflict", "rejected", "whole"] as const) {
+      await sql.exec("DELETE FROM outbox_event");
+      await enqueue(sql, pod(), NOW);
+      const claimed = await claimBatch(sql, NOW);
+      const ids = claimed.map((row) => row.id);
+
+      if (settle === "whole") {
+        await rejectBatch(sql, ids, "refused", NOW);
+      } else {
+        await settleResults(
+          sql,
+          ids,
+          claimed.map((row) =>
+            settle === "conflict"
+              ? { id: row.id, status: "conflict" as const, conflictState: "SUPERSEDED" }
+              : { id: row.id, status: "rejected" as const, reason: "no" },
+          ),
+          NOW,
+        );
+      }
+      await expectPageBlobsGone(2);
+    }
+  });
+
+  it("keeps the images while a failed send is waiting to be retried", async () => {
+    await enqueue(sql, pod(), NOW);
+    const claimed = await claimBatch(sql, NOW);
+    await releaseBatch(sql, claimed.map((row) => row.id), null, "offline");
+
+    const kept = await sql.all<{ data: string | null }>("SELECT data FROM outbox_page");
+    expect(kept.every((page) => page.data !== null)).toBe(true);
+    // And a second claim carries them again.
+    const again = await claimBatch(sql, NOW, { immediate: true });
+    expect(again.find((row) => row.type === "POD_CAPTURED")?.pages).toHaveLength(2);
+  });
+
+  it("deletes pages with their event when a confirmed row is pruned", async () => {
+    await enqueue(sql, pod(), NOW);
+    const claimed = await claimBatch(sql, NOW);
+    await settleResults(
+      sql,
+      claimed.map((row) => row.id),
+      claimed.map((row) => ({ id: row.id, status: "accepted" as const })),
+      NOW,
+    );
+
+    await prune(sql, new Date(NOW.getTime() + 2 * 24 * 60 * 60 * 1000));
+
+    expect(await sql.all("SELECT id FROM outbox_page")).toHaveLength(0);
+  });
+});
+
+describe("settling a rejected event", () => {
+  it("settles it terminally with the reason, and does not count it as requeued", async () => {
+    await enqueue(sql, arrivalIntent("stop-1", NOW.toISOString()), NOW);
+    const [row] = await claimBatch(sql, NOW);
+
+    const result = await settleResults(
+      sql,
+      [row.id],
+      [{ id: row.id, status: "rejected", reason: "This stop is not on your run." }],
+      NOW,
+    );
+
+    expect(result).toMatchObject({ settled: 0, requeued: 0, rejected: 1 });
+    const [stored] = await rows();
+    expect(stored.state).toBe("rejected");
+    expect(stored.last_error).toBe("This stop is not on your run.");
+    expect(stored.settled_at).not.toBe(null);
+    // Terminal: nothing claims it again, even on "Send now".
+    expect(await claimBatch(sql, NOW, { immediate: true })).toHaveLength(0);
+    expect((await counts(sql, NOW)).rejected).toBe(1);
+    expect((await counts(sql, NOW)).unsent).toBe(0);
+  });
+});
+
+describe("readLastDelivered", () => {
+  async function log(outcome: string, sent: number, accepted: number | null, duplicates: number | null, at: string) {
+    await sql.run(
+      "INSERT INTO sync_log (at, endpoint, sent, accepted, duplicates, outcome) VALUES (?, 'e', ?, ?, ?, ?)",
+      [at, sent, accepted, duplicates, outcome],
+    );
+  }
+
+  it("is the last drain that put records on the server, whatever came after", async () => {
+    await log("sent", 3, 3, 0, "2026-10-01T04:00:00.000Z");
+    await log("offline", 2, null, null, "2026-10-01T04:05:00.000Z");
+
+    expect((await readLastDelivered(sql))?.at).toBe("2026-10-01T04:00:00.000Z");
+  });
+
+  it("ignores a drain in which the server took nothing", async () => {
+    await log("sent", 2, 0, 0, "2026-10-01T04:10:00.000Z");
+    expect(await readLastDelivered(sql)).toBe(null);
+  });
+});
+
+describe("queuedBlobBytes", () => {
+  const delivery = (stopId: string) =>
+    deliveryIntent({
+      stopId,
+      occurredAt: NOW.toISOString(),
+      recipientName: "N",
+      lines: [{ orderId: "a", expectedUnits: 1, deliveredUnits: 1 }],
+      pages: [receiptPage(), signaturePage()],
+    });
+
+  it("is 0 on an empty queue", async () => {
+    expect(await queuedBlobBytes(sql)).toBe(0);
+  });
+
+  it("counts what is queued, including the pages, and no more", async () => {
+    const intent = delivery("stop-1");
+    await enqueue(sql, intent, NOW);
+    const expected = await sql.first<{ n: number }>("SELECT SUM(payload_bytes) AS n FROM outbox_event");
+    const pageChars = intent.events.at(-1)!.pages.reduce((sum, page) => sum + page.data.length, 0);
+
+    const bytes = await queuedBlobBytes(sql);
+    expect(bytes).toBe(expected!.n);
+    expect(bytes).toBeGreaterThanOrEqual(pageChars);
+  });
+
+  it("drops to 0 once the events settle and their images are dropped", async () => {
+    await enqueue(sql, delivery("stop-1"), NOW);
+    expect(await queuedBlobBytes(sql)).toBeGreaterThan(0);
+
+    const claimed = await claimBatch(sql, NOW);
+    await settleResults(
+      sql,
+      claimed.map((row) => row.id),
+      claimed.map((row) => ({ id: row.id, status: "accepted" as const })),
+      NOW,
+    );
+
+    expect(await queuedBlobBytes(sql)).toBe(0);
   });
 });
