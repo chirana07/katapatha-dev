@@ -147,12 +147,17 @@ will refuse the bundle.
 
 ### On a simulator
 
-Nothing more to do. The default base URL is the Prism mock (see below); point it
-at the real API instead with:
+Nothing more to do. The default base URL is the real API on `localhost:3001`
+(`/v1` prefix), so start the API first. To use the Prism mock instead (paths at
+the root, no `/v1`):
 
 ```bash
-KATAPATHA_API_BASE_URL="http://localhost:3001/v1" pnpm --filter @katapatha/mobile start
+KATAPATHA_API_BASE_URL="http://localhost:4010" pnpm --filter @katapatha/mobile start
 ```
+
+The app follows the phone's light/dark setting (the night palette is the
+driver's only; see `docs/DESIGN.md`). Position sharing is off until the driver
+turns it on from the Connection screen, and only reports while the app is open.
 
 ### On a real handset — two things are required
 
