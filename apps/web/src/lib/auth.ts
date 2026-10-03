@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import type { components } from "@katapatha/contracts/types";
 import { HOME_FOR_ROLE } from "@katapatha/core/domain/authPaths";
@@ -23,6 +24,27 @@ export class WorkspaceUnavailableError extends Error {
 }
 
 /**
+ * /auth/me, fetched once per request.
+ *
+ * The layout guards the workspace and the page underneath needs the same user
+ * (for the depot or the outlet), so without this every page paid for the call
+ * twice. React's `cache` scopes it to the render, so one request never sees
+ * another's session.
+ *
+ * `api()` is called outside the try: it reads cookies(), and Next signals "this
+ * render is dynamic" by throwing from it. Catching that turns a static page
+ * under a guarded layout into a build-time WorkspaceUnavailableError.
+ */
+const sessionOnce = cache(async () => {
+  const client = await api();
+  try {
+    return await client.GET("/auth/me");
+  } catch {
+    throw new WorkspaceUnavailableError();
+  }
+});
+
+/**
  * The one session-and-role gate.
  *
  * Before this, the dispatcher checked its role in three separate places and
@@ -39,16 +61,7 @@ export class WorkspaceUnavailableError extends Error {
  * it. So this only ever reacts to 401 and to the role not matching.
  */
 export async function requireRole(role: Role, next: string): Promise<SessionUser> {
-  // Outside the try: api() reads cookies(), and Next signals "this render is
-  // dynamic" by throwing from it. Catching that turns a static page under a
-  // guarded layout into a build-time WorkspaceUnavailableError.
-  const client = await api();
-  let result;
-  try {
-    result = await client.GET("/auth/me");
-  } catch {
-    throw new WorkspaceUnavailableError();
-  }
+  const result = await sessionOnce();
 
   if (result.response.status === 401) redirect(`/sign-in?next=${encodeURIComponent(next)}`);
   if (result.error || !result.data) throw new WorkspaceUnavailableError();

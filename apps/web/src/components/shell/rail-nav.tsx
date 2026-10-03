@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { isCurrent, type NavItem } from "./nav";
+import type { Role } from "@katapatha/core/domain/roles";
+import { NAV, isCurrent } from "./nav";
 import { NavIcon } from "./nav-icon";
 
 /**
@@ -14,12 +15,14 @@ import { NavIcon } from "./nav-icon";
  * the chip and the avatar across the boundary with it.
  *
  * `NavItem` carries a RegExp, which does not survive the server/client
- * serialisation boundary — so the matching happens here and the items are
- * imported rather than passed as props.
+ * serialisation boundary — so these take a `role` and look the items up in
+ * `NAV` themselves. Passing `nav.items` from the server shell crashes the page
+ * at render time, and `next build` does not catch it.
  */
 
-export function RailNav({ items, label }: { items: NavItem[]; label: string }) {
+export function RailNav({ role, label }: { role: Role; label: string }) {
   const pathname = usePathname() ?? "";
+  const items = NAV[role].items;
 
   return (
     <nav aria-label={label} className="flex flex-col gap-1 text-sm">
@@ -49,8 +52,9 @@ export function RailNav({ items, label }: { items: NavItem[]; label: string }) {
  * strip. The strip scrolls; the page does not — DESIGN.md requires no
  * page-wide horizontal scroll at 390px.
  */
-export function MobileNav({ items, label }: { items: NavItem[]; label: string }) {
+export function MobileNav({ role, label }: { role: Role; label: string }) {
   const pathname = usePathname() ?? "";
+  const items = NAV[role].items;
   if (!items.length) return null;
 
   return (

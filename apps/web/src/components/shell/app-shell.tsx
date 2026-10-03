@@ -73,7 +73,7 @@ export function AppShell({
             <p className="mt-0.5 truncate text-sm font-semibold text-white">{scope}</p>
           </div>
 
-          <RailNav items={nav.items} label={navLabel} />
+          <RailNav role={role} label={navLabel} />
         </div>
 
         <div className="flex items-center justify-between gap-3 rounded-card bg-white/5 p-3 text-sm">
@@ -108,7 +108,7 @@ export function AppShell({
             </div>
           </div>
           <span className="sr-only">Signed in as {name}</span>
-          <MobileNav items={nav.items} label={navLabel} />
+          <MobileNav role={role} label={navLabel} />
         </header>
 
         <div id="workspace" tabIndex={-1} className="min-w-0 flex-1">
