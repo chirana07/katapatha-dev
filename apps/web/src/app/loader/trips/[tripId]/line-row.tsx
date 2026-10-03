@@ -2,6 +2,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
+import { OrderItems } from "@/components/ui/order-items";
 import { StatusPill } from "@/components/ui/status-pill";
 import { recordLoadCheck } from "../../actions";
 import type { LoadLine } from "../../dock-model";
@@ -123,6 +124,9 @@ export function LineRow({
           </div>
         )}
       </div>
+
+      {/* What is in the order: context for the dock. The count stays per order. */}
+      <OrderItems items={line.items} mode="responsive" className="mt-1" />
 
       {!editing && state !== "ok" && state !== "unchecked" ? (
         <p className="text-sm text-muted">

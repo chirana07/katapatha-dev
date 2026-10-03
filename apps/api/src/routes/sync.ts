@@ -5,6 +5,7 @@ import {
   SHORTFALL_REASONS,
 } from "@katapatha/core/domain/reasons";
 import { prisma } from "../lib/db.js";
+import { ORDER_ITEMS_SCHEMA, itemsOf } from "../services/products.js";
 import { accessNoteFor } from "../services/store.js";
 import { loadRun } from "../services/delivery.js";
 import {
@@ -141,6 +142,9 @@ const STOP_ITEM = {
           orderId: { type: "string" },
           orderRef: { type: "string" },
           expectedUnits: { type: "integer" },
+          // Additive: what the order contains, cached with the run so the
+          // driver can see it with no signal.
+          items: ORDER_ITEMS_SCHEMA,
         },
       },
     },
@@ -456,6 +460,7 @@ export default async function (fastify: FastifyInstance) {
                 orderId: order.id,
                 orderRef: order.ref,
                 expectedUnits: order.units,
+                items: itemsOf(order.lines),
               })),
             })),
           })),

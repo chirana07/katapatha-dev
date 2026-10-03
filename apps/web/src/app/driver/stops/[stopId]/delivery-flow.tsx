@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { Button, ButtonLink } from "@/components/ui/button";
+import { OrderItems } from "@/components/ui/order-items";
 import { StatusPill } from "@/components/ui/status-pill";
 import { clockTime, plural } from "@/lib/format";
+import type { OrderItem } from "@/lib/order-items";
 import { ConnectivityBanner, useConnectivity } from "../../connectivity";
 import { OFFLINE_SUBMIT_REASON, canSubmit } from "../../connectivity-state";
 import { StopHeader, type StepState } from "../../driver-header";
@@ -14,7 +16,7 @@ import { canAddPage } from "../../image-fit";
 import { readPodPage } from "../../pod-pages";
 import { ThumbBar } from "../../thumb-bar";
 
-type Order = { orderId: string; orderRef: string; expectedUnits: number };
+type Order = { orderId: string; orderRef: string; expectedUnits: number; items?: OrderItem[] };
 type Page = { id: string; dataUrl: string; capturedAt: string };
 type Summary = { delivered: number; expected: number; recipient: string; at: string; pages: number; duplicate: boolean };
 
@@ -31,7 +33,7 @@ export interface FlowProps {
   next: { href: string; label: string } | null;
 }
 
-const STEP_LABELS = ["Check items", "Receipt", "Confirm"] as const;
+const STEP_LABELS = ["Count units", "Receipt", "Confirm"] as const;
 
 function steps(current: 0 | 1 | 2): { label: string; state: StepState }[] {
   return STEP_LABELS.map((label, index) => ({
@@ -192,10 +194,12 @@ export function DeliveryFlow(props: FlowProps) {
           <ul className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface">
             {parsed.map(({ order, value, valid }) => (
               <li key={order.orderId} className="flex items-center gap-3 p-3">
-                <span className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1">
                   <span className="block font-bold text-ink">{order.orderRef}</span>
                   <span className="tabular block text-sm text-muted">of {order.expectedUnits}</span>
-                </span>
+                  {/* Read-only: the count above is per order, not per product. */}
+                  <OrderItems items={order.items} mode="collapsible" />
+                </div>
                 <div className="flex items-center gap-2">
                   <Button
                     type="button"

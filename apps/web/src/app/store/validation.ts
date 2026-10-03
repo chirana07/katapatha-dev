@@ -1,6 +1,6 @@
 import type { components } from "@katapatha/contracts/types";
 
-type OrderLine = components["schemas"]["PlaceOrdersRequest"]["lines"][number];
+type OrderItemRequest = NonNullable<components["schemas"]["PlaceOrdersRequest"]["items"]>[number];
 type IssueKind = NonNullable<components["schemas"]["ReceiptRequest"]["issueKind"]>;
 type CreateIssue = components["schemas"]["CreateIssueRequest"];
 
@@ -18,23 +18,47 @@ function unitsFrom(value: FormDataEntryValue | null, maximum?: number): number |
     : null;
 }
 
-export function validateOrderQuantities(
-  ambientValue: FormDataEntryValue | null,
-  chilledValue: FormDataEntryValue | null,
-): ValidationResult<OrderLine[]> {
-  const ambient = unitsFrom(ambientValue, 10_000);
-  const chilled = unitsFrom(chilledValue, 10_000);
-  if (ambient === null || chilled === null) {
-    return { ok: false, error: "Enter whole-number quantities between 0 and 10,000 units." };
+/**
+ * The basket the wizard posts, as the API's `items`.
+ *
+ * It arrives as one JSON field (`[{productId, quantity}]`) because a form has
+ * no natural way to carry a list of pairs. The wizard builds it from state it
+ * already clamped, so most of this is the server not trusting a hand-made POST:
+ * a product listed twice would be a 422 from the API anyway, but a plain
+ * message here is cheaper than a round trip.
+ */
+export function validateOrderItems(value: FormDataEntryValue | null): ValidationResult<OrderItemRequest[]> {
+  let parsed: unknown;
+  try {
+    parsed = typeof value === "string" ? JSON.parse(value) : null;
+  } catch {
+    parsed = null;
   }
-  if (ambient + chilled === 0) {
-    return { ok: false, error: "Enter at least one ambient or chilled unit before placing the order." };
+  if (!Array.isArray(parsed)) {
+    return { ok: false, error: "Choose at least one product before placing the order." };
+  }
+  if (parsed.length === 0) {
+    return { ok: false, error: "Choose at least one product before placing the order." };
+  }
+  if (parsed.length > 100) {
+    return { ok: false, error: "An order can have at most 100 different products." };
   }
 
-  const lines: OrderLine[] = [];
-  if (ambient > 0) lines.push({ tempRequirement: "ambient", units: ambient });
-  if (chilled > 0) lines.push({ tempRequirement: "chilled", units: chilled });
-  return { ok: true, data: lines };
+  const seen = new Set<string>();
+  const items: OrderItemRequest[] = [];
+  for (const entry of parsed as unknown[]) {
+    const productId = (entry as { productId?: unknown } | null)?.productId;
+    const quantity = (entry as { quantity?: unknown } | null)?.quantity;
+    if (typeof productId !== "string" || productId === "" || seen.has(productId)) {
+      return { ok: false, error: "Each product can appear once. Reload the page and choose again." };
+    }
+    if (typeof quantity !== "number" || !Number.isInteger(quantity) || quantity < 1 || quantity > 10_000) {
+      return { ok: false, error: "Enter whole-number quantities between 1 and 10,000 for each product." };
+    }
+    seen.add(productId);
+    items.push({ productId, quantity });
+  }
+  return { ok: true, data: items };
 }
 
 export function validateReceipt(

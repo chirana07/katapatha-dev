@@ -286,6 +286,51 @@ describe("the loader's trip routes", () => {
       expect(lines.find((l) => l.orderId === "ORD1")!.shortfall).toBeNull();
     });
 
+    it("shows what each order contains, and the query asks for it", async () => {
+      const server = await serverFor();
+      vi.mocked(prisma.trip.findUnique).mockResolvedValue({
+        ...loadListTrip,
+        stops: [
+          {
+            seq: 2,
+            outletId: "OUT200",
+            orders: [
+              {
+                order: {
+                  id: "ORD2",
+                  ref: "ORD-2",
+                  units: 20,
+                  lines: [
+                    { sku: "FC001", productName: "Fresh Milk 1 L (12 per crate)", unitLabel: "crate", quantity: 12 },
+                    { sku: "FC002", productName: "Set Yoghurt 80 g (24 per tray)", unitLabel: "tray", quantity: 8 },
+                  ],
+                },
+              },
+            ],
+          },
+          // A legacy, units-only order: no lines, and still a valid line on the list.
+          { seq: 1, outletId: "OUT100", orders: [{ order: { id: "ORD1", ref: "ORD-1", units: 10, lines: [] } }] },
+        ],
+      } as never);
+
+      const response = await server.inject({ method: "GET", url: "/v1/trips/TRP001/load-list" });
+
+      expect(response.statusCode).toBe(200);
+      const lines = response.json().lines as Array<{ orderId: string; items: unknown; expectedUnits: number }>;
+      expect(lines.find((l) => l.orderId === "ORD2")!.items).toEqual([
+        { sku: "FC001", name: "Fresh Milk 1 L (12 per crate)", quantity: 12, unitLabel: "crate" },
+        { sku: "FC002", name: "Set Yoghurt 80 g (24 per tray)", quantity: 8, unitLabel: "tray" },
+      ]);
+      // The load check still counts the order's units, not products.
+      expect(lines.find((l) => l.orderId === "ORD2")!.expectedUnits).toBe(20);
+      expect(lines.find((l) => l.orderId === "ORD1")!.items).toEqual([]);
+
+      const select = vi.mocked(prisma.trip.findUnique).mock.calls[0]![0]!.select as {
+        stops: { select: { orders: { select: { order: { select: { lines: unknown } } } } } };
+      };
+      expect(select.stops.select.orders.select.order.select.lines).toBeTruthy();
+    });
+
     it("answers 404 for a trip outside the loader's depot", async () => {
       const server = await serverFor();
       requireLoaderTripMock.mockRejectedValue(new Error("denied"));

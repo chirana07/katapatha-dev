@@ -3,6 +3,7 @@ import type { LoadCondition, TripStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { requireLoaderTrip, requireOrderOnTrip } from "../lib/authorization.js";
 import { recordDecisions } from "../lib/audit.js";
+import { ORDER_ITEMS_SCHEMA, ORDER_LINES_INCLUDE, itemsOf } from "../services/products.js";
 import { chillerView } from "../services/vehicles.js";
 
 /**
@@ -102,6 +103,8 @@ const LOAD_LIST = {
           outletId: { type: "string" },
           seq: { type: "integer" },
           expectedUnits: { type: "integer" },
+          // Additive: what the order contains, so the dock sees what it is loading.
+          items: ORDER_ITEMS_SCHEMA,
           loadedUnits: { oneOf: [{ type: "integer" }, { type: "null" }] },
           condition: {
             oneOf: [
@@ -328,7 +331,11 @@ export default async function (fastify: FastifyInstance) {
             select: {
               seq: true,
               outletId: true,
-              orders: { select: { order: { select: { id: true, ref: true, units: true } } } },
+              orders: {
+                select: {
+                  order: { select: { id: true, ref: true, units: true, lines: ORDER_LINES_INCLUDE } },
+                },
+              },
             },
           },
           loadChecks: {
@@ -363,6 +370,8 @@ export default async function (fastify: FastifyInstance) {
             outletId: stop.outletId,
             seq: stop.seq,
             expectedUnits: order.units,
+            // Context only: the check below still counts the order's units.
+            items: itemsOf(order.lines),
             loadedUnits: check?.loadedUnits ?? null,
             condition: check?.condition ?? null,
             shortfall: shortfallByOrderId.has(order.id)

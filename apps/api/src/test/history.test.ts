@@ -22,6 +22,7 @@ vi.mock("../lib/db.js", () => ({
     trip: { findFirst: vi.fn() },
     outlet: { findFirst: vi.fn() },
     capacityAction: { findFirst: vi.fn() },
+    product: { findUnique: vi.fn() },
     auditEvent: { findMany: vi.fn() },
   },
 }));
@@ -183,6 +184,26 @@ describe("GET /v1/history/:entityType/:entityId", () => {
     vi.mocked(prisma.capacityAction.findFirst).mockResolvedValueOnce(null);
     const theirs = await server.inject({ method: "GET", url: "/v1/history/CapacityAction/CAP2" });
     expect(theirs.statusCode).toBe(403);
+  });
+
+  it("lets a dispatcher read a product's log, but never a store manager", async () => {
+    // The catalogue is Waypoint-wide: there is no depot to scope it by.
+    vi.mocked(prisma.product.findUnique).mockResolvedValue({ id: "PRD1" } as never);
+
+    const dispatcherServer = await serverFor(dispatcher);
+    const mine = await dispatcherServer.inject({ method: "GET", url: "/v1/history/Product/PRD1" });
+    expect(mine.statusCode).toBe(200);
+    expect(mine.json().entityType).toBe("Product");
+
+    vi.mocked(prisma.product.findUnique).mockResolvedValueOnce(null);
+    const missing = await dispatcherServer.inject({ method: "GET", url: "/v1/history/Product/PRD9" });
+    expect(missing.statusCode).toBe(403);
+
+    vi.mocked(prisma.auditEvent.findMany).mockClear();
+    const storeServer = await serverFor(store);
+    const refused = await storeServer.inject({ method: "GET", url: "/v1/history/Product/PRD1" });
+    expect(refused.statusCode).toBe(403);
+    expect(prisma.auditEvent.findMany).not.toHaveBeenCalled();
   });
 
   it("refuses roles that have no log to read", async () => {

@@ -1,0 +1,116 @@
+# Owner: BE2
+#
+# The product catalogue a store orders from, and the breakdown an order carries.
+#
+# There is no stock, availability or price anywhere in this model: nothing in
+# the system knows what a depot holds or what anything costs, so a product only
+# answers "what can be ordered", never "is it there". Do not add either without
+# a source for it. See DOMAIN.md.
+
+Product:
+  type: object
+  description: >
+    One orderable line. Waypoint-wide, not per depot. `kgPerUnit` and
+    `m3PerUnit` are the real size of one unit and are what an order placed from
+    products is weighed and measured by. A deactivated product (`active: false`)
+    is kept, because past orders point at it, but cannot be ordered.
+  required: [id, sku, name, brand, tempRequirement, unitLabel, kgPerUnit, m3PerUnit, active, sortOrder, createdAt, updatedAt]
+  properties:
+    id: { type: string, examples: ["clx0prd1a2b3c4d5e6f7g8h9"] }
+    sku:
+      type: string
+      description: Upper-case, unique, and immutable once created.
+      pattern: '^[A-Z0-9][A-Z0-9_-]{1,31}$'
+      examples: ["FA001"]
+    name: { type: string, minLength: 2, maxLength: 120, examples: ["White Rice 5 kg"] }
+    brand:
+      description: >
+        The brand this product is for. Null means every brand. A store sees the
+        products of its own outlet's brand plus these.
+      oneOf:
+        - { $ref: "./common.yaml#/Brand" }
+        - { type: "null" }
+    tempRequirement: { $ref: "./common.yaml#/TempRequirement" }
+    unitLabel:
+      type: string
+      description: What one unit is called, for display beside a quantity.
+      minLength: 1
+      maxLength: 24
+      examples: ["bag"]
+    kgPerUnit: { type: number, exclusiveMinimum: 0, maximum: 1000, examples: [5.1] }
+    m3PerUnit: { type: number, exclusiveMinimum: 0, maximum: 100, examples: [0.007] }
+    active: { type: boolean, examples: [true] }
+    sortOrder:
+      type: integer
+      description: Display order, ascending. Not unique.
+      minimum: 0
+      maximum: 1000000
+      examples: [10]
+    createdAt: { type: string, format: date-time, examples: ["2026-10-04T02:10:00Z"] }
+    updatedAt: { type: string, format: date-time, examples: ["2026-10-04T02:10:00Z"] }
+
+CreateProductRequest:
+  type: object
+  description: Dispatcher only. `sku` cannot be changed afterwards.
+  required: [sku, name, tempRequirement, unitLabel, kgPerUnit, m3PerUnit]
+  additionalProperties: false
+  properties:
+    sku:
+      type: string
+      pattern: '^[A-Z0-9][A-Z0-9_-]{1,31}$'
+      examples: ["FA009"]
+    name: { type: string, minLength: 2, maxLength: 120, examples: ["Samba Rice 5 kg"] }
+    brand:
+      description: Omit or null for every brand.
+      oneOf:
+        - { $ref: "./common.yaml#/Brand" }
+        - { type: "null" }
+    tempRequirement: { $ref: "./common.yaml#/TempRequirement" }
+    unitLabel: { type: string, minLength: 1, maxLength: 24, examples: ["bag"] }
+    kgPerUnit: { type: number, exclusiveMinimum: 0, maximum: 1000, examples: [5.1] }
+    m3PerUnit: { type: number, exclusiveMinimum: 0, maximum: 100, examples: [0.007] }
+    active:
+      type: boolean
+      description: Defaults to true.
+      examples: [true]
+    sortOrder:
+      type: integer
+      description: Defaults to the end of the list.
+      minimum: 0
+      maximum: 1000000
+      examples: [210]
+
+UpdateProductRequest:
+  type: object
+  description: >
+    Any of these, at least one. `sku` is deliberately absent: order lines and
+    people both refer to it. Changing a name, size or temperature affects orders
+    placed afterwards only; placed orders keep the snapshot they were placed with.
+  minProperties: 1
+  additionalProperties: false
+  properties:
+    name: { type: string, minLength: 2, maxLength: 120, examples: ["White Rice 5 kg (new pack)"] }
+    brand:
+      oneOf:
+        - { $ref: "./common.yaml#/Brand" }
+        - { type: "null" }
+    tempRequirement: { $ref: "./common.yaml#/TempRequirement" }
+    unitLabel: { type: string, minLength: 1, maxLength: 24, examples: ["bag"] }
+    kgPerUnit: { type: number, exclusiveMinimum: 0, maximum: 1000, examples: [5.2] }
+    m3PerUnit: { type: number, exclusiveMinimum: 0, maximum: 100, examples: [0.007] }
+    active: { type: boolean, examples: [false] }
+    sortOrder: { type: integer, minimum: 0, maximum: 1000000, examples: [20] }
+
+OrderItem:
+  type: object
+  description: >
+    One product's quantity within an order, as it was when the order was
+    placed. Read-only context for the loader, driver and store: load checks and
+    deliveries still count the order's `units`, not products. Absent or empty on
+    orders that were placed as units only, and on the competition's orders.
+  required: [sku, name, quantity, unitLabel]
+  properties:
+    sku: { type: string, examples: ["FA001"] }
+    name: { type: string, examples: ["White Rice 5 kg"] }
+    quantity: { type: integer, minimum: 1, examples: [20] }
+    unitLabel: { type: string, examples: ["bag"] }

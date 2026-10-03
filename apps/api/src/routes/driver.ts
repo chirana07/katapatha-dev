@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { prisma } from "../lib/db.js";
 import { loadRun } from "../services/delivery.js";
+import { ORDER_ITEMS_SCHEMA, itemsOf } from "../services/products.js";
 import { accessNoteFor } from "../services/store.js";
 
 /**
@@ -56,6 +57,9 @@ const STOP_ITEM = {
           orderRef: { type: "string" },
           expectedUnits: { type: "integer" },
           orderedUnits: { type: "integer" },
+          // Additive: what the order contains, so the driver knows what is being
+          // handed over. A delivery is still recorded in units, not per product.
+          items: ORDER_ITEMS_SCHEMA,
         },
       },
     },
@@ -222,6 +226,7 @@ export default async function (fastify: FastifyInstance) {
                 // would be told a correct handover was short.
                 expectedUnits: loaded?.loadedUnits ?? order.units,
                 orderedUnits: order.units,
+                items: itemsOf(order.lines),
               };
             }),
           })),

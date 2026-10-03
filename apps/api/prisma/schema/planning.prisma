@@ -55,12 +55,66 @@ model Order {
   stopEvents   StopEvent[]
   problems     Problem[]
   receipt      ReceiptConfirmation?
+  /// What is in the order, when it was placed from products. Empty for the
+  /// competition's orders and for legacy unit-only orders: the order's own
+  /// units/weight/volume are the allocation truth either way.
+  lines        OrderLine[]
 
   /// One decision per order per day. Also the dispatcher queue's hot path.
   @@unique([ref, requestedDate])
   @@index([requestedDate, depotCode, status])
   @@index([outletId, requestedDate])
   @@index([status])
+}
+
+/// The catalogue a store orders from. Waypoint-wide, not per depot.
+///
+/// There is deliberately no stock or price here: nothing in this system knows
+/// what a depot holds or what anything costs, so the catalogue answers "what
+/// can be ordered", never "what is available". Products are deactivated, never
+/// deleted, because order lines keep pointing at them.
+model Product {
+  id              String          @id @default(cuid())
+  /// Immutable once created; upper-case. Order lines snapshot it anyway.
+  sku             String          @unique
+  name            String
+  /// Null = every brand. A store sees its own outlet's brand plus these.
+  brand           Brand?
+  tempRequirement TempRequirement
+  unitLabel       String
+  kgPerUnit       Float
+  m3PerUnit       Float
+  active          Boolean         @default(true)
+  sortOrder       Int             @default(0)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  createdByUserId String?
+
+  orderLines OrderLine[]
+
+  /// The store's picker: active products in display order.
+  @@index([active, sortOrder])
+  @@index([brand])
+}
+
+/// One product's quantity within an order. sku, name, unit label and size are
+/// copied from the product at placement, so renaming or re-sizing a product
+/// never rewrites what a past order contained (or its weight and volume).
+model OrderLine {
+  id          String  @id @default(cuid())
+  orderId     String
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product @relation(fields: [productId], references: [id])
+  sku         String
+  productName String
+  unitLabel   String
+  kgPerUnit   Float
+  m3PerUnit   Float
+  quantity    Int
+
+  @@unique([orderId, productId])
+  @@index([orderId])
 }
 
 model Plan {

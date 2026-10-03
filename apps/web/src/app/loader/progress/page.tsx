@@ -292,6 +292,7 @@ function ProgressRow({ row }: { row: Row }) {
               <Meter value={load.loadedUnits} max={load.expectedUnits} level={trip.status === "LOADING" ? "near" : "ok"} label={`${trip.vehicleId} units loaded`} />
             </div>
             {attention.length > 0 ? <p className="mt-1 text-xs font-semibold text-bad-ink">{attention.map(attentionLabel).join(" · ")}</p> : null}
+            {load.products > 0 ? <p className="mt-1 text-xs text-muted">{plural(load.products, "product")}</p> : null}
             {checksMissing(trip) ? <p className="mt-1 text-xs text-muted">No load checks recorded</p> : null}
           </div>
         ) : (
@@ -332,6 +333,7 @@ function ProgressCard({ row }: { row: Row }) {
           {trip.districtName}
           {trip.refrigerated ? " · Refrigerated" : ""}
           {load ? ` · ${load.loadedUnits} / ${load.expectedUnits} units` : ""}
+          {load && load.products > 0 ? ` · ${plural(load.products, "product")}` : ""}
         </p>
         {load ? (
           <div className="mt-2">

@@ -4,8 +4,9 @@ HistoryEntityType:
   description: >
     The kinds of record the decision log is kept against. Each is authorised
     the way the record itself is: a dispatcher for their own depot, a store
-    manager for their own outlet and its orders.
-  enum: [Order, Plan, PlanningDay, Trip, Shortfall, Problem, Vehicle, Outlet, CapacityAction]
+    manager for their own outlet and its orders. A Product's log is the
+    catalogue's, which is Waypoint-wide: any dispatcher may read it, no one else.
+  enum: [Order, Plan, PlanningDay, Trip, Shortfall, Problem, Vehicle, Outlet, CapacityAction, Product]
 
 HistoryEvent:
   type: object

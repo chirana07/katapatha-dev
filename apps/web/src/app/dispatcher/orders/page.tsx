@@ -267,7 +267,7 @@ function OrdersTable({
           <Th>Outlet</Th>
           <Th>Brand</Th>
           <Th>Load</Th>
-          <Th numeric>Items</Th>
+          <Th numeric>Units</Th>
           <Th numeric>Volume</Th>
           <Th numeric>Weight</Th>
           <Th>Window</Th>
@@ -294,7 +294,7 @@ function OrdersTable({
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
             <BrandPill brand={order.brand} />
             <span className="capitalize">{order.tempRequirement}</span>
-            <span className="tabular">{order.units} items</span>
+            <span className="tabular">{order.units} units</span>
             <span className="tabular">{order.volumeM3 != null ? `${order.volumeM3.toFixed(1)} m³` : "—"}</span>
             <span className="tabular">{order.windowOpen && order.windowClose ? `${order.windowOpen}–${order.windowClose}` : "No window"}</span>
           </div>

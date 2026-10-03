@@ -296,6 +296,7 @@ function ProgressCell({ trip }: { trip: DockTrip }) {
         </div>
         <span className="tabular w-10 text-right text-sm text-muted">{percent}%</span>
       </div>
+      {trip.load.products > 0 ? <p className="text-xs text-muted">{plural(trip.load.products, "product")}</p> : null}
       {checksMissing(trip) ? <p className="text-xs text-muted">No load checks recorded</p> : null}
     </div>
   );
@@ -358,6 +359,7 @@ function TripCard({ trip, clock, selected }: { trip: DockTrip; clock: DockClock;
           <p>
             Trip {trip.tripNo}
             {trip.refrigerated ? " · Refrigerated" : ""} · {trip.districtName}
+            {load && load.products > 0 ? ` · ${plural(load.products, "product")}` : ""}
           </p>
           <p className="tabular font-semibold text-ink">
             {load ? `${load.loadedUnits} / ${load.expectedUnits} units` : "no list"}

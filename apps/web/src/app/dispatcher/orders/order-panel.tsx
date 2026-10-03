@@ -5,10 +5,12 @@ import { DetailPanel, Facts, PanelSection } from "@/components/ui/detail-panel";
 import { BrandPill, StatusPill } from "@/components/ui/status-pill";
 import { Timeline } from "@/components/ui/stepper";
 import { ButtonLink } from "@/components/ui/button";
+import { OrderItems } from "@/components/ui/order-items";
 import { ErrorPanel } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { longDate } from "@/lib/dates";
 import { readFailure } from "@/lib/failures";
+import { hasItems, productCount } from "@/lib/order-items";
 import { historyReason, historyStamp, historyTitle } from "../history";
 import { ORDER_STATUS } from "../order-status";
 
@@ -136,11 +138,18 @@ export async function OrderPanel({
 
             <Facts
               items={[
-                { label: "Items", value: `${order.units} units` },
+                { label: "Units", value: `${order.units} units` },
                 { label: "Volume", value: order.volumeM3 != null ? `${order.volumeM3.toFixed(1)} m³` : "—" },
                 { label: "Weight", value: order.weightKg != null ? `${Math.round(order.weightKg)} kg` : "—" },
               ]}
             />
+
+            {hasItems(order.items) ? (
+              <PanelSection title={`Products · ${productCount(order.items)}`}>
+                <OrderItems items={order.items} />
+                <p className="mt-2 text-xs text-muted">What the store ordered. Loading and delivery are checked by order, in units.</p>
+              </PanelSection>
+            ) : null}
 
             <PanelSection title="Delivery window">
               <p className="tabular font-bold text-ink">

@@ -55,6 +55,7 @@ export const NAV: Record<Role, RoleNav> = {
         match: /^\/dispatcher\/(planning|plans)/,
       },
       { label: "Vehicles", href: "/dispatcher/vehicles", icon: "vehicles", match: /^\/dispatcher\/vehicles/ },
+      { label: "Products", href: "/dispatcher/products", icon: "products", match: /^\/dispatcher\/products/ },
       { label: "Map", href: "/dispatcher/map", icon: "map", match: /^\/dispatcher\/map/ },
       { label: "Exceptions", href: "/dispatcher/exceptions", icon: "exceptions", match: /^\/dispatcher\/exceptions/ },
       { label: "Reports", href: "/dispatcher/reports", icon: "reports", match: /^\/dispatcher\/reports/ },

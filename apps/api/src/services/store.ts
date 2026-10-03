@@ -2,6 +2,7 @@
 
 import { nextOperatingDate as coreNextOperatingDate } from "@katapatha/core/domain/deferral";
 import { prisma } from "../lib/db";
+import { ORDER_LINES_INCLUDE, itemsOf, type OrderItem } from "./products";
 import {
   ageSecondsOf,
   clockMinutes,
@@ -34,6 +35,8 @@ export interface StoreOrderView {
   units: number;
   volumeM3: number;
   weightKg: number;
+  /** What the order contains, when it was placed from products; empty otherwise. */
+  items: OrderItem[];
   requestedDate: string;
   state: StoreOrderState;
   /** The planned arrival, when the order is on a published trip. */
@@ -69,6 +72,7 @@ export async function loadStoreOrders(
     take: limit,
     include: {
       receipt: true,
+      lines: ORDER_LINES_INCLUDE,
       deferrals: { orderBy: { decidedAt: "desc" }, take: 1 },
       assignments: {
         include: {
@@ -115,6 +119,7 @@ export async function loadStoreOrders(
       units: order.units,
       volumeM3: order.volumeM3,
       weightKg: order.weightKg,
+      items: itemsOf(order.lines),
       requestedDate: order.requestedDate.toISOString().slice(0, 10),
       state: stateOf(order.status, Boolean(stop), departed),
       etaAt: stop?.plannedArrivalAt ?? null,
@@ -209,6 +214,8 @@ export interface IncomingDelivery {
   brand: "Fresh" | "Style" | "Tech";
   tempRequirement: "chilled" | "ambient";
   units: number;
+  /** What the order contains, when it was placed from products; empty otherwise. */
+  items: OrderItem[];
   etaAt: string | null;
   vehicleId: string;
   districtName: string;
@@ -384,6 +391,7 @@ export async function loadIncomingDelivery(
     brand: view.brand,
     tempRequirement: view.tempRequirement,
     units: view.units,
+    items: view.items,
     etaAt: view.etaAt,
     report,
     arrival: estimateArrival({

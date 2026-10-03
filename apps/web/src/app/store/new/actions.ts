@@ -2,15 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { splitUnits } from "@katapatha/core/domain/orderSize";
 import { api } from "@/lib/api";
 import { requireRole } from "@/lib/auth";
 import { writeFailure, type Failure } from "@/lib/failures";
-import { validateOrderQuantities } from "../validation";
+import { validateOrderItems } from "../validation";
+import { placeRefusal, type ApiRefusal } from "./place-refusal";
 
 export type PlaceOrderState = { error?: Failure };
 
-type ApiError = { error?: { code?: string; message?: string } };
+type ApiError = { error?: ApiRefusal };
 
 /**
  * Place the order, once.
@@ -21,50 +21,30 @@ type ApiError = { error?: { code?: string; message?: string } };
  * instead of creating a second order. On success the manager is redirected to
  * the confirmed page, which reads the orders back by id: a refresh there only
  * ever reads.
+ *
+ * The basket goes as `items`. The API splits it by temperature into one order
+ * each and checks that each fits a vehicle using the products' real sizes, so
+ * this action no longer splits anything itself: a basket that is too large
+ * comes back as a refusal the manager fixes by choosing less.
  */
 export async function placeOrder(_previous: PlaceOrderState, formData: FormData): Promise<PlaceOrderState> {
   await requireRole("STORE_MANAGER", "/store/new");
 
   const requestId = formData.get("requestId");
   const forDate = formData.get("forDate");
-  const quantities = validateOrderQuantities(formData.get("ambient"), formData.get("chilled"));
+  const items = validateOrderItems(formData.get("items"));
 
   if (typeof requestId !== "string" || typeof forDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(forDate)) {
     return { error: { title: "This order is no longer valid", detail: "Reload the page and start again.", outcome: "failed" } };
   }
-  if (!quantities.ok) return { error: { title: "Check the quantities", detail: quantities.error, outcome: "failed" } };
+  if (!items.ok) return { error: { title: "Check the order", detail: items.error, outcome: "failed" } };
 
   let status = 0;
   let placed: { id: string }[] | null = null;
-  let refusal: ApiError["error"];
+  let refusal: ApiRefusal | undefined;
   try {
     const client = await api();
-
-    // Rule 5: an order travels whole. A quantity bigger than any vehicle that
-    // can reach this outlet is raised as several equal orders — the form told
-    // the manager so before they pressed the button. If the limits can't be
-    // read, send the lines as entered; the API refuses an impossible line.
-    let lines = quantities.data;
-    const limits = await client.GET("/orders/limits").catch(() => null);
-    if (limits?.data) {
-      const split: typeof lines = [];
-      for (const line of lines) {
-        const max = limits.data[line.tempRequirement].maxUnitsPerOrder;
-        if (max <= 0) {
-          return {
-            error: {
-              title: `${line.tempRequirement === "chilled" ? "Chilled" : "Ambient"} goods can't be delivered here`,
-              detail: "No vehicle at your depot can carry them to this outlet. Contact your dispatcher.",
-              outcome: "failed",
-            },
-          };
-        }
-        for (const units of splitUnits(line.units, max)) split.push({ ...line, units });
-      }
-      lines = split;
-    }
-
-    const result = await client.POST("/orders", { body: { requestId, forDate, lines } });
+    const result = await client.POST("/orders", { body: { requestId, forDate, items: items.data } });
     status = result.response.status;
     if (!result.error && result.data) placed = result.data;
     else refusal = (result.error as ApiError | undefined)?.error;
@@ -73,10 +53,7 @@ export async function placeOrder(_previous: PlaceOrderState, formData: FormData)
   }
 
   if (!placed) {
-    if (refusal?.code === "ORDER_TOO_LARGE" && refusal.message) {
-      return { error: { title: "That order is too large", detail: refusal.message, outcome: "failed" } };
-    }
-    return { error: writeFailure(status, "place the order") };
+    return { error: (status === 422 ? placeRefusal(refusal) : null) ?? writeFailure(status, "place the order") };
   }
 
   revalidatePath("/store", "layout");

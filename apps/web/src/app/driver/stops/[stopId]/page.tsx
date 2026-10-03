@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ButtonLink } from "@/components/ui/button";
+import { OrderItems } from "@/components/ui/order-items";
 import { Advisory, ErrorPanel } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { requireRole } from "@/lib/auth";
@@ -121,11 +122,14 @@ export default async function StopDetailPage({ params, searchParams }: { params:
             <h2 className="text-lg font-bold text-ink">{plural(orders.length, "order")} on this stop</h2>
             <ul className="mt-2 flex flex-col gap-2">
               {orders.map((order) => (
-                <li key={order.orderId} className="flex items-center justify-between rounded-card border border-line bg-surface p-3">
-                  <span className="font-bold text-ink">{order.orderRef}</span>
-                  <span className="tabular text-sm text-muted">
-                    <span className="font-bold text-ink">{order.expectedUnits}</span> units
-                  </span>
+                <li key={order.orderId} className="rounded-card border border-line bg-surface p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-ink">{order.orderRef}</span>
+                    <span className="tabular text-sm text-muted">
+                      <span className="font-bold text-ink">{order.expectedUnits}</span> units
+                    </span>
+                  </div>
+                  <OrderItems items={order.items} className="mt-2 border-t border-line pt-2" />
                 </li>
               ))}
             </ul>

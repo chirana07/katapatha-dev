@@ -12,6 +12,7 @@ import { DataTable, RowCard, Td, Th, Tr } from "@/components/ui/data-table";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
 import { StatCard, StatRow } from "@/components/ui/stat-card";
 import { EmptyState, ErrorPanel } from "@/components/ui/states";
+import { OrderItems } from "@/components/ui/order-items";
 import {
   HISTORY_RANGES,
   RESULT_FILTERS,
@@ -241,6 +242,7 @@ function HistoryTable({ rows }: { rows: { order: Order; outcome: Outcome; delive
               </p>
             ) : null}
           </Link>
+          <OrderItems items={order.items} mode="collapsible" />
         </RowCard>
       ))}
     >
@@ -249,6 +251,7 @@ function HistoryTable({ rows }: { rows: { order: Order; outcome: Outcome; delive
           <Td><span className="tabular">{shortDate(order.requestedDate)}</span></Td>
           <Td>
             <Link href={`/store/orders/${order.id}`} className="font-mono font-bold text-link hover:underline">{order.ref}</Link>
+            <OrderItems items={order.items} mode="collapsible" />
           </Td>
           <Td>{goodsLabel(order.tempRequirement)}</Td>
           <Td><span className="tabular">{receivingWindowLabel(order)}</span></Td>

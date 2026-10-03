@@ -52,6 +52,14 @@ LoadList:
           outletId: { type: string, examples: ["OUT074"] }
           seq: { type: integer, description: Delivery sequence (lines are sorted descending). , examples: [3] }
           expectedUnits: { type: integer, examples: [120] }
+          items:
+            description: >
+              What this order contains, when it was placed from products, so the
+              dock can see what it is loading. Context only: the load check
+              still counts `expectedUnits` for the order, not per product.
+              Absent or empty for orders placed as units only. Additive.
+            type: array
+            items: { $ref: "./products.yaml#/OrderItem" }
           loadedUnits: { type: [integer, "null"], examples: [null] }
           condition:
             type: [string, "null"]

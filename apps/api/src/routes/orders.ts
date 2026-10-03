@@ -5,15 +5,29 @@ import { recordDecisions } from "../lib/audit.js";
 import type { SessionUser } from "../lib/auth.js";
 import { maxUnitsPerOrder, type FleetVehicle } from "@katapatha/core/domain/orderSize";
 import { nextOperatingDate, unitSizeFor } from "../services/store.js";
+import {
+  ORDER_ITEMS_SCHEMA,
+  ORDER_LINES_INCLUDE,
+  blendedUnitSize,
+  groupBasket,
+  itemsOf,
+  orderableBy,
+  type BasketOrder,
+  type BasketProduct,
+} from "../services/products.js";
 
 /**
  * Owner: BE2
  *
  * Reads and writes live. The write path keeps every rule the brief sets
- * down: units-only on the body (brand, outlet, depot, district all come
- * from the session), idempotent on clientRequestId, and the receipt is
- * an upsert because a store manager fixing a wrong number should correct
- * it, not open a second record.
+ * down: nothing about who is ordering on the body (brand, outlet, depot,
+ * district all come from the session), idempotent on clientRequestId, and
+ * the receipt is an upsert because a store manager fixing a wrong number
+ * should correct it, not open a second record.
+ *
+ * An order is still the allocation unit: one temperature, one set of totals.
+ * Products add a breakdown (`items`) to what the store ordered; they never
+ * change what is planned. See `items` below and services/products.ts.
  */
 
 const ERROR_RESPONSE = {
@@ -84,6 +98,8 @@ const ORDER_RESPONSE_ITEM = {
       type: "string",
       enum: ["queued", "planned", "on_the_way", "delivered", "deferred", "cancelled"],
     },
+    // Additive: what the order contains, when it was placed from products.
+    items: ORDER_ITEMS_SCHEMA,
     // Additive: the published deferral's reason and moves-to day, so the
     // store sees what the dispatcher told them (Figma D-05 store preview).
     deferral: {
@@ -140,6 +156,7 @@ const ORDER_INCLUDE = {
     take: 1,
     select: { reasonCode: true, rolledToDate: true },
   },
+  lines: ORDER_LINES_INCLUDE,
 } satisfies Prisma.OrderInclude;
 
 type OrderWithTripLinkage = Prisma.OrderGetPayload<{ include: typeof ORDER_INCLUDE }>;
@@ -182,6 +199,7 @@ function toOrderResponse(order: OrderWithTripLinkage) {
     requestedDate: order.requestedDate.toISOString().slice(0, 10),
     status: order.status,
     storeState: storeStateOf(order.status, Boolean(published), departed),
+    items: itemsOf(order.lines),
     deferral: deferralOf(order),
   };
 }
@@ -238,12 +256,16 @@ function badDate(reply: FastifyReply, field: string) {
  * an order travels whole). The whole depot fleet counts, workshop or not —
  * this is about whether any day could ever plan it.
  */
-async function orderLimitsFor(outlet: { id: string; depotCode: string; parkingConstraint: string }) {
+async function fleetFor(outlet: { depotCode: string; parkingConstraint: string }) {
   const vehicles: FleetVehicle[] = await prisma.vehicle.findMany({
     where: { depotCode: outlet.depotCode },
     select: { type: true, temp: true, volumeCapM3: true, weightCapKg: true },
   });
-  const vanOnly = outlet.parkingConstraint === "van_only";
+  return { vehicles, vanOnly: outlet.parkingConstraint === "van_only" };
+}
+
+async function orderLimitsFor(outlet: { id: string; depotCode: string; parkingConstraint: string }) {
+  const { vehicles, vanOnly } = await fleetFor(outlet);
   const limits = {} as Record<
     TempRequirement,
     { m3PerUnit: number; kgPerUnit: number; maxUnitsPerOrder: number }
@@ -373,10 +395,28 @@ export default async function (fastify: FastifyInstance) {
         body: {
           type: "object",
           additionalProperties: false,
-          required: ["requestId", "forDate", "lines"],
+          // `items` and `lines` are each optional here and the handler insists on
+          // exactly one: the contract states it as a oneOf, but a oneOf failure
+          // would arrive as REQUEST_DOES_NOT_MATCH_CONTRACT, and a client that
+          // sent both or neither is owed VALIDATION_FAILED.
+          required: ["requestId", "forDate"],
           properties: {
             requestId: { type: "string", format: "uuid" },
             forDate: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+            items: {
+              type: "array",
+              minItems: 1,
+              maxItems: 100,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["productId", "quantity"],
+                properties: {
+                  productId: { type: "string", minLength: 1 },
+                  quantity: { type: "integer", minimum: 1, maximum: 10000 },
+                },
+              },
+            },
             lines: {
               type: "array",
               minItems: 1,
@@ -413,8 +453,18 @@ export default async function (fastify: FastifyInstance) {
       const body = request.body as {
         requestId: string;
         forDate: string;
-        lines: Array<{ tempRequirement: "chilled" | "ambient"; units: number }>;
+        items?: Array<{ productId: string; quantity: number }>;
+        lines?: Array<{ tempRequirement: "chilled" | "ambient"; units: number }>;
       };
+
+      if ((body.items === undefined) === (body.lines === undefined)) {
+        return reply.status(422).send({
+          error: {
+            code: "VALIDATION_FAILED",
+            message: "Send either items (products) or lines (units), not both and not neither.",
+          },
+        });
+      }
 
       // Idempotency: a retry with the same requestId returns the first result
       // without creating duplicates. Prisma's clientRequestId is @unique, so a
@@ -477,28 +527,121 @@ export default async function (fastify: FastifyInstance) {
         });
       }
 
-      // Per-unit size estimates double as the Rule 5 check: an order travels
-      // whole, so a line no vehicle could ever carry would be deferred every
-      // morning. Refuse it here and say how big an order can be — the store
-      // raises it as several lines instead.
-      const limits = await orderLimitsFor(outlet);
-      const sizeByTemp = new Map<TempRequirement, { kgPerUnit: number; m3PerUnit: number }>(
-        (["chilled", "ambient"] as const).map((temp) => [temp as TempRequirement, limits[temp as TempRequirement]]),
-      );
-      const tooLarge = body.lines.find(
-        (line) => line.units > limits[line.tempRequirement as TempRequirement].maxUnitsPerOrder,
-      );
-      if (tooLarge) {
-        const max = limits[tooLarge.tempRequirement as TempRequirement].maxUnitsPerOrder;
-        return reply.status(422).send({
-          error: {
-            code: "ORDER_TOO_LARGE",
-            message:
-              max > 0
-                ? `${tooLarge.units} ${tooLarge.tempRequirement} units won't fit on any vehicle that can reach this outlet. One order can hold at most ${max} units — place it as several orders.`
-                : `No vehicle at this depot can carry ${tooLarge.tempRequirement} goods to this outlet.`,
-            details: { tempRequirement: tooLarge.tempRequirement, units: tooLarge.units, maxUnitsPerOrder: max },
-          },
+      // What will be created: one entry per order, each with its own figures
+      // and, for a basket, the lines that explain them. Both forms feed the
+      // same placement below.
+      type Planned = {
+        tempRequirement: TempRequirement;
+        units: number;
+        weightKg: number;
+        volumeM3: number;
+        lines: BasketOrder["lines"];
+      };
+      let planned: Planned[];
+
+      if (body.items) {
+        // A basket of real products. The order is as big as its goods actually
+        // are, so the Rule 5 check below uses their size, not the outlet's
+        // history, and what the dock loads is what was ordered.
+        const ids = body.items.map((item) => item.productId);
+        if (new Set(ids).size !== ids.length) {
+          return reply.status(422).send({
+            error: {
+              code: "VALIDATION_FAILED",
+              message: "Each product can appear once. Add the quantities together.",
+            },
+          });
+        }
+        const found = await prisma.product.findMany({ where: { id: { in: ids } } });
+        const products = new Map<string, BasketProduct & { active: boolean; brand: Brand | null }>(
+          found.map((p) => [p.id, p]),
+        );
+        for (const item of body.items) {
+          const product = products.get(item.productId);
+          if (!product) {
+            return reply.status(422).send({
+              error: {
+                code: "PRODUCT_NOT_FOUND",
+                message: "One of the products is not in the catalogue.",
+                details: { productId: item.productId },
+              },
+            });
+          }
+          if (!product.active) {
+            return reply.status(422).send({
+              error: {
+                code: "PRODUCT_INACTIVE",
+                message: `${product.name} is no longer ordered. Take it off the order.`,
+                details: { productId: product.id, sku: product.sku },
+              },
+            });
+          }
+          // Not found would be a lie (it exists) and "forbidden" would read as an
+          // account problem; this is a rule about the outlet's brand.
+          if (!orderableBy(product, outlet.brand as Brand)) {
+            return reply.status(422).send({
+              error: {
+                code: "PRODUCT_NOT_AVAILABLE_FOR_BRAND",
+                message: `${product.name} is not for ${outlet.brand} outlets.`,
+                details: { productId: product.id, sku: product.sku },
+              },
+            });
+          }
+        }
+
+        planned = groupBasket(body.items, products);
+        const { vehicles, vanOnly } = await fleetFor(outlet);
+        for (const order of planned) {
+          const max = maxUnitsPerOrder(
+            vehicles,
+            { tempRequirement: order.tempRequirement, vanOnly },
+            blendedUnitSize(order),
+          );
+          if (order.units > max) {
+            return reply.status(422).send({
+              error: {
+                code: "ORDER_TOO_LARGE",
+                message:
+                  max > 0
+                    ? `${order.units} ${order.tempRequirement} units (${order.weightKg} kg, ${order.volumeM3} m³) won't fit on any vehicle that can reach this outlet. One order can hold about ${max} of these — order part of it now and the rest as another order.`
+                    : `No vehicle at this depot can carry ${order.tempRequirement} goods to this outlet.`,
+                details: { tempRequirement: order.tempRequirement, units: order.units, maxUnitsPerOrder: max },
+              },
+            });
+          }
+        }
+      } else {
+        // Per-unit size estimates double as the Rule 5 check: an order travels
+        // whole, so a line no vehicle could ever carry would be deferred every
+        // morning. Refuse it here and say how big an order can be — the store
+        // raises it as several lines instead.
+        const lines = body.lines!;
+        const limits = await orderLimitsFor(outlet);
+        const tooLarge = lines.find(
+          (line) => line.units > limits[line.tempRequirement as TempRequirement].maxUnitsPerOrder,
+        );
+        if (tooLarge) {
+          const max = limits[tooLarge.tempRequirement as TempRequirement].maxUnitsPerOrder;
+          return reply.status(422).send({
+            error: {
+              code: "ORDER_TOO_LARGE",
+              message:
+                max > 0
+                  ? `${tooLarge.units} ${tooLarge.tempRequirement} units won't fit on any vehicle that can reach this outlet. One order can hold at most ${max} units — place it as several orders.`
+                  : `No vehicle at this depot can carry ${tooLarge.tempRequirement} goods to this outlet.`,
+              details: { tempRequirement: tooLarge.tempRequirement, units: tooLarge.units, maxUnitsPerOrder: max },
+            },
+          });
+        }
+        planned = lines.map((line) => {
+          const size = limits[line.tempRequirement as TempRequirement];
+          return {
+            tempRequirement: line.tempRequirement as TempRequirement,
+            units: line.units,
+            weightKg: Number((size.kgPerUnit * line.units).toFixed(1)),
+            volumeM3: Number((size.m3PerUnit * line.units).toFixed(2)),
+            lines: [],
+          };
         });
       }
 
@@ -530,9 +673,8 @@ export default async function (fastify: FastifyInstance) {
           const first = Number.isFinite(start) ? start + 1 : 4001;
 
           const rows = [];
-          for (let index = 0; index < body.lines.length; index++) {
-            const line = body.lines[index]!;
-            const size = sizeByTemp.get(line.tempRequirement as TempRequirement)!;
+          for (let index = 0; index < planned.length; index++) {
+            const plan = planned[index]!;
             const ref = `ORD-${String(first + index).padStart(6, "0")}`;
             const row = await tx.order.create({
               data: {
@@ -541,10 +683,10 @@ export default async function (fastify: FastifyInstance) {
                 brand: outlet.brand as Brand,
                 districtName: outlet.districtName,
                 depotCode: outlet.depotCode,
-                tempRequirement: line.tempRequirement as TempRequirement,
-                units: line.units,
-                weightKg: Number((size.kgPerUnit * line.units).toFixed(1)),
-                volumeM3: Number((size.m3PerUnit * line.units).toFixed(2)),
+                tempRequirement: plan.tempRequirement,
+                units: plan.units,
+                weightKg: plan.weightKg,
+                volumeM3: plan.volumeM3,
                 windowOpen: outlet.windowOpen,
                 windowClose: outlet.windowClose,
                 requestedDate,
@@ -552,6 +694,9 @@ export default async function (fastify: FastifyInstance) {
                 status: "QUEUED",
                 // Index-tagged so a multi-line retry recovers every row.
                 clientRequestId: `${requestKeyPrefix}${index}`,
+                // In the same transaction as the order, so an order never exists
+                // without the contents it was placed with.
+                ...(plan.lines.length > 0 ? { lines: { create: plan.lines } } : {}),
               },
             });
             rows.push(row);
@@ -578,14 +723,25 @@ export default async function (fastify: FastifyInstance) {
         where: { id: { in: created.map((o) => o.id) } },
         include: ORDER_INCLUDE,
       });
+      // findMany has no order of its own; the response keeps the order the
+      // orders were created in, which is what a replay returns too.
+      const position = new Map(created.map((o, i) => [o.id, i]));
+      withLinkage.sort((a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0));
 
       await recordDecisions(
-        created.map((row) => ({
+        created.map((row, index) => ({
           actor: user,
           action: "order.place",
           entityType: "Order",
           entityId: row.id,
-          after: { ref: row.ref, units: row.units, forDate: body.forDate },
+          after: {
+            ref: row.ref,
+            units: row.units,
+            forDate: body.forDate,
+            ...(planned[index]!.lines.length > 0
+              ? { items: planned[index]!.lines.map((l) => ({ sku: l.sku, quantity: l.quantity })) }
+              : {}),
+          },
         })),
       );
 

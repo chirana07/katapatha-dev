@@ -68,4 +68,8 @@ run:
                         - orderId: "clx0ord1a2b3c4d5e6f7g8h9"
                           orderRef: "ORD-004312"
                           expectedUnits: 120
+                          orderedUnits: 120
+                          items:
+                            - { sku: "FA001", name: "White Rice 5 kg", quantity: 80, unitLabel: bag }
+                            - { sku: "FA003", name: "Wheat Flour 1 kg (12 per carton)", quantity: 40, unitLabel: carton }
       "403": { $ref: "../components/responses/common.yaml#/Forbidden" }

@@ -48,6 +48,9 @@ today:
                 brand: Fresh
                 tempRequirement: ambient
                 units: 69
+                items:
+                  - { sku: "FA001", name: "White Rice 5 kg", quantity: 40, unitLabel: bag }
+                  - { sku: "FA003", name: "Wheat Flour 1 kg (12 per carton)", quantity: 29, unitLabel: carton }
                 etaAt: "07:21"
                 vehicleId: "VEH025"
                 districtName: "Puttalam"
@@ -72,6 +75,9 @@ today:
                   units: 69
                   volumeM3: 2.1
                   weightKg: 320
+                  items:
+                    - { sku: "FA001", name: "White Rice 5 kg", quantity: 40, unitLabel: bag }
+                    - { sku: "FA003", name: "Wheat Flour 1 kg (12 per carton)", quantity: 29, unitLabel: carton }
                   requestedDate: "2026-09-29"
                   state: on_the_way
                   etaAt: "07:21"

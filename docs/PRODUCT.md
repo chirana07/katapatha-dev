@@ -36,6 +36,7 @@ Katapatha presents one delivery operation through four role-specific workspaces.
 - Persistent PostgreSQL models for users, outlets, vehicles, orders, plans, trips, stops, events, problems, fuel entries, and capacity actions.
 - Allocation and validation services for operational planning.
 - Role-specific dispatcher, loader, driver, and store workflows.
+- A product catalogue that dispatchers maintain and stores order from, with the order's contents (SKU, name, quantity, unit) visible to the loader, driver, store and dispatcher. Orders are still planned, loaded and delivered as units.
 - CSV import and submission export paths used by the challenge workflow.
 - Responsive desktop, tablet, and phone shells.
 - A verified offline outbox on the native driver app, idempotent on replay by client-minted ULID.
@@ -47,6 +48,7 @@ Katapatha presents one delivery operation through four role-specific workspaces.
 
 - The native driver app has a verified offline outbox; the web driver PWA does not and must not claim one. Connectivity messaging reports verified reachability (`Checking`, `Connected`, `Offline`) from a real request to `/v1/health`.
 - Vehicle position is reported by the driver's phone, never tracked continuously. It is always shown with the age of the last report, and an arrival time becomes a range once that age makes a single time unsupportable. See `DOMAIN.md`.
+- The product catalogue has no stock, availability or price, and the seeded catalogue is demo data, not Waypoint's range. Do not imply either. Loading and delivery are still recorded per order in units, not per product.
 - Chiller temperatures are human readings attributed to the person who took them, not a sensor feed.
 - Temporary development accounts belong on `/access` and must be unavailable in production unless an operator explicitly enables them.
 - Dataset-derived values and exported derivatives are confidential. The committed fixture must remain synthetic.

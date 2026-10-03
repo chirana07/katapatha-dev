@@ -26,7 +26,7 @@ row or throw 403. Every mutation calls one.
 ## The plan-to-receipt loop
 
 ```
-1  STORE       place order, before the 16:00 cutoff        -> Order QUEUED
+1  STORE       place order, before the 16:00 cutoff        -> Order QUEUED (+ OrderLine per product)
 2  DISPATCHER  close the queue                             -> PlanningDay OPEN -> CLOSED
 3  DISPATCHER  run the allocator                           -> Plan DRAFT + Trips + Assignments
 4  DISPATCHER  confirm every deferral with a reason code    -> Deferral, Order DEFERRED
@@ -60,6 +60,40 @@ gated by the loader; `DEPARTED` is set implicitly by the driver's first arrival;
 
 **Stop** `PENDING -> ARRIVED -> UNLOADING -> DONE`, or `FAILED` via a reported
 problem.
+
+## Products, and what an order contains
+
+An order is still the allocation unit: one temperature requirement, and total
+`units`, `weightKg` and `volumeM3`. The allocator, plans, load checks,
+shortfalls and the driver's delivery all work on that and nothing finer.
+
+A store picks from a **catalogue** (`Product`: SKU, name, brand or every brand,
+temperature, unit label such as bag or carton, and the real `kgPerUnit` and
+`m3PerUnit`). Dispatchers maintain it — add, edit, deactivate, never delete —
+and every signed-in role may read the active part of it. A store sees the
+products for its own outlet's brand plus the every-brand ones. The catalogue is
+Waypoint-wide, not per depot.
+
+Placing an order with `items` splits the basket into **one order per
+temperature**, exactly as two `lines` always became two orders. Each order's
+units are the sum of its quantities, and its weight and volume are the real sums
+of the products' sizes, not the estimate taken from the outlet's history. Each
+order then carries `OrderLine` rows holding **snapshots** of the SKU, name, unit
+label and size, so renaming or re-sizing a product never rewrites a placed
+order. The older units-only `lines` form still works and leaves no `OrderLine`
+rows.
+
+The breakdown is **context, not a second unit of account.** The loader's load
+list, the driver's run (and the offline bootstrap), the store's orders and its
+incoming delivery, and the dispatcher's orders all show `items`; but a load
+check still counts the order's units, and a delivery is still recorded in units
+for the order. There is no per-product check, per-product delivered quantity or
+per-product shortfall.
+
+The competition data has no products. The catalogue is **demo data** invented
+for the demo (the seed says so), and only the synthetic fixture's own orders are
+given a made-up breakdown into it; the competition's orders have none and are
+never given one.
 
 ## Two traps
 
@@ -147,6 +181,11 @@ limit is never hidden, it is stated beside the number.
   centre, not the outlet's address, and legs are straight depot-to-district
   lines rather than roads. Reported positions are plotted as reported. Do not
   present any of it as a road route.
+- **A product is orderable, not available.** There is no stock, inventory or
+  price anywhere in the system: nothing knows what a depot holds or what
+  anything costs. The catalogue answers "what can be ordered", so never write
+  "in stock", "available" or "out of stock" against a product, and never show a
+  price. A product that was deactivated is simply no longer offered.
 - **A chiller reading is a reading, not a sensor feed.** Temperature is entered
   by a loader at the bay or a driver on arrival, and carries who read it and
   when. Never present it as live telemetry.

@@ -49,6 +49,14 @@ Stop:
             type: integer
             description: What the store ordered. Additive.
             examples: [120]
+          items:
+            description: >
+              What the order contains, when it was placed from products, so the
+              driver knows what is being handed over. Context only: a delivery
+              is still recorded in units for the order, not per product. Absent
+              or empty for orders placed as units only. Additive.
+            type: array
+            items: { $ref: "./products.yaml#/OrderItem" }
 
 StopEvent:
   type: object

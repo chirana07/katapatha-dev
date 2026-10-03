@@ -28,4 +28,4 @@ COPY --from=build /repo/apps/api /repo/apps/api
 WORKDIR /repo/apps/api
 EXPOSE 3001
 # Migrate and seed on boot: the demo database must be reproducible from empty.
-CMD ["sh", "-c", "pnpm exec prisma migrate deploy && pnpm run db:seed && node dist/main.js"]
+CMD ["sh", "-c", "pnpm exec prisma migrate deploy && pnpm run db:seed && pnpm run db:seed:products && node dist/main.js"]

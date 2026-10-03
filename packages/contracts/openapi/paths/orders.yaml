@@ -25,32 +25,63 @@ collection:
                 brand: Fresh
                 districtName: "Colombo"
                 tempRequirement: chilled
-                units: 120
-                weightKg: 860.4
-                volumeM3: 4.32
+                units: 10
+                weightKg: 126
+                volumeM3: 0.2
                 windowOpen: "06:00"
                 windowClose: "11:00"
                 requestedDate: "2026-10-01"
                 status: QUEUED
                 storeState: queued
+                items:
+                  - { sku: "FC001", name: "Fresh Milk 1 L (12 per crate)", quantity: 10, unitLabel: crate }
       "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
       "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
   post:
     operationId: placeOrders
     summary: Place orders for the next operating day
     description: >
-      Units only. Outlet, brand, district and depot come from the session, never
-      the body. Idempotent on `requestId`, so a retry over a flaky connection
-      cannot double-order. Each line becomes its own order. A line bigger than
-      any vehicle allowed to carry it (Rule 5: an order travels whole) is
-      rejected with 422 `ORDER_TOO_LARGE`; see GET /orders/limits and raise it
-      as several lines.
+      Outlet, brand, district and depot come from the session, never the body.
+      Send exactly one of `items` (products from the catalogue, see GET
+      /products) or `lines` (the older units-only form).
+
+
+      With `items`, the products are grouped by temperature and each
+      temperature becomes its own order, so a mixed basket returns two orders.
+      Weight and volume are the real sums of the products' sizes, and each order
+      carries its `items`. With `lines`, each line becomes its own order, sized
+      by estimate, with no `items`.
+
+
+      Idempotent on `requestId`, so a retry over a flaky connection cannot
+      double-order: a replay returns the same orders, with their `items`, and
+      creates nothing. An order bigger than any vehicle allowed to carry it
+      (Rule 5: an order travels whole) is rejected with 422 `ORDER_TOO_LARGE`;
+      see GET /orders/limits and raise it as several orders. Product errors are
+      422: `PRODUCT_NOT_FOUND`, `PRODUCT_INACTIVE`,
+      `PRODUCT_NOT_AVAILABLE_FOR_BRAND`.
     tags: [orders]
     requestBody:
       required: true
       content:
         application/json:
           schema: { $ref: "../components/schemas/orders.yaml#/PlaceOrdersRequest" }
+          examples:
+            fromProducts:
+              summary: Products from the catalogue
+              value:
+                requestId: "9f1c1d7e-2a4b-4c8d-9e0f-1a2b3c4d5e6f"
+                forDate: "2026-10-05"
+                items:
+                  - { productId: "clx0prd1a2b3c4d5e6f7g8h9", quantity: 20 }
+                  - { productId: "clx0prd2a2b3c4d5e6f7g8h9", quantity: 10 }
+            unitsOnly:
+              summary: Units only (older form)
+              value:
+                requestId: "9f1c1d7e-2a4b-4c8d-9e0f-1a2b3c4d5e70"
+                forDate: "2026-10-05"
+                lines:
+                  - { tempRequirement: chilled, units: 120 }
     responses:
       "201":
         description: Orders placed.
@@ -66,14 +97,16 @@ collection:
                 brand: Fresh
                 districtName: "Colombo"
                 tempRequirement: chilled
-                units: 120
-                weightKg: 860.4
-                volumeM3: 4.32
+                units: 10
+                weightKg: 126
+                volumeM3: 0.2
                 windowOpen: "06:00"
                 windowClose: "11:00"
                 requestedDate: "2026-10-01"
                 status: QUEUED
                 storeState: queued
+                items:
+                  - { sku: "FC001", name: "Fresh Milk 1 L (12 per crate)", quantity: 10, unitLabel: crate }
       "200":
         description: Replay of an earlier request with the same `requestId`.
         content:
@@ -81,7 +114,23 @@ collection:
             schema:
               type: array
               items: { $ref: "../components/schemas/orders.yaml#/Order" }
-            example: []
+            example:
+              - id: "clx0ord1a2b3c4d5e6f7g8h9"
+                ref: "ORD-004312"
+                outletId: "OUT074"
+                brand: Fresh
+                districtName: "Colombo"
+                tempRequirement: chilled
+                units: 10
+                weightKg: 126
+                volumeM3: 0.2
+                windowOpen: "06:00"
+                windowClose: "11:00"
+                requestedDate: "2026-10-01"
+                status: QUEUED
+                storeState: queued
+                items:
+                  - { sku: "FC001", name: "Fresh Milk 1 L (12 per crate)", quantity: 10, unitLabel: crate }
       "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
       "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
       "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
@@ -109,14 +158,16 @@ item:
               brand: Fresh
               districtName: "Colombo"
               tempRequirement: chilled
-              units: 120
-              weightKg: 860.4
-              volumeM3: 4.32
+              units: 10
+              weightKg: 126
+              volumeM3: 0.2
               windowOpen: "06:00"
               windowClose: "11:00"
               requestedDate: "2026-10-01"
               status: DELIVERED
               storeState: delivered
+              items:
+                - { sku: "FC001", name: "Fresh Milk 1 L (12 per crate)", quantity: 10, unitLabel: crate }
       "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
       "404": { $ref: "../components/responses/common.yaml#/NotFound" }
 
@@ -145,7 +196,7 @@ receipt:
             example:
               orderId: "clx0ord1a2b3c4d5e6f7g8h9"
               confirmedAt: "2026-09-30T05:41:00Z"
-              unitsReceived: 120
+              unitsReceived: 10
               matches: true
       "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
       "404": { $ref: "../components/responses/common.yaml#/NotFound" }

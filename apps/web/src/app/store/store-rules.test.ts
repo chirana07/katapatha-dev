@@ -6,7 +6,7 @@ import {
   storeState,
   storeStateLabel,
 } from "./order-state";
-import { validateOrderQuantities, validateReceipt } from "./validation";
+import { validateOrderItems, validateReceipt } from "./validation";
 
 describe("Store order status", () => {
   const mappings = [
@@ -52,18 +52,38 @@ describe("Store order status", () => {
 });
 
 describe("Place Order validation", () => {
-  it("builds only non-zero order lines", () => {
-    assert.deepEqual(validateOrderQuantities("12", "0"), {
+  it("passes a basket through as the API's items", () => {
+    assert.deepEqual(validateOrderItems('[{"productId":"p1","quantity":12},{"productId":"p2","quantity":3}]'), {
       ok: true,
-      data: [{ tempRequirement: "ambient", units: 12 }],
+      data: [
+        { productId: "p1", quantity: 12 },
+        { productId: "p2", quantity: 3 },
+      ],
     });
   });
 
-  for (const [ambient, chilled] of [["0", "0"], ["-1", "2"], ["1.5", "2"], ["10001", "0"]]) {
-    it(`rejects invalid quantities ${ambient} and ${chilled}`, () => {
-      assert.equal(validateOrderQuantities(ambient, chilled).ok, false);
+  for (const [label, raw] of [
+    ["nothing", null],
+    ["not JSON", "{"],
+    ["not a list", '{"productId":"p1","quantity":1}'],
+    ["an empty basket", "[]"],
+    ["a zero quantity", '[{"productId":"p1","quantity":0}]'],
+    ["a negative quantity", '[{"productId":"p1","quantity":-1}]'],
+    ["a fractional quantity", '[{"productId":"p1","quantity":1.5}]'],
+    ["a quantity over 10,000", '[{"productId":"p1","quantity":10001}]'],
+    ["a quantity sent as text", '[{"productId":"p1","quantity":"2"}]'],
+    ["a missing product", '[{"quantity":2}]'],
+    ["the same product twice", '[{"productId":"p1","quantity":1},{"productId":"p1","quantity":2}]'],
+  ] as const) {
+    it(`rejects ${label}`, () => {
+      assert.equal(validateOrderItems(raw).ok, false);
     });
   }
+
+  it("refuses more products than the API takes", () => {
+    const many = JSON.stringify(Array.from({ length: 101 }, (_, i) => ({ productId: `p${i}`, quantity: 1 })));
+    assert.equal(validateOrderItems(many).ok, false);
+  });
 });
 
 describe("Receipt validation", () => {

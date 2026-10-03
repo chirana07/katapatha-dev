@@ -1,69 +1,75 @@
 import type { components } from "@katapatha/contracts/types";
-import { splitUnits } from "@katapatha/core/domain/orderSize";
+import type { Basket, Product, Temp } from "./basket";
 
 type OrderLimits = components["schemas"]["OrderLimits"];
-type Temp = "ambient" | "chilled";
 
 export interface PlanLine {
+  product: Product;
+  quantity: number;
+}
+
+/** One temperature's share of the basket: it becomes one order. */
+export interface PlanGroup {
   temp: Temp;
+  lines: PlanLine[];
   units: number;
-  /** How the units will be raised: one entry per order. */
-  parts: number[];
+  /** Real figures from the catalogue's per-unit sizes, not an estimate. */
+  weightKg: number;
+  volumeM3: number;
   /** No vehicle at the depot can carry this temperature to the outlet. */
   blocked: boolean;
-  /** Estimates from the outlet's own order history; null without limits. */
-  volumeM3: number | null;
-  weightKg: number | null;
 }
 
 export interface OrderPlan {
+  /** Only the temperatures with something in them, ambient first. */
+  groups: PlanGroup[];
   lines: PlanLine[];
   totalUnits: number;
-  volumeM3: number | null;
-  weightKg: number | null;
+  weightKg: number;
+  volumeM3: number;
   blocked: boolean;
 }
 
 /**
- * What placing these quantities would do, as the server action will do it.
+ * What placing this basket would do, as the API will do it: products are
+ * grouped by their own temperature into one order each, an order's units are
+ * the sum of its quantities, and its weight and volume are the sum of each
+ * product's catalogue size times its quantity.
  *
- * Mirrors the action's split (rule 5: an order travels whole, so a quantity
- * bigger than the largest vehicle is raised as several equal orders) so the
- * review step can say "3 orders of 200 + 200 + 150" before the button is
- * pressed. Volume and weight are estimates; without limits they are unknown
- * rather than zero.
+ * Whether an order is too large for one vehicle is NOT decided here. That
+ * depends on the blended size of the products in it, which only the API sees
+ * the whole fleet for, and it answers `ORDER_TOO_LARGE` with the limit. The
+ * only thing `limits` can say in advance is the size-independent case: no
+ * vehicle at all can carry that temperature to this outlet.
  */
-export function planOrder(quantities: Record<Temp, number>, limits: OrderLimits | null): OrderPlan {
-  const lines: PlanLine[] = [];
-  for (const temp of ["ambient", "chilled"] as const) {
-    const units = quantities[temp];
-    if (!Number.isInteger(units) || units <= 0) continue;
-    const limit = limits?.[temp];
-    const blocked = limit != null && limit.maxUnitsPerOrder <= 0;
-    const parts = limit && limit.maxUnitsPerOrder > 0 ? splitUnits(units, limit.maxUnitsPerOrder) : [units];
-    lines.push({
-      temp,
-      units,
-      parts,
-      blocked,
-      volumeM3: limit ? units * limit.m3PerUnit : null,
-      weightKg: limit ? units * limit.kgPerUnit : null,
-    });
-  }
-  const sum = (pick: (line: PlanLine) => number | null) =>
-    lines.length > 0 && lines.every((line) => pick(line) != null)
-      ? lines.reduce((total, line) => total + (pick(line) ?? 0), 0)
-      : null;
-  return {
-    lines,
-    totalUnits: lines.reduce((total, line) => total + line.units, 0),
-    volumeM3: sum((line) => line.volumeM3),
-    weightKg: sum((line) => line.weightKg),
-    blocked: lines.some((line) => line.blocked),
-  };
-}
+export function planBasket(products: readonly Product[], basket: Basket, limits: OrderLimits | null): OrderPlan {
+  const lines: PlanLine[] = products.flatMap((product) => {
+    const quantity = basket[product.id];
+    return quantity && quantity > 0 ? [{ product, quantity }] : [];
+  });
 
-/** "3 orders of 200 + 200 + 150 units", or null when it stays one order. */
-export function splitSummary(line: Pick<PlanLine, "parts">): string | null {
-  return line.parts.length > 1 ? `${line.parts.length} orders of ${line.parts.join(" + ")} units` : null;
+  const groups: PlanGroup[] = (["ambient", "chilled"] as const).flatMap((temp) => {
+    const own = lines.filter((line) => line.product.tempRequirement === temp);
+    if (own.length === 0) return [];
+    const limit = limits?.[temp];
+    return [
+      {
+        temp,
+        lines: own,
+        units: own.reduce((sum, line) => sum + line.quantity, 0),
+        weightKg: own.reduce((sum, line) => sum + line.quantity * line.product.kgPerUnit, 0),
+        volumeM3: own.reduce((sum, line) => sum + line.quantity * line.product.m3PerUnit, 0),
+        blocked: limit != null && limit.maxUnitsPerOrder <= 0,
+      },
+    ];
+  });
+
+  return {
+    groups,
+    lines,
+    totalUnits: groups.reduce((sum, group) => sum + group.units, 0),
+    weightKg: groups.reduce((sum, group) => sum + group.weightKg, 0),
+    volumeM3: groups.reduce((sum, group) => sum + group.volumeM3, 0),
+    blocked: groups.some((group) => group.blocked),
+  };
 }

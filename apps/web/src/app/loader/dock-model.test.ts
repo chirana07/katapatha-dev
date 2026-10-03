@@ -70,6 +70,14 @@ describe("tallyLines", () => {
     assert.equal(tally.stops, 2);
   });
 
+  it("counts distinct products across orders, and none for orders placed as units only", () => {
+    const rice = { sku: "FA001", name: "White Rice 5 kg", quantity: 10, unitLabel: "bag" };
+    const flour = { sku: "FA003", name: "Wheat Flour", quantity: 4, unitLabel: "carton" };
+    const tally = tallyLines([line({ items: [rice, flour] }), line({ orderId: "b", items: [rice] }), line({ orderId: "c" })]);
+    assert.equal(tally.products, 2);
+    assert.equal(tallyLines([line({})]).products, 0);
+  });
+
   it("reports 0% for an empty list rather than dividing by zero", () => {
     assert.equal(unitsPercent(tallyLines([])), 0);
     assert.equal(unitsPercent(null), 0);

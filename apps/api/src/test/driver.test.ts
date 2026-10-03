@@ -192,7 +192,7 @@ describe("the driver's own routes", () => {
                 windowOpen: "06:00",
                 windowClose: "11:00",
                 accessNote: "Use the rear dock. Vans only — no truck access.",
-                orders: [{ orderId: "ORD1", orderRef: "ORD-004312", expectedUnits: 120, orderedUnits: 120 }],
+                orders: [{ orderId: "ORD1", orderRef: "ORD-004312", expectedUnits: 120, orderedUnits: 120, items: [] }],
               },
             ],
           },
@@ -215,8 +215,45 @@ describe("the driver's own routes", () => {
       // 120 ordered, 116 loaded. A driver handing over 116 has not come up
       // short of what they were given, and must not be prompted as if so.
       expect(response.json().trips[0].stops[0].orders).toEqual([
-        { orderId: "ORD1", orderRef: "ORD-004312", expectedUnits: 116, orderedUnits: 120 },
+        { orderId: "ORD1", orderRef: "ORD-004312", expectedUnits: 116, orderedUnits: 120, items: [] },
       ]);
+    });
+
+    it("carries what each order contains, from the snapshot on its lines", async () => {
+      const server = await serverFor();
+      loadRunMock.mockResolvedValue([
+        {
+          ...runTrip,
+          stops: [
+            {
+              ...runTrip.stops[0],
+              orders: [
+                {
+                  order: {
+                    id: "ORD1",
+                    ref: "ORD-004312",
+                    units: 120,
+                    lines: [
+                      { sku: "FA001", productName: "White Rice 5 kg", unitLabel: "bag", quantity: 80 },
+                      { sku: "FA003", productName: "Wheat Flour 1 kg (12 per carton)", unitLabel: "carton", quantity: 40 },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ] as never);
+
+      const response = await server.inject({ method: "GET", url: "/v1/drivers/me/run?date=2026-04-09" });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().trips[0].stops[0].orders[0].items).toEqual([
+        { sku: "FA001", name: "White Rice 5 kg", quantity: 80, unitLabel: "bag" },
+        { sku: "FA003", name: "Wheat Flour 1 kg (12 per carton)", quantity: 40, unitLabel: "carton" },
+      ]);
+      // The handover is still counted in units for the order, never per product.
+      expect(response.json().trips[0].stops[0].orders[0].expectedUnits).toBe(120);
     });
 
     it("refuses to guess a date", async () => {

@@ -53,6 +53,8 @@ tags:
   - name: reference
   - name: orders
     description: Store manager ordering and receipt.
+  - name: products
+    description: The product catalogue a store orders from, kept by dispatchers.
   - name: store
     description: The outlet's view of its own delivery day.
   - name: planning
@@ -112,6 +114,8 @@ paths:
   /orders/{orderId}:                          { $ref: "./paths/orders.yaml#/item" }
   /orders/{orderId}/receipt:                  { $ref: "./paths/orders.yaml#/receipt" }
   /store/today:                               { $ref: "./paths/store.yaml#/today" }
+  /products:                                  { $ref: "./paths/products.yaml#/collection" }
+  /products/{productId}:                      { $ref: "./paths/products.yaml#/item" }
 
   # ---- planning (owner BE2) ----
   /planning-days:                             { $ref: "./paths/planning.yaml#/planningDays" }

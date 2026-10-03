@@ -6,11 +6,13 @@ import { requireRole } from "@/lib/auth";
 import { longDate } from "@/lib/dates";
 import { readFailure } from "@/lib/failures";
 import { plural } from "@/lib/format";
+import { hasItems } from "@/lib/order-items";
 import { BrandPill, StatusPill } from "@/components/ui/status-pill";
 import { ButtonLink } from "@/components/ui/button";
 import { Facts } from "@/components/ui/detail-panel";
 import { PageBody } from "@/components/ui/page-header";
 import { ErrorPanel } from "@/components/ui/states";
+import { OrderItems } from "@/components/ui/order-items";
 import { Tracker } from "@/components/ui/stepper";
 import { DEFAULT_REASONS, describeIssue, issueStatusLabel, issueStatusTone, reasonOptions } from "../../issue-view";
 import { goodsLabel, progressSteps, receivingWindowLabel, storeState } from "../../order-state";
@@ -106,6 +108,14 @@ export default async function StoreOrderPage({ params }: { params: Promise<{ ord
           ...(detail?.deliveredUnits != null ? [{ label: "Driver recorded", value: plural(detail.deliveredUnits, "unit"), tone: detail.deliveredUnits < order.units ? ("bad" as const) : undefined }] : []),
         ]}
       />
+
+      {hasItems(order.items) ? (
+        <section aria-labelledby="items-heading" className="rounded-card border border-line bg-surface p-4 sm:p-5">
+          <h2 id="items-heading" className="text-lg font-bold text-ink">What is in this order</h2>
+          <p className="mt-0.5 text-sm text-muted">As you ordered it. The driver records the delivery by order, not by product.</p>
+          <OrderItems items={order.items} className="mt-3" />
+        </section>
+      ) : null}
 
       {steps ? (
         <section aria-labelledby="progress-heading" className="rounded-card border border-line bg-surface p-4 sm:p-5">

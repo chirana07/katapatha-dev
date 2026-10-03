@@ -58,6 +58,9 @@ loadList:
                   outletId: "OUT074"
                   seq: 3
                   expectedUnits: 120
+                  items:
+                    - { sku: "FA001", name: "White Rice 5 kg", quantity: 80, unitLabel: bag }
+                    - { sku: "FA003", name: "Wheat Flour 1 kg (12 per carton)", quantity: 40, unitLabel: carton }
                   loadedUnits: null
                   condition: null
                   shortfall: null

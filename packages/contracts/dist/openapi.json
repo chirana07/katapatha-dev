@@ -42,6 +42,10 @@
       "description": "Store manager ordering and receipt."
     },
     {
+      "name": "products",
+      "description": "The product catalogue a store orders from, kept by dispatchers."
+    },
+    {
       "name": "store",
       "description": "The outlet's view of its own delivery day."
     },
@@ -462,14 +466,22 @@
                     "brand": "Fresh",
                     "districtName": "Colombo",
                     "tempRequirement": "chilled",
-                    "units": 120,
-                    "weightKg": 860.4,
-                    "volumeM3": 4.32,
+                    "units": 10,
+                    "weightKg": 126,
+                    "volumeM3": 0.2,
                     "windowOpen": "06:00",
                     "windowClose": "11:00",
                     "requestedDate": "2026-10-01",
                     "status": "QUEUED",
-                    "storeState": "queued"
+                    "storeState": "queued",
+                    "items": [
+                      {
+                        "sku": "FC001",
+                        "name": "Fresh Milk 1 L (12 per crate)",
+                        "quantity": 10,
+                        "unitLabel": "crate"
+                      }
+                    ]
                   }
                 ]
               }
@@ -486,7 +498,7 @@
       "post": {
         "operationId": "placeOrders",
         "summary": "Place orders for the next operating day",
-        "description": "Units only. Outlet, brand, district and depot come from the session, never the body. Idempotent on `requestId`, so a retry over a flaky connection cannot double-order. Each line becomes its own order. A line bigger than any vehicle allowed to carry it (Rule 5: an order travels whole) is rejected with 422 `ORDER_TOO_LARGE`; see GET /orders/limits and raise it as several lines.\n",
+        "description": "Outlet, brand, district and depot come from the session, never the body. Send exactly one of `items` (products from the catalogue, see GET /products) or `lines` (the older units-only form).\n\nWith `items`, the products are grouped by temperature and each temperature becomes its own order, so a mixed basket returns two orders. Weight and volume are the real sums of the products' sizes, and each order carries its `items`. With `lines`, each line becomes its own order, sized by estimate, with no `items`.\n\nIdempotent on `requestId`, so a retry over a flaky connection cannot double-order: a replay returns the same orders, with their `items`, and creates nothing. An order bigger than any vehicle allowed to carry it (Rule 5: an order travels whole) is rejected with 422 `ORDER_TOO_LARGE`; see GET /orders/limits and raise it as several orders. Product errors are 422: `PRODUCT_NOT_FOUND`, `PRODUCT_INACTIVE`, `PRODUCT_NOT_AVAILABLE_FOR_BRAND`.\n",
         "tags": [
           "orders"
         ],
@@ -496,6 +508,38 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PlaceOrdersRequest"
+              },
+              "examples": {
+                "fromProducts": {
+                  "summary": "Products from the catalogue",
+                  "value": {
+                    "requestId": "9f1c1d7e-2a4b-4c8d-9e0f-1a2b3c4d5e6f",
+                    "forDate": "2026-10-05",
+                    "items": [
+                      {
+                        "productId": "clx0prd1a2b3c4d5e6f7g8h9",
+                        "quantity": 20
+                      },
+                      {
+                        "productId": "clx0prd2a2b3c4d5e6f7g8h9",
+                        "quantity": 10
+                      }
+                    ]
+                  }
+                },
+                "unitsOnly": {
+                  "summary": "Units only (older form)",
+                  "value": {
+                    "requestId": "9f1c1d7e-2a4b-4c8d-9e0f-1a2b3c4d5e70",
+                    "forDate": "2026-10-05",
+                    "lines": [
+                      {
+                        "tempRequirement": "chilled",
+                        "units": 120
+                      }
+                    ]
+                  }
+                }
               }
             }
           }
@@ -511,7 +555,32 @@
                     "$ref": "#/components/schemas/Order"
                   }
                 },
-                "example": []
+                "example": [
+                  {
+                    "id": "clx0ord1a2b3c4d5e6f7g8h9",
+                    "ref": "ORD-004312",
+                    "outletId": "OUT074",
+                    "brand": "Fresh",
+                    "districtName": "Colombo",
+                    "tempRequirement": "chilled",
+                    "units": 10,
+                    "weightKg": 126,
+                    "volumeM3": 0.2,
+                    "windowOpen": "06:00",
+                    "windowClose": "11:00",
+                    "requestedDate": "2026-10-01",
+                    "status": "QUEUED",
+                    "storeState": "queued",
+                    "items": [
+                      {
+                        "sku": "FC001",
+                        "name": "Fresh Milk 1 L (12 per crate)",
+                        "quantity": 10,
+                        "unitLabel": "crate"
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -533,14 +602,22 @@
                     "brand": "Fresh",
                     "districtName": "Colombo",
                     "tempRequirement": "chilled",
-                    "units": 120,
-                    "weightKg": 860.4,
-                    "volumeM3": 4.32,
+                    "units": 10,
+                    "weightKg": 126,
+                    "volumeM3": 0.2,
                     "windowOpen": "06:00",
                     "windowClose": "11:00",
                     "requestedDate": "2026-10-01",
                     "status": "QUEUED",
-                    "storeState": "queued"
+                    "storeState": "queued",
+                    "items": [
+                      {
+                        "sku": "FC001",
+                        "name": "Fresh Milk 1 L (12 per crate)",
+                        "quantity": 10,
+                        "unitLabel": "crate"
+                      }
+                    ]
                   }
                 ]
               }
@@ -627,14 +704,22 @@
                   "brand": "Fresh",
                   "districtName": "Colombo",
                   "tempRequirement": "chilled",
-                  "units": 120,
-                  "weightKg": 860.4,
-                  "volumeM3": 4.32,
+                  "units": 10,
+                  "weightKg": 126,
+                  "volumeM3": 0.2,
                   "windowOpen": "06:00",
                   "windowClose": "11:00",
                   "requestedDate": "2026-10-01",
                   "status": "DELIVERED",
-                  "storeState": "delivered"
+                  "storeState": "delivered",
+                  "items": [
+                    {
+                      "sku": "FC001",
+                      "name": "Fresh Milk 1 L (12 per crate)",
+                      "quantity": 10,
+                      "unitLabel": "crate"
+                    }
+                  ]
                 }
               }
             }
@@ -687,7 +772,7 @@
                 "example": {
                   "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
                   "confirmedAt": "2026-09-30T05:41:00Z",
-                  "unitsReceived": 120,
+                  "unitsReceived": 10,
                   "matches": true
                 }
               }
@@ -746,6 +831,20 @@
                     "brand": "Fresh",
                     "tempRequirement": "ambient",
                     "units": 69,
+                    "items": [
+                      {
+                        "sku": "FA001",
+                        "name": "White Rice 5 kg",
+                        "quantity": 40,
+                        "unitLabel": "bag"
+                      },
+                      {
+                        "sku": "FA003",
+                        "name": "Wheat Flour 1 kg (12 per carton)",
+                        "quantity": 29,
+                        "unitLabel": "carton"
+                      }
+                    ],
                     "etaAt": "07:21",
                     "vehicleId": "VEH025",
                     "districtName": "Puttalam",
@@ -807,6 +906,20 @@
                       "units": 69,
                       "volumeM3": 2.1,
                       "weightKg": 320,
+                      "items": [
+                        {
+                          "sku": "FA001",
+                          "name": "White Rice 5 kg",
+                          "quantity": 40,
+                          "unitLabel": "bag"
+                        },
+                        {
+                          "sku": "FA003",
+                          "name": "Wheat Flour 1 kg (12 per carton)",
+                          "quantity": 29,
+                          "unitLabel": "carton"
+                        }
+                      ],
                       "requestedDate": "2026-09-29",
                       "state": "on_the_way",
                       "etaAt": "07:21",
@@ -863,6 +976,261 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/products": {
+      "get": {
+        "operationId": "listProducts",
+        "summary": "The product catalogue, as the caller may see it",
+        "description": "Active products in display order (`sortOrder`, then `sku`).\n\nA store manager sees only products for their outlet's brand or for every brand. A loader, driver or dispatcher sees the whole active catalogue. `includeInactive=true` also returns deactivated products and is for dispatchers only; anyone else asking for it gets 403.\n\n`temp`, `brand` and `q` narrow the list. `q` matches the name or SKU, case-insensitively. `brand` keeps that brand's products plus the every-brand ones. For a store manager these only ever narrow what they may already see: asking for another brand returns just the every-brand products, never that brand's.\n\nThere is no stock or availability: a product in this list can be ordered, which says nothing about whether it is on a shelf.\n",
+        "tags": [
+          "products"
+        ],
+        "parameters": [
+          {
+            "name": "temp",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TempRequirement"
+            }
+          },
+          {
+            "name": "brand",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Brand"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Case-insensitive match on name or SKU.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          {
+            "name": "includeInactive",
+            "in": "query",
+            "required": false,
+            "description": "Dispatchers only. Declared as a string; the only values are `true` and `false`.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Products.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Product"
+                  }
+                },
+                "example": [
+                  {
+                    "id": "clx0prd1a2b3c4d5e6f7g8h9",
+                    "sku": "FA001",
+                    "name": "White Rice 5 kg",
+                    "brand": "Fresh",
+                    "tempRequirement": "ambient",
+                    "unitLabel": "bag",
+                    "kgPerUnit": 5.1,
+                    "m3PerUnit": 0.007,
+                    "active": true,
+                    "sortOrder": 10,
+                    "createdAt": "2026-10-04T02:10:00Z",
+                    "updatedAt": "2026-10-04T02:10:00Z"
+                  },
+                  {
+                    "id": "clx0prd2a2b3c4d5e6f7g8h9",
+                    "sku": "FC001",
+                    "name": "Fresh Milk 1 L (12 per crate)",
+                    "brand": "Fresh",
+                    "tempRequirement": "chilled",
+                    "unitLabel": "crate",
+                    "kgPerUnit": 12.6,
+                    "m3PerUnit": 0.02,
+                    "active": true,
+                    "sortOrder": 90,
+                    "createdAt": "2026-10-04T02:10:00Z",
+                    "updatedAt": "2026-10-04T02:10:00Z"
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createProduct",
+        "summary": "Add a product to the catalogue",
+        "description": "Dispatcher only. The catalogue is Waypoint-wide, not per depot. The SKU is upper-case and unique; a SKU already in use (including by a deactivated product) is 409 `SKU_TAKEN`. Sizes must be positive. Recorded in the decision log as `product.create`.\n",
+        "tags": [
+          "products"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProductRequest"
+              },
+              "example": {
+                "sku": "FA009",
+                "name": "Samba Rice 5 kg",
+                "brand": "Fresh",
+                "tempRequirement": "ambient",
+                "unitLabel": "bag",
+                "kgPerUnit": 5.1,
+                "m3PerUnit": 0.007
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Product created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Product"
+                },
+                "example": {
+                  "id": "clx0prd3a2b3c4d5e6f7g8h9",
+                  "sku": "FA009",
+                  "name": "Samba Rice 5 kg",
+                  "brand": "Fresh",
+                  "tempRequirement": "ambient",
+                  "unitLabel": "bag",
+                  "kgPerUnit": 5.1,
+                  "m3PerUnit": 0.007,
+                  "active": true,
+                  "sortOrder": 210,
+                  "createdAt": "2026-10-04T03:00:00Z",
+                  "updatedAt": "2026-10-04T03:00:00Z"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "The SKU is already in use.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "code": "SKU_TAKEN",
+                    "message": "SKU FA009 is already in use."
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/products/{productId}": {
+      "parameters": [
+        {
+          "name": "productId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "patch": {
+        "operationId": "updateProduct",
+        "summary": "Edit or deactivate a product",
+        "description": "Dispatcher only. Edits name, brand, unit label, sizes, temperature, `active` and `sortOrder`; the SKU is immutable. Orders already placed keep the name and size they were placed with. Deactivating removes the product from the store's list without touching history. Recorded in the decision log as `product.update` (with `before` and `after`).\n",
+        "tags": [
+          "products"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProductRequest"
+              },
+              "example": {
+                "active": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The product as it now stands.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Product"
+                },
+                "example": {
+                  "id": "clx0prd3a2b3c4d5e6f7g8h9",
+                  "sku": "FA009",
+                  "name": "Samba Rice 5 kg",
+                  "brand": "Fresh",
+                  "tempRequirement": "ambient",
+                  "unitLabel": "bag",
+                  "kgPerUnit": 5.1,
+                  "m3PerUnit": 0.007,
+                  "active": false,
+                  "sortOrder": 210,
+                  "createdAt": "2026-10-04T03:00:00Z",
+                  "updatedAt": "2026-10-04T03:20:00Z"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
           }
         }
       }
@@ -1634,7 +2002,7 @@
       "get": {
         "operationId": "getHistory",
         "summary": "Everything decided about one record",
-        "description": "The decision log for a single order, plan, trip, shortfall, problem, vehicle or outlet — who did what, when and why, newest first. This is what the History tab and the Activity panel read.\nA record the caller cannot see answers 403, the same as one that does not exist, so the log cannot be used to probe for ids.\n",
+        "description": "The decision log for a single order, plan, trip, shortfall, problem, vehicle, outlet or product — who did what, when and why, newest first. This is what the History tab and the Activity panel read.\nA record the caller cannot see answers 403, the same as one that does not exist, so the log cannot be used to probe for ids.\n",
         "tags": [
           "history"
         ],
@@ -1860,6 +2228,20 @@
                       "outletId": "OUT074",
                       "seq": 3,
                       "expectedUnits": 120,
+                      "items": [
+                        {
+                          "sku": "FA001",
+                          "name": "White Rice 5 kg",
+                          "quantity": 80,
+                          "unitLabel": "bag"
+                        },
+                        {
+                          "sku": "FA003",
+                          "name": "Wheat Flour 1 kg (12 per carton)",
+                          "quantity": 40,
+                          "unitLabel": "carton"
+                        }
+                      ],
                       "loadedUnits": null,
                       "condition": null,
                       "shortfall": null
@@ -2118,7 +2500,22 @@
                             {
                               "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
                               "orderRef": "ORD-004312",
-                              "expectedUnits": 120
+                              "expectedUnits": 120,
+                              "orderedUnits": 120,
+                              "items": [
+                                {
+                                  "sku": "FA001",
+                                  "name": "White Rice 5 kg",
+                                  "quantity": 80,
+                                  "unitLabel": "bag"
+                                },
+                                {
+                                  "sku": "FA003",
+                                  "name": "Wheat Flour 1 kg (12 per carton)",
+                                  "quantity": 40,
+                                  "unitLabel": "carton"
+                                }
+                              ]
                             }
                           ]
                         }
@@ -5840,6 +6237,43 @@
           "CANCELLED"
         ]
       },
+      "OrderItem": {
+        "type": "object",
+        "description": "One product's quantity within an order, as it was when the order was placed. Read-only context for the loader, driver and store: load checks and deliveries still count the order's `units`, not products. Absent or empty on orders that were placed as units only, and on the competition's orders.\n",
+        "required": [
+          "sku",
+          "name",
+          "quantity",
+          "unitLabel"
+        ],
+        "properties": {
+          "sku": {
+            "type": "string",
+            "examples": [
+              "FA001"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "examples": [
+              "White Rice 5 kg"
+            ]
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "examples": [
+              20
+            ]
+          },
+          "unitLabel": {
+            "type": "string",
+            "examples": [
+              "bag"
+            ]
+          }
+        }
+      },
       "Order": {
         "type": "object",
         "required": [
@@ -5925,6 +6359,13 @@
               "cancelled"
             ]
           },
+          "items": {
+            "description": "What the order contains, when it was placed from products: the name and unit label as they were at placement. Absent or empty for orders placed as units only and for the competition's orders. Additive. Read-only context: planning, load checks and delivery still count `units`.\n",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderItem"
+            }
+          },
           "deferral": {
             "description": "Present once a plan that deferred this order is published: the dispatcher's reason and the operating day it moves to. `rolledToDate` is null when no vehicle in the fleet could carry the order as it stands, so no next run is promised. Additive (CONVENTIONS.md rule 8).\n",
             "oneOf": [
@@ -5962,13 +6403,24 @@
       },
       "PlaceOrdersRequest": {
         "type": "object",
-        "description": "The store manager supplies units only. Outlet, brand, district and depot are derived server-side from the session — never trusted from the body. Weight and volume are estimated from the outlet's own history.\n",
+        "description": "The store manager says what they want; outlet, brand, district and depot are derived server-side from the session — never trusted from the body.\n\nExactly one of `items` and `lines` must be present (422 `VALIDATION_FAILED` otherwise).\n\n`items` orders real products from the catalogue. They are grouped by the product's temperature into one order per temperature, so a mixed basket becomes two orders, exactly as ambient and chilled `lines` do. Each order's units are the sum of its quantities and its weight and volume are the sum of each product's real size times its quantity, snapshotted onto the order's lines. Rule 5 (an order travels whole) is checked against that order's own blended size.\n\n`lines` is the older units-only form, kept working: weight and volume are estimated from the outlet's own history and the order has no `items`.\n",
         "required": [
           "requestId",
-          "forDate",
-          "lines"
+          "forDate"
         ],
         "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "items"
+            ]
+          },
+          {
+            "required": [
+              "lines"
+            ]
+          }
+        ],
         "properties": {
           "requestId": {
             "type": "string",
@@ -5980,6 +6432,37 @@
           },
           "forDate": {
             "$ref": "#/components/schemas/DateOnly"
+          },
+          "items": {
+            "type": "array",
+            "description": "Products and quantities. Errors: 422 `PRODUCT_NOT_FOUND` (unknown id), 422 `PRODUCT_INACTIVE` (deactivated), 422 `PRODUCT_NOT_AVAILABLE_FOR_BRAND` (restricted to another brand), 422 `ORDER_TOO_LARGE` (as for lines). The same product listed twice is 422 `VALIDATION_FAILED`.\n",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "required": [
+                "productId",
+                "quantity"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "productId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "examples": [
+                    "clx0prd1a2b3c4d5e6f7g8h9"
+                  ]
+                },
+                "quantity": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10000,
+                  "examples": [
+                    20
+                  ]
+                }
+              }
+            }
           },
           "lines": {
             "type": "array",
@@ -6213,6 +6696,13 @@
             "examples": [
               69
             ]
+          },
+          "items": {
+            "description": "What the order contains, when it was placed from products. Absent or empty otherwise. Additive.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderItem"
+            }
           },
           "etaAt": {
             "oneOf": [
@@ -6524,6 +7014,13 @@
                 "type": "null"
               }
             ]
+          },
+          "items": {
+            "description": "What the order contains, when it was placed from products. Absent or empty otherwise. Additive.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderItem"
+            }
           }
         }
       },
@@ -6694,6 +7191,267 @@
               {
                 "type": "null"
               }
+            ]
+          }
+        }
+      },
+      "Product": {
+        "type": "object",
+        "description": "One orderable line. Waypoint-wide, not per depot. `kgPerUnit` and `m3PerUnit` are the real size of one unit and are what an order placed from products is weighed and measured by. A deactivated product (`active: false`) is kept, because past orders point at it, but cannot be ordered.\n",
+        "required": [
+          "id",
+          "sku",
+          "name",
+          "brand",
+          "tempRequirement",
+          "unitLabel",
+          "kgPerUnit",
+          "m3PerUnit",
+          "active",
+          "sortOrder",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "clx0prd1a2b3c4d5e6f7g8h9"
+            ]
+          },
+          "sku": {
+            "type": "string",
+            "description": "Upper-case, unique, and immutable once created.",
+            "pattern": "^[A-Z0-9][A-Z0-9_-]{1,31}$",
+            "examples": [
+              "FA001"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120,
+            "examples": [
+              "White Rice 5 kg"
+            ]
+          },
+          "brand": {
+            "description": "The brand this product is for. Null means every brand. A store sees the products of its own outlet's brand plus these.\n",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Brand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tempRequirement": {
+            "$ref": "#/components/schemas/TempRequirement"
+          },
+          "unitLabel": {
+            "type": "string",
+            "description": "What one unit is called, for display beside a quantity.",
+            "minLength": 1,
+            "maxLength": 24,
+            "examples": [
+              "bag"
+            ]
+          },
+          "kgPerUnit": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1000,
+            "examples": [
+              5.1
+            ]
+          },
+          "m3PerUnit": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 100,
+            "examples": [
+              0.007
+            ]
+          },
+          "active": {
+            "type": "boolean",
+            "examples": [
+              true
+            ]
+          },
+          "sortOrder": {
+            "type": "integer",
+            "description": "Display order, ascending. Not unique.",
+            "minimum": 0,
+            "maximum": 1000000,
+            "examples": [
+              10
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "examples": [
+              "2026-10-04T02:10:00Z"
+            ]
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "examples": [
+              "2026-10-04T02:10:00Z"
+            ]
+          }
+        }
+      },
+      "CreateProductRequest": {
+        "type": "object",
+        "description": "Dispatcher only. `sku` cannot be changed afterwards.",
+        "required": [
+          "sku",
+          "name",
+          "tempRequirement",
+          "unitLabel",
+          "kgPerUnit",
+          "m3PerUnit"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "sku": {
+            "type": "string",
+            "pattern": "^[A-Z0-9][A-Z0-9_-]{1,31}$",
+            "examples": [
+              "FA009"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120,
+            "examples": [
+              "Samba Rice 5 kg"
+            ]
+          },
+          "brand": {
+            "description": "Omit or null for every brand.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Brand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tempRequirement": {
+            "$ref": "#/components/schemas/TempRequirement"
+          },
+          "unitLabel": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 24,
+            "examples": [
+              "bag"
+            ]
+          },
+          "kgPerUnit": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1000,
+            "examples": [
+              5.1
+            ]
+          },
+          "m3PerUnit": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 100,
+            "examples": [
+              0.007
+            ]
+          },
+          "active": {
+            "type": "boolean",
+            "description": "Defaults to true.",
+            "examples": [
+              true
+            ]
+          },
+          "sortOrder": {
+            "type": "integer",
+            "description": "Defaults to the end of the list.",
+            "minimum": 0,
+            "maximum": 1000000,
+            "examples": [
+              210
+            ]
+          }
+        }
+      },
+      "UpdateProductRequest": {
+        "type": "object",
+        "description": "Any of these, at least one. `sku` is deliberately absent: order lines and people both refer to it. Changing a name, size or temperature affects orders placed afterwards only; placed orders keep the snapshot they were placed with.\n",
+        "minProperties": 1,
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120,
+            "examples": [
+              "White Rice 5 kg (new pack)"
+            ]
+          },
+          "brand": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Brand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tempRequirement": {
+            "$ref": "#/components/schemas/TempRequirement"
+          },
+          "unitLabel": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 24,
+            "examples": [
+              "bag"
+            ]
+          },
+          "kgPerUnit": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1000,
+            "examples": [
+              5.2
+            ]
+          },
+          "m3PerUnit": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 100,
+            "examples": [
+              0.007
+            ]
+          },
+          "active": {
+            "type": "boolean",
+            "examples": [
+              false
+            ]
+          },
+          "sortOrder": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000,
+            "examples": [
+              20
             ]
           }
         }
@@ -7801,7 +8559,7 @@
       },
       "HistoryEntityType": {
         "type": "string",
-        "description": "The kinds of record the decision log is kept against. Each is authorised the way the record itself is: a dispatcher for their own depot, a store manager for their own outlet and its orders.\n",
+        "description": "The kinds of record the decision log is kept against. Each is authorised the way the record itself is: a dispatcher for their own depot, a store manager for their own outlet and its orders. A Product's log is the catalogue's, which is Waypoint-wide: any dispatcher may read it, no one else.\n",
         "enum": [
           "Order",
           "Plan",
@@ -7811,7 +8569,8 @@
           "Problem",
           "Vehicle",
           "Outlet",
-          "CapacityAction"
+          "CapacityAction",
+          "Product"
         ]
       },
       "HistoryEvent": {
@@ -7983,6 +8742,13 @@
                   "examples": [
                     120
                   ]
+                },
+                "items": {
+                  "description": "What this order contains, when it was placed from products, so the dock can see what it is loading. Context only: the load check still counts `expectedUnits` for the order, not per product. Absent or empty for orders placed as units only. Additive.\n",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OrderItem"
+                  }
                 },
                 "loadedUnits": {
                   "type": [
@@ -8293,6 +9059,13 @@
                   "examples": [
                     120
                   ]
+                },
+                "items": {
+                  "description": "What the order contains, when it was placed from products, so the driver knows what is being handed over. Context only: a delivery is still recorded in units for the order, not per product. Absent or empty for orders placed as units only. Additive.\n",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OrderItem"
+                  }
                 }
               }
             }

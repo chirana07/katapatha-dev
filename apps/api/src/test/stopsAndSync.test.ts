@@ -921,6 +921,46 @@ describe("the stop-event applier", () => {
       });
     });
 
+    it("caches what each order contains, so the driver can see it with no signal", async () => {
+      const server = await serverFor();
+      vi.mocked(loadRun).mockResolvedValue([
+        {
+          id: "TRP001",
+          tripNo: 1,
+          wave: "PREDAWN",
+          stops: [
+            {
+              id: "STP001",
+              seq: 1,
+              outletId: "OUT074",
+              outlet: { displayName: null, dockType: "rear_dock", parkingConstraint: "normal", windowOpen: "06:00", windowClose: "11:00" },
+              status: "PENDING",
+              plannedArrivalAt: "04:40",
+              orders: [
+                {
+                  order: {
+                    id: "ORD1",
+                    ref: "ORD-004312",
+                    units: 30,
+                    lines: [{ sku: "FA001", productName: "White Rice 5 kg", unitLabel: "bag", quantity: 30 }],
+                  },
+                },
+                { order: { id: "ORD2", ref: "ORD-004313", units: 5 } },
+              ],
+            },
+          ],
+        },
+      ] as never);
+
+      const response = await server.inject({ method: "GET", url: "/v1/sync/bootstrap?date=2026-04-09" });
+
+      expect(response.statusCode).toBe(200);
+      const orders = response.json().run.trips[0].stops[0].orders;
+      expect(orders[0].items).toEqual([{ sku: "FA001", name: "White Rice 5 kg", quantity: 30, unitLabel: "bag" }]);
+      // An order read without lines (or placed as units only) still serialises.
+      expect(orders[1]).toEqual({ orderId: "ORD2", orderRef: "ORD-004313", expectedUnits: 5, items: [] });
+    });
+
     it("refuses to bootstrap before a vehicle is claimed", async () => {
       const server = await serverFor({ ...driver, defaultVehicleId: null });
 

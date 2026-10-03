@@ -73,6 +73,7 @@ export async function TripDetail({
             </div>
             <p className="mt-1 text-sm text-muted">
               {trip.districtName} · {plural(tally.stops, "stop")} · {plural(tally.lines, "order")}
+              {tally.products > 0 ? ` · ${plural(tally.products, "product")}` : ""}
             </p>
           </div>
           <div className="shrink-0 text-right">

@@ -2,11 +2,30 @@
 PlaceOrdersRequest:
   type: object
   description: >
-    The store manager supplies units only. Outlet, brand, district and depot are
-    derived server-side from the session — never trusted from the body. Weight
-    and volume are estimated from the outlet's own history.
-  required: [requestId, forDate, lines]
+    The store manager says what they want; outlet, brand, district and depot are
+    derived server-side from the session — never trusted from the body.
+
+
+    Exactly one of `items` and `lines` must be present (422 `VALIDATION_FAILED`
+    otherwise).
+
+
+    `items` orders real products from the catalogue. They are grouped by the
+    product's temperature into one order per temperature, so a mixed basket
+    becomes two orders, exactly as ambient and chilled `lines` do. Each order's
+    units are the sum of its quantities and its weight and volume are the sum of
+    each product's real size times its quantity, snapshotted onto the order's
+    lines. Rule 5 (an order travels whole) is checked against that order's own
+    blended size.
+
+
+    `lines` is the older units-only form, kept working: weight and volume are
+    estimated from the outlet's own history and the order has no `items`.
+  required: [requestId, forDate]
   additionalProperties: false
+  oneOf:
+    - required: [items]
+    - required: [lines]
   properties:
     requestId:
       type: string
@@ -14,6 +33,22 @@ PlaceOrdersRequest:
       description: Idempotency key. Replaying the same requestId returns the original result.
       examples: ["9f1c1d7e-2a4b-4c8d-9e0f-1a2b3c4d5e6f"]
     forDate: { $ref: "./common.yaml#/DateOnly" }
+    items:
+      type: array
+      description: >
+        Products and quantities. Errors: 422 `PRODUCT_NOT_FOUND` (unknown id),
+        422 `PRODUCT_INACTIVE` (deactivated), 422 `PRODUCT_NOT_AVAILABLE_FOR_BRAND`
+        (restricted to another brand), 422 `ORDER_TOO_LARGE` (as for lines).
+        The same product listed twice is 422 `VALIDATION_FAILED`.
+      minItems: 1
+      maxItems: 100
+      items:
+        type: object
+        required: [productId, quantity]
+        additionalProperties: false
+        properties:
+          productId: { type: string, minLength: 1, examples: ["clx0prd1a2b3c4d5e6f7g8h9"] }
+          quantity: { type: integer, minimum: 1, maximum: 10000, examples: [20] }
     lines:
       type: array
       minItems: 1
@@ -46,6 +81,14 @@ Order:
       type: string
       description: The narrower projection a store manager sees.
       enum: [queued, planned, on_the_way, delivered, deferred, cancelled]
+    items:
+      description: >
+        What the order contains, when it was placed from products: the name and
+        unit label as they were at placement. Absent or empty for orders placed
+        as units only and for the competition's orders. Additive. Read-only
+        context: planning, load checks and delivery still count `units`.
+      type: array
+      items: { $ref: "./products.yaml#/OrderItem" }
     deferral:
       description: >
         Present once a plan that deferred this order is published: the

@@ -6,6 +6,7 @@ import { ulid } from "@katapatha/core/offline/ulid";
 import { recordDecision } from "../lib/audit";
 import type { SessionUser } from "../lib/auth";
 import { requireDriverStop } from "../lib/authorization";
+import { ORDER_LINES_INCLUDE } from "./products";
 
 /**
  * What a driver does on the road.
@@ -437,7 +438,7 @@ export async function loadRun(vehicleId: string, date: Date) {
         orderBy: { seq: "asc" },
         include: {
           outlet: true,
-          orders: { include: { order: true } },
+          orders: { include: { order: { include: { lines: ORDER_LINES_INCLUDE } } } },
           stopEvents: { orderBy: { occurredAt: "asc" } },
         },
       },

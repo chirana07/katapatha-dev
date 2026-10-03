@@ -33,6 +33,8 @@ export type LoadTally = {
   awaitingUnits: number;
   /** Distinct delivery stops (a stop can carry several orders). */
   stops: number;
+  /** Distinct products across the list's orders; 0 when none were placed from products. Context only: nothing is checked per product. */
+  products: number;
 };
 
 export function tallyLines(lines: LoadLine[]): LoadTally {
@@ -68,6 +70,7 @@ export function tallyLines(lines: LoadLine[]): LoadTally {
     awaiting,
     awaitingUnits,
     stops: new Set(lines.map((line) => line.seq)).size,
+    products: new Set(lines.flatMap((line) => (line.items ?? []).map((item) => item.sku))).size,
   };
 }
 

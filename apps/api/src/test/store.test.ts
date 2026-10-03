@@ -58,6 +58,7 @@ function order(over: Partial<Awaited<ReturnType<typeof loadStoreOrders>>[number]
     units: 69,
     volumeM3: 2.1,
     weightKg: 320,
+    items: [] as Array<{ sku: string; name: string; quantity: number; unitLabel: string }>,
     requestedDate: "2026-09-29",
     state: "on_the_way" as const,
     etaAt: "07:21",
@@ -124,6 +125,29 @@ describe("GET /v1/store/today", () => {
       expect.objectContaining({ where: { id: "OUT074" } }),
     );
     expect(loadStoreOrdersMock).toHaveBeenCalledWith("OUT074");
+  });
+
+  it("carries what an order contains, on the order and on the incoming delivery", async () => {
+    const items = [
+      { sku: "FC001", name: "Fresh Milk 1 L (12 per crate)", quantity: 10, unitLabel: "crate" },
+      { sku: "FC005", name: "Whole Chicken (10 kg crate)", quantity: 4, unitLabel: "crate" },
+    ];
+    loadStoreOrdersMock.mockResolvedValue([order({ items }), order({ id: "ord-2", ref: "S1-070", state: "planned" })]);
+    loadIncomingDeliveryMock.mockResolvedValue({
+      orderId: "ord-1", ref: "S1-082", brand: "Fresh", tempRequirement: "chilled", units: 14, items,
+      etaAt: "07:21", vehicleId: "VEH025", districtName: "Puttalam", depotCode: "Peliyagoda",
+      stopsBefore: 1, legMinutes: 96, minutesAway: null, departed: true, report: null,
+      arrival: { basis: "plan", at: "07:21", from: null, to: null }, steps: [],
+    });
+    getWeatherMock.mockResolvedValue(null as never);
+
+    const server = await build(prismaWith(outlet));
+    servers.push(server);
+
+    const body = (await server.inject({ method: "GET", url: "/v1/store/today?date=2026-09-29" })).json();
+
+    expect(body.orders[0].items).toEqual(items);
+    expect(body.incoming.items).toEqual(items);
   });
 
   it("counts a delivered but unconfirmed order as the outlet's own pending action", async () => {

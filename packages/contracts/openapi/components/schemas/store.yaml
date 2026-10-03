@@ -49,6 +49,10 @@ StoreOrder:
     deliveredUnits: { oneOf: [{ type: integer }, { type: "null" }] }
     receiptConfirmed: { type: boolean }
     deferral: { oneOf: [{ $ref: "#/StoreDeferral" }, { type: "null" }] }
+    items:
+      description: What the order contains, when it was placed from products. Absent or empty otherwise. Additive.
+      type: array
+      items: { $ref: "./products.yaml#/OrderItem" }
 
 DeliveryStep:
   type: object
@@ -73,6 +77,10 @@ IncomingDelivery:
     brand: { $ref: "./common.yaml#/Brand" }
     tempRequirement: { $ref: "./common.yaml#/TempRequirement" }
     units: { type: integer, examples: [69] }
+    items:
+      description: What the order contains, when it was placed from products. Absent or empty otherwise. Additive.
+      type: array
+      items: { $ref: "./products.yaml#/OrderItem" }
     etaAt: { oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }] }
     vehicleId: { type: string, examples: ["VEH025"] }
     districtName: { type: string, examples: ["Puttalam"] }

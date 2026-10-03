@@ -7,6 +7,7 @@ import { requireRole } from "@/lib/auth";
 import { isDateOnly, longDate } from "@/lib/dates";
 import { readFailure } from "@/lib/failures";
 import { plural } from "@/lib/format";
+import { hasItems } from "@/lib/order-items";
 import { BrandPill, StatusPill } from "@/components/ui/status-pill";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { DataTable, RowCard, Td, Th, Tr } from "@/components/ui/data-table";
@@ -14,6 +15,7 @@ import { DateControl } from "@/components/ui/date-control";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
 import { StatCard, StatRow } from "@/components/ui/stat-card";
 import { EmptyState, ErrorPanel } from "@/components/ui/states";
+import { OrderItems } from "@/components/ui/order-items";
 import { Tracker } from "@/components/ui/stepper";
 import { markNotificationRead } from "./actions";
 import { DEFAULT_REASONS, reasonOptions } from "./issue-view";
@@ -187,6 +189,13 @@ export default async function StoreTodayPage({
                   </div>
                   <IncomingArrival incoming={incoming} window={receivingWindowLabel({ windowOpen: today.receivingWindowOpen, windowClose: today.receivingWindowClose })} />
                 </div>
+
+                {hasItems(incoming.items) ? (
+                  <div className="mt-4 rounded-control bg-raised p-3">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">What is on its way</h3>
+                    <OrderItems items={incoming.items} mode="responsive" className="mt-1" />
+                  </div>
+                ) : null}
 
                 <div className="mt-5">
                   <Tracker
@@ -382,7 +391,7 @@ function DeliveriesTable({
           <Th>Order ref</Th>
           <Th>Brand</Th>
           <Th>Type</Th>
-          <Th numeric>Items</Th>
+          <Th>Units</Th>
           <Th>Arrival</Th>
           <Th>Status</Th>
           <Th><span className="sr-only">Open</span></Th>
@@ -405,6 +414,7 @@ function DeliveriesTable({
             </p>
             {receiptNote(order) ? <p className="mt-1 text-xs font-semibold text-muted">{receiptNote(order)}</p> : null}
           </Link>
+          <OrderItems items={order.items} mode="collapsible" />
         </RowCard>
       ))}
     >
@@ -417,7 +427,10 @@ function DeliveriesTable({
           </Td>
           <Td><BrandPill brand={order.brand} /></Td>
           <Td>{goodsLabel(order.tempRequirement)}</Td>
-          <Td numeric>{plural(order.units, "unit")}</Td>
+          <Td>
+            <span className="tabular">{plural(order.units, "unit")}</span>
+            <OrderItems items={order.items} mode="collapsible" />
+          </Td>
           <Td>
             <span className="tabular font-semibold">{arrivalCell(order, incoming)}</span>
             <span className="tabular block text-xs text-muted">{window}</span>

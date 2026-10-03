@@ -12,6 +12,7 @@ import { DataTable, RowCard, Td, Th, Tr } from "@/components/ui/data-table";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
 import { StatCard, StatRow } from "@/components/ui/stat-card";
 import { EmptyState, ErrorPanel } from "@/components/ui/states";
+import { OrderItems } from "@/components/ui/order-items";
 import { Tabs } from "@/components/ui/tabs";
 import { matchesQuery, matchesTab, newestFirst, paginate, parseTab, tabCounts, ORDER_TABS } from "../order-list";
 import { goodsLabel, receivingWindowLabel, storeState } from "../order-state";
@@ -29,9 +30,9 @@ const PAGE_SIZE = 10;
  * My orders (S-05): every order the outlet has placed, filtered by where it is.
  *
  * The design's side panel (items by product, a timestamped timeline, the
- * driver's name) is carried by the order's own page instead — Katapatha keeps
- * unit counts rather than product lines, and has no placed-at time, so most of
- * the panel had nothing to read from.
+ * driver's name) is carried by the order's own page instead; the list shows
+ * each order's products as a disclosure under its units, and has no placed-at
+ * time to build a timeline from.
  */
 export default async function StoreOrdersPage({
   searchParams,
@@ -187,7 +188,7 @@ function OrdersTable({ orders, filtered, hasAny }: { orders: Order[]; filtered: 
           <Th>Order ref</Th>
           <Th>Brand</Th>
           <Th>Type</Th>
-          <Th numeric>Items</Th>
+          <Th>Units</Th>
           <Th>Delivery</Th>
           <Th>Status</Th>
           <Th><span className="sr-only">Open</span></Th>
@@ -209,6 +210,8 @@ function OrdersTable({ orders, filtered, hasAny }: { orders: Order[]; filtered: 
               </div>
               <p className="tabular mt-2 text-sm text-ink">{deliveryCell(order, state)}</p>
             </Link>
+            {/* Outside the link: opening the list must not open the order. */}
+            <OrderItems items={order.items} mode="collapsible" />
           </RowCard>
         );
       })}
@@ -224,7 +227,10 @@ function OrdersTable({ orders, filtered, hasAny }: { orders: Order[]; filtered: 
             </Td>
             <Td><BrandPill brand={order.brand} /></Td>
             <Td>{goodsLabel(order.tempRequirement)}</Td>
-            <Td numeric>{plural(order.units, "unit")}</Td>
+            <Td>
+              <span className="tabular">{plural(order.units, "unit")}</span>
+              <OrderItems items={order.items} mode="collapsible" />
+            </Td>
             <Td><span className="tabular">{deliveryCell(order, state)}</span></Td>
             <Td><OrderStatePill state={state} /></Td>
             <Td>

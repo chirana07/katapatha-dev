@@ -14,7 +14,7 @@ history:
     summary: Everything decided about one record
     description: >
       The decision log for a single order, plan, trip, shortfall, problem,
-      vehicle or outlet — who did what, when and why, newest first. This is
+      vehicle, outlet or product — who did what, when and why, newest first. This is
       what the History tab and the Activity panel read.
 
       A record the caller cannot see answers 403, the same as one that does not

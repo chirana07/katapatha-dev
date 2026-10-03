@@ -6,6 +6,7 @@ import {
   loadStoreOrders,
   type StoreOrderView,
 } from "../services/store.js";
+import { ORDER_ITEMS_SCHEMA } from "../services/products.js";
 import { getWeather } from "../services/weather.js";
 
 const CLOCK_TIME = "^([01]\\d|2[0-3]):[0-5]\\d$";
@@ -41,6 +42,7 @@ const STORE_ORDER = {
     units: { type: "integer" },
     volumeM3: { type: "number" },
     weightKg: { type: "number" },
+    items: ORDER_ITEMS_SCHEMA,
     requestedDate: { type: "string", pattern: DATE_ONLY },
     state: {
       type: "string",
@@ -78,6 +80,7 @@ const INCOMING_DELIVERY = {
     brand: { type: "string", enum: ["Fresh", "Style", "Tech"] },
     tempRequirement: { type: "string", enum: ["chilled", "ambient"] },
     units: { type: "integer" },
+    items: ORDER_ITEMS_SCHEMA,
     etaAt: NULLABLE_CLOCK,
     vehicleId: { type: "string" },
     districtName: { type: "string" },

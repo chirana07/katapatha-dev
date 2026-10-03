@@ -18,6 +18,7 @@
     "db:up": "docker compose up -d db",
     "db:migrate": "pnpm --filter @katapatha/api db:migrate",
     "db:seed": "pnpm --filter @katapatha/api db:seed",
+    "db:seed:products": "pnpm --filter @katapatha/api db:seed:products",
     "db:studio": "pnpm --filter @katapatha/api db:studio",
     "demo:reset": "node scripts/demo-reset.mjs",
     "demo:smoke": "node scripts/demo-smoke.mjs",

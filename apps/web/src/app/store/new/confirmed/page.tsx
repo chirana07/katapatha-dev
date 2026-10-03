@@ -5,14 +5,16 @@ import { longDate } from "@/lib/dates";
 import { plural } from "@/lib/format";
 import { ButtonLink } from "@/components/ui/button";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
+import { OrderItems } from "@/components/ui/order-items";
 import { Stepper } from "@/components/ui/stepper";
 import { goodsLabel, receivingWindowLabel, storeState } from "../../order-state";
 import { OrderStatePill } from "../../store-parts";
+import { ClearSavedBasket } from "../clear-saved-basket";
 
 export const metadata: Metadata = { title: "Order received · Katapatha" };
 export const dynamic = "force-dynamic";
 
-const STEPS = ["Choose quantities", "Review order", "Confirmed"];
+const STEPS = ["Choose products", "Review order", "Confirmed"];
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
@@ -36,6 +38,7 @@ export default async function OrderConfirmedPage({
 
   return (
     <PageBody>
+      <ClearSavedBasket />
       <PageHeader title="Place a new order" />
       <div className="max-w-2xl">
         <Stepper steps={STEPS} current={3} />
@@ -52,12 +55,15 @@ export default async function OrderConfirmedPage({
             </p>
             <ul className="mt-4 flex flex-col gap-2">
               {found.map((order) => (
-                <li key={order.id} className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line p-3 text-sm">
-                  <span>
-                    <span className="font-mono font-bold text-ink">{order.ref}</span>
-                    <span className="text-muted"> · {goodsLabel(order.tempRequirement)} · {plural(order.units, "unit")} · {receivingWindowLabel(order)}</span>
-                  </span>
-                  <OrderStatePill state={storeState(order)} />
+                <li key={order.id} className="rounded-control border border-line p-3 text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      <span className="font-mono font-bold text-ink">{order.ref}</span>
+                      <span className="text-muted"> · {goodsLabel(order.tempRequirement)} · {plural(order.units, "unit")} · {receivingWindowLabel(order)}</span>
+                    </span>
+                    <OrderStatePill state={storeState(order)} />
+                  </div>
+                  <OrderItems items={order.items} className="mt-2 border-t border-line pt-2" />
                 </li>
               ))}
             </ul>

@@ -11,6 +11,7 @@
 import { PrismaClient } from "@prisma/client";
 import { seedForecastShells, seedHeroDay } from "./heroDay";
 import { seedHistory } from "./history";
+import { seedFixtureOrderLines, seedProducts } from "./products";
 import { seedReference } from "./reference";
 import { resolveDataSource, sourceChecksum } from "./source";
 import { printAccounts, seedUsers } from "./users";
@@ -28,7 +29,8 @@ async function reset(): Promise<void> {
     TRUNCATE TABLE
       "StopEvent", "Problem", "ReceiptConfirmation", "StopReassignment",
       "LoadCheck", "Shortfall", "TripStopOrder", "TripStop", "Trip",
-      "Assignment", "Deferral", "Plan", "PlanningDay", "Order",
+      "Assignment", "Deferral", "Plan", "PlanningDay", "OrderLine", "Order",
+      "Product",
       "FuelLedgerEntry", "FuelLedger", "CapacityAction", "SyncLog",
       "Notification", "AuditEvent", "Session", "LoginThrottle", "User",
       "VehicleDayStatus", "HistoricalLeg", "ServiceObservation",
@@ -78,6 +80,23 @@ async function main(): Promise<void> {
       `[seed] Hero day: ${hero.orders} orders (${brands}); ` +
         `${hero.chilledOrders} chilled totalling ${hero.chilledVolumeM3} m3; ` +
         `${hero.vehiclesAvailable} vehicles available, ${hero.vehiclesInWorkshop} in the workshop.`,
+    );
+  }
+
+  // The competition CSVs have no products, so the catalogue is demo data in
+  // both modes. Only the fixture's synthetic orders get a breakdown into it:
+  // inventing contents for the competition's orders would put made-up goods
+  // beside real figures.
+  const products = await seedProducts(prisma);
+  console.log(
+    `[seed] ${products.total} products in the catalogue. DEMO DATA: invented for the demo, ` +
+      `not Waypoint's range; the competition data has no products.`,
+  );
+  if (source.kind === "fixture") {
+    const lines = await seedFixtureOrderLines(prisma);
+    console.log(
+      `[seed] ${lines.lines} order lines across ${lines.orders} fixture orders (synthetic breakdown; ` +
+        `the orders' own units, weight and volume are unchanged).`,
     );
   }
 

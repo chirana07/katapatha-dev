@@ -22,6 +22,7 @@ vi.mock("../lib/db.js", () => ({
     order: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     outlet: { findUnique: vi.fn() },
     vehicle: { findMany: vi.fn() },
+    product: { findMany: vi.fn() },
     receiptConfirmation: { upsert: vi.fn() },
     auditEvent: { createMany: vi.fn() },
     $transaction: vi.fn(),
@@ -201,6 +202,32 @@ describe("orders routes", () => {
         depotCode: "Peliyagoda",
         requestedDate: new Date("2026-10-05T00:00:00.000Z"),
       });
+    });
+
+    it("shows what an order contains, and an empty list for one placed as units only", async () => {
+      vi.mocked(prisma.order.findMany).mockResolvedValue([
+        orderRow({
+          lines: [
+            { sku: "FA001", productName: "White Rice 5 kg", unitLabel: "bag", quantity: 20 },
+            { sku: "FA003", productName: "Wheat Flour 1 kg (12 per carton)", unitLabel: "carton", quantity: 3 },
+          ],
+        }),
+        orderRow({ id: "ORD2", lines: [] }),
+        // A read that never asked for lines still serialises.
+        orderRow({ id: "ORD3" }),
+      ] as never);
+      const server = await serverFor(dispatcher);
+
+      const body = (await server.inject({ method: "GET", url: "/v1/orders" })).json();
+
+      expect(body[0].items).toEqual([
+        { sku: "FA001", name: "White Rice 5 kg", quantity: 20, unitLabel: "bag" },
+        { sku: "FA003", name: "Wheat Flour 1 kg (12 per carton)", quantity: 3, unitLabel: "carton" },
+      ]);
+      expect(body[1].items).toEqual([]);
+      expect(body[2].items).toEqual([]);
+      const include = vi.mocked(prisma.order.findMany).mock.calls[0]![0]!.include as Record<string, unknown>;
+      expect(include.lines).toBeTruthy();
     });
 
     it("refuses roles that have no orders of their own", async () => {
@@ -475,6 +502,352 @@ describe("orders routes", () => {
       expect(vi.mocked(prisma.$transaction).mock.invocationCallOrder[0]!).toBeLessThan(
         vi.mocked(prisma.auditEvent.createMany).mock.invocationCallOrder[0]!,
       );
+    });
+
+    describe("from products (items)", () => {
+      const product = (over: Record<string, unknown>) => ({
+        id: "P?",
+        sku: "?",
+        name: "?",
+        brand: "Fresh",
+        tempRequirement: "ambient",
+        unitLabel: "bag",
+        kgPerUnit: 5.1,
+        m3PerUnit: 0.007,
+        active: true,
+        ...over,
+      });
+      const catalogue = {
+        milk: product({ id: "P-MILK", sku: "FC001", name: "Fresh Milk 1 L (12 per crate)", tempRequirement: "chilled", unitLabel: "crate", kgPerUnit: 12.6, m3PerUnit: 0.02 }),
+        rice: product({ id: "P-RICE", sku: "FA001", name: "White Rice 5 kg" }),
+        flour: product({ id: "P-FLOUR", sku: "FA003", name: "Wheat Flour 1 kg (12 per carton)", unitLabel: "carton", kgPerUnit: 12.4, m3PerUnit: 0.018 }),
+        bags: product({ id: "P-BAGS", sku: "WG001", name: "Reusable Shopping Bags", brand: null, unitLabel: "carton", kgPerUnit: 3.2, m3PerUnit: 0.04 }),
+        shirt: product({ id: "P-SHIRT", sku: "ST001", name: "Cotton T-Shirt", brand: "Style", unitLabel: "pack", kgPerUnit: 2.4, m3PerUnit: 0.02 }),
+        retired: product({ id: "P-OLD", sku: "FA099", name: "Retired Rice", active: false }),
+      };
+
+      /** The database with these products in the catalogue, and orders keeping their nested lines. */
+      function database(products: Array<Record<string, unknown>> = Object.values(catalogue)) {
+        vi.mocked(prisma.product.findMany).mockImplementation((async (args: { where: { id: { in: string[] } } }) =>
+          products.filter((p) => args.where.id.in.includes(p.id as string))) as never);
+        const stored: ReturnType<typeof orderRow>[] = [];
+        vi.mocked(prisma.order.findMany).mockImplementation((async (args: { where: Record<string, unknown> }) =>
+          args.where.id ? [...stored].reverse() : []) as never);
+        vi.mocked(prisma.order.findFirst).mockResolvedValue({ ref: "ORD-004100" } as never);
+        vi.mocked(prisma.order.create).mockImplementation((async ({ data }: { data: Record<string, unknown> }) => {
+          const { lines, ...rest } = data as { lines?: { create: Array<Record<string, unknown>> } };
+          const row = orderRow({
+            ...rest,
+            id: `ID-${stored.length + 1}`,
+            lines: (lines?.create ?? []).map((l) => ({ sku: l.sku, productName: l.productName, unitLabel: l.unitLabel, quantity: l.quantity })),
+          });
+          stored.push(row);
+          return row;
+        }) as never);
+        return stored;
+      }
+
+      const itemsBody = (items: Array<{ productId: string; quantity: number }>) => ({
+        requestId: REQUEST_ID,
+        forDate: "2026-10-05",
+        items,
+      });
+
+      it("makes one order per temperature, chilled first, each with its own lines", async () => {
+        database();
+        const server = await serverFor();
+
+        const response = await post(
+          server,
+          itemsBody([
+            { productId: "P-RICE", quantity: 20 },
+            { productId: "P-MILK", quantity: 10 },
+            { productId: "P-FLOUR", quantity: 3 },
+          ]),
+        );
+
+        expect(response.statusCode).toBe(201);
+        const created = vi.mocked(prisma.order.create).mock.calls.map((c) => c[0]!.data);
+        expect(created.map((d) => d.tempRequirement)).toEqual(["chilled", "ambient"]);
+        expect(created.map((d) => d.ref)).toEqual(["ORD-004101", "ORD-004102"]);
+        expect(created.map((d) => d.clientRequestId)).toEqual([`${REQUEST_ID}:0`, `${REQUEST_ID}:1`]);
+        // The lines are written with the order, in the one create inside the transaction.
+        expect(created[0]!.lines).toEqual({
+          create: [
+            { productId: "P-MILK", sku: "FC001", productName: "Fresh Milk 1 L (12 per crate)", unitLabel: "crate", kgPerUnit: 12.6, m3PerUnit: 0.02, quantity: 10 },
+          ],
+        });
+        expect(vi.mocked(prisma.$transaction)).toHaveBeenCalledTimes(1);
+        expect(response.json().map((o: { items: unknown[] }) => o.items.length)).toEqual([1, 2]);
+        expect(response.json()[1].items).toEqual([
+          { sku: "FA001", name: "White Rice 5 kg", quantity: 20, unitLabel: "bag" },
+          { sku: "FA003", name: "Wheat Flour 1 kg (12 per carton)", quantity: 3, unitLabel: "carton" },
+        ]);
+      });
+
+      it("weighs and measures an order by its products, not by the outlet's estimate", async () => {
+        database();
+        const server = await serverFor();
+
+        await post(
+          server,
+          itemsBody([
+            { productId: "P-MILK", quantity: 10 },
+            { productId: "P-RICE", quantity: 20 },
+            { productId: "P-FLOUR", quantity: 3 },
+          ]),
+        );
+
+        const [chilled, ambient] = vi.mocked(prisma.order.create).mock.calls.map((c) => c[0]!.data);
+        expect(chilled).toMatchObject({ units: 10, weightKg: 126, volumeM3: 0.2 });
+        // 20 x 5.1 + 3 x 12.4 kg and 20 x 0.007 + 3 x 0.018 m3, against the 8 kg / 0.1 m3 estimate.
+        expect(ambient).toMatchObject({ units: 23, weightKg: 139.2, volumeM3: 0.194 });
+        expect(unitSizeFor).not.toHaveBeenCalled();
+      });
+
+      it("takes the outlet's brand and the every-brand products, and uses the session for everything else", async () => {
+        database();
+        const server = await serverFor();
+
+        const response = await post(server, itemsBody([{ productId: "P-BAGS", quantity: 5 }]));
+
+        expect(response.statusCode).toBe(201);
+        expect(vi.mocked(prisma.order.create).mock.calls[0]![0]!.data).toMatchObject({
+          outletId: "OUT074",
+          brand: "Fresh",
+          depotCode: "Peliyagoda",
+          tempRequirement: "ambient",
+          units: 5,
+        });
+      });
+
+      it("refuses exactly-one-of items and lines, whichever way it is broken", async () => {
+        database();
+        const server = await serverFor();
+
+        const both = await post(server, { ...itemsBody([{ productId: "P-RICE", quantity: 1 }]), lines: [{ tempRequirement: "ambient", units: 1 }] });
+        const neither = await post(server, { requestId: REQUEST_ID, forDate: "2026-10-05" });
+
+        for (const r of [both, neither]) {
+          expect(r.statusCode).toBe(422);
+          expect(r.json().error.code).toBe("VALIDATION_FAILED");
+        }
+        expect(prisma.order.create).not.toHaveBeenCalled();
+      });
+
+      it("is checked before the replay lookup, so a malformed body is never answered from an earlier request", async () => {
+        database();
+        const server = await serverFor();
+
+        await post(server, { requestId: REQUEST_ID, forDate: "2026-10-05" });
+
+        expect(prisma.order.findMany).not.toHaveBeenCalled();
+      });
+
+      it("refuses a malformed basket at the schema", async () => {
+        database();
+        const server = await serverFor();
+        const bad: unknown[] = [
+          [],
+          [{ productId: "P-RICE", quantity: 0 }],
+          [{ productId: "P-RICE", quantity: 1.5 }],
+          [{ productId: "P-RICE", quantity: 10001 }],
+          [{ productId: "", quantity: 1 }],
+          [{ productId: "P-RICE", quantity: 1, price: 4 }],
+          [{ quantity: 1 }],
+        ];
+
+        for (const items of bad) {
+          const response = await post(server, { requestId: REQUEST_ID, forDate: "2026-10-05", items });
+          expect(response.statusCode, JSON.stringify(items)).toBe(422);
+        }
+        expect(prisma.order.create).not.toHaveBeenCalled();
+      });
+
+      it("refuses the same product twice rather than guess how to add it up", async () => {
+        database();
+        const server = await serverFor();
+
+        const response = await post(server, itemsBody([{ productId: "P-RICE", quantity: 1 }, { productId: "P-RICE", quantity: 2 }]));
+
+        expect(response.statusCode).toBe(422);
+        expect(response.json().error.code).toBe("VALIDATION_FAILED");
+        expect(prisma.order.create).not.toHaveBeenCalled();
+      });
+
+      it("refuses a product that does not exist, naming it", async () => {
+        database();
+        const server = await serverFor();
+
+        const response = await post(server, itemsBody([{ productId: "P-RICE", quantity: 1 }, { productId: "P-NOPE", quantity: 1 }]));
+
+        expect(response.statusCode).toBe(422);
+        expect(response.json().error).toMatchObject({ code: "PRODUCT_NOT_FOUND", details: { productId: "P-NOPE" } });
+        // Nothing of the basket is kept, including the product that was fine.
+        expect(prisma.order.create).not.toHaveBeenCalled();
+      });
+
+      it("refuses a deactivated product", async () => {
+        database();
+        const server = await serverFor();
+
+        const response = await post(server, itemsBody([{ productId: "P-OLD", quantity: 1 }]));
+
+        expect(response.statusCode).toBe(422);
+        expect(response.json().error).toMatchObject({ code: "PRODUCT_INACTIVE", details: { sku: "FA099" } });
+        expect(prisma.order.create).not.toHaveBeenCalled();
+      });
+
+      it("refuses a product that is for another brand", async () => {
+        database();
+        const server = await serverFor();
+
+        const response = await post(server, itemsBody([{ productId: "P-SHIRT", quantity: 1 }]));
+
+        expect(response.statusCode).toBe(422);
+        expect(response.json().error).toMatchObject({ code: "PRODUCT_NOT_AVAILABLE_FOR_BRAND", details: { sku: "ST001" } });
+        expect(prisma.order.create).not.toHaveBeenCalled();
+      });
+
+      describe("Rule 5: an order travels whole, judged by what the order really is", () => {
+        it("refuses a basket whose weight no vehicle could carry, with the blended limit", async () => {
+          database();
+          const server = await serverFor();
+
+          // 400 x 12.4 + 10 x 5.1 = 5011 kg against a 5000 kg truck: 410 units
+          // of this blend, where the limit works out at 409.
+          const response = await post(
+            server,
+            itemsBody([{ productId: "P-FLOUR", quantity: 400 }, { productId: "P-RICE", quantity: 10 }]),
+          );
+
+          expect(response.statusCode).toBe(422);
+          expect(response.json().error).toMatchObject({
+            code: "ORDER_TOO_LARGE",
+            details: { tempRequirement: "ambient", units: 410, maxUnitsPerOrder: 409 },
+          });
+          expect(prisma.order.create).not.toHaveBeenCalled();
+        });
+
+        it("accepts a blend just under the line, though the same units of the heavier product alone would not fit", async () => {
+          database();
+          const server = await serverFor();
+
+          // 400 x 12.4 + 5 x 5.1 = 4985.5 kg: 405 units, limit 406 for this blend.
+          const response = await post(
+            server,
+            itemsBody([{ productId: "P-FLOUR", quantity: 400 }, { productId: "P-RICE", quantity: 5 }]),
+          );
+          expect(response.statusCode).toBe(201);
+
+          // 410 of the heaviest alone: 5084 kg, over.
+          const heavy = await post(server, { ...itemsBody([{ productId: "P-FLOUR", quantity: 410 }]), requestId: OTHER_REQUEST_ID });
+          expect(heavy.statusCode).toBe(422);
+        });
+
+        it("judges each temperature's order on its own", async () => {
+          database();
+          const server = await serverFor();
+
+          // Plenty of milk crates in a reefer, and a small ambient order: both fit.
+          const response = await post(
+            server,
+            itemsBody([{ productId: "P-MILK", quantity: 300 }, { productId: "P-RICE", quantity: 5 }]),
+          );
+
+          expect(response.statusCode).toBe(201);
+        });
+
+        it("says no vehicle can reach the outlet when none can carry the temperature", async () => {
+          vi.mocked(prisma.outlet.findUnique).mockResolvedValue({ ...outlet, parkingConstraint: "van_only" } as never);
+          database();
+          const server = await serverFor();
+
+          const response = await post(server, itemsBody([{ productId: "P-MILK", quantity: 1 }]));
+
+          expect(response.statusCode).toBe(422);
+          expect(response.json().error.details.maxUnitsPerOrder).toBe(0);
+        });
+      });
+
+      it("records what was in each order in the decision log", async () => {
+        database();
+        const server = await serverFor();
+
+        await post(server, itemsBody([{ productId: "P-MILK", quantity: 10 }, { productId: "P-RICE", quantity: 2 }]));
+
+        const { data } = vi.mocked(prisma.auditEvent.createMany).mock.calls[0]![0] as { data: Array<Record<string, unknown>> };
+        expect(data[0]!.after).toEqual({ ref: "ORD-004101", units: 10, forDate: "2026-10-05", items: [{ sku: "FC001", quantity: 10 }] });
+        expect(data[1]!.after).toEqual({ ref: "ORD-004102", units: 2, forDate: "2026-10-05", items: [{ sku: "FA001", quantity: 2 }] });
+      });
+
+      it("leaves a units-only order with no lines and an empty items list", async () => {
+        database();
+        const server = await serverFor();
+
+        const response = await post(server, validBody);
+
+        expect(response.statusCode).toBe(201);
+        expect(vi.mocked(prisma.order.create).mock.calls[0]![0]!.data).not.toHaveProperty("lines");
+        expect(response.json()[0].items).toEqual([]);
+        expect(prisma.product.findMany).not.toHaveBeenCalled();
+      });
+
+      it("replays by requestId with the same orders and their items, creating nothing", async () => {
+        const prior = [
+          orderRow({
+            id: "ID-1",
+            ref: "ORD-004101",
+            tempRequirement: "chilled",
+            units: 10,
+            clientRequestId: `${REQUEST_ID}:0`,
+            lines: [{ sku: "FC001", productName: "Fresh Milk 1 L (12 per crate)", unitLabel: "crate", quantity: 10 }],
+          }),
+          orderRow({
+            id: "ID-2",
+            ref: "ORD-004102",
+            tempRequirement: "ambient",
+            units: 2,
+            clientRequestId: `${REQUEST_ID}:1`,
+            lines: [{ sku: "FA001", productName: "White Rice 5 kg", unitLabel: "bag", quantity: 2 }],
+          }),
+        ];
+        // Out of order on purpose: the replay puts them back in placement order.
+        vi.mocked(prisma.order.findMany).mockResolvedValue([prior[1], prior[0]] as never);
+        const server = await serverFor();
+
+        const response = await post(server, itemsBody([{ productId: "P-MILK", quantity: 10 }, { productId: "P-RICE", quantity: 2 }]));
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json().map((o: { ref: string }) => o.ref)).toEqual(["ORD-004101", "ORD-004102"]);
+        expect(response.json()[0].items).toEqual([{ sku: "FC001", name: "Fresh Milk 1 L (12 per crate)", quantity: 10, unitLabel: "crate" }]);
+        expect(response.json()[1].items).toEqual([{ sku: "FA001", name: "White Rice 5 kg", quantity: 2, unitLabel: "bag" }]);
+        expect(prisma.order.create).not.toHaveBeenCalled();
+        expect(prisma.product.findMany).not.toHaveBeenCalled();
+        expect(prisma.auditEvent.createMany).not.toHaveBeenCalled();
+        // The read asks for the lines, or a replay would lose the items.
+        const include = vi.mocked(prisma.order.findMany).mock.calls[0]![0]!.include as Record<string, unknown>;
+        expect(include.lines).toBeTruthy();
+      });
+
+      it("returns the twin's orders with their items when it wins the unique index", async () => {
+        const winner = orderRow({
+          id: "ID-WIN",
+          clientRequestId: `${REQUEST_ID}:0`,
+          lines: [{ sku: "FA001", productName: "White Rice 5 kg", unitLabel: "bag", quantity: 2 }],
+        });
+        vi.mocked(prisma.product.findMany).mockResolvedValue(Object.values(catalogue) as never);
+        vi.mocked(prisma.order.findMany).mockResolvedValueOnce([] as never).mockResolvedValue([winner] as never);
+        vi.mocked(prisma.order.findFirst).mockResolvedValue({ ref: "ORD-004100" } as never);
+        vi.mocked(prisma.order.create).mockRejectedValue(Object.assign(new Error("Unique constraint failed"), { code: "P2002" }));
+        const server = await serverFor();
+
+        const response = await post(server, itemsBody([{ productId: "P-RICE", quantity: 2 }]));
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json()[0].items).toEqual([{ sku: "FA001", name: "White Rice 5 kg", quantity: 2, unitLabel: "bag" }]);
+        expect(prisma.auditEvent.createMany).not.toHaveBeenCalled();
+      });
     });
 
     describe("idempotency on requestId", () => {

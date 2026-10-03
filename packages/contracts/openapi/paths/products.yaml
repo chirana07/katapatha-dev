@@ -1,0 +1,180 @@
+# Owner: BE2
+#
+# The catalogue. Reads are open to every signed-in role; writes are the
+# dispatcher's. Products are deactivated, never deleted.
+
+collection:
+  get:
+    operationId: listProducts
+    summary: The product catalogue, as the caller may see it
+    description: >
+      Active products in display order (`sortOrder`, then `sku`).
+
+
+      A store manager sees only products for their outlet's brand or for every
+      brand. A loader, driver or dispatcher sees the whole active catalogue.
+      `includeInactive=true` also returns deactivated products and is for
+      dispatchers only; anyone else asking for it gets 403.
+
+
+      `temp`, `brand` and `q` narrow the list. `q` matches the name or SKU,
+      case-insensitively. `brand` keeps that brand's products plus the
+      every-brand ones. For a store manager these only ever narrow what they
+      may already see: asking for another brand returns just the every-brand
+      products, never that brand's.
+
+
+      There is no stock or availability: a product in this list can be ordered,
+      which says nothing about whether it is on a shelf.
+    tags: [products]
+    parameters:
+      - name: temp
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/TempRequirement" }
+      - name: brand
+        in: query
+        required: false
+        schema: { $ref: "../components/schemas/common.yaml#/Brand" }
+      - name: q
+        in: query
+        required: false
+        description: Case-insensitive match on name or SKU.
+        schema: { type: string, minLength: 1, maxLength: 80 }
+      - name: includeInactive
+        in: query
+        required: false
+        description: Dispatchers only. Declared as a string; the only values are `true` and `false`.
+        schema: { type: string, enum: ["true", "false"] }
+    responses:
+      "200":
+        description: Products.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/products.yaml#/Product" }
+            example:
+              - id: "clx0prd1a2b3c4d5e6f7g8h9"
+                sku: "FA001"
+                name: "White Rice 5 kg"
+                brand: Fresh
+                tempRequirement: ambient
+                unitLabel: bag
+                kgPerUnit: 5.1
+                m3PerUnit: 0.007
+                active: true
+                sortOrder: 10
+                createdAt: "2026-10-04T02:10:00Z"
+                updatedAt: "2026-10-04T02:10:00Z"
+              - id: "clx0prd2a2b3c4d5e6f7g8h9"
+                sku: "FC001"
+                name: "Fresh Milk 1 L (12 per crate)"
+                brand: Fresh
+                tempRequirement: chilled
+                unitLabel: crate
+                kgPerUnit: 12.6
+                m3PerUnit: 0.02
+                active: true
+                sortOrder: 90
+                createdAt: "2026-10-04T02:10:00Z"
+                updatedAt: "2026-10-04T02:10:00Z"
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+  post:
+    operationId: createProduct
+    summary: Add a product to the catalogue
+    description: >
+      Dispatcher only. The catalogue is Waypoint-wide, not per depot. The SKU is
+      upper-case and unique; a SKU already in use (including by a deactivated
+      product) is 409 `SKU_TAKEN`. Sizes must be positive. Recorded in the
+      decision log as `product.create`.
+    tags: [products]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/products.yaml#/CreateProductRequest" }
+          example:
+            sku: "FA009"
+            name: "Samba Rice 5 kg"
+            brand: Fresh
+            tempRequirement: ambient
+            unitLabel: bag
+            kgPerUnit: 5.1
+            m3PerUnit: 0.007
+    responses:
+      "201":
+        description: Product created.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/products.yaml#/Product" }
+            example:
+              id: "clx0prd3a2b3c4d5e6f7g8h9"
+              sku: "FA009"
+              name: "Samba Rice 5 kg"
+              brand: Fresh
+              tempRequirement: ambient
+              unitLabel: bag
+              kgPerUnit: 5.1
+              m3PerUnit: 0.007
+              active: true
+              sortOrder: 210
+              createdAt: "2026-10-04T03:00:00Z"
+              updatedAt: "2026-10-04T03:00:00Z"
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "409":
+        description: The SKU is already in use.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/common.yaml#/Error" }
+            example: { error: { code: SKU_TAKEN, message: "SKU FA009 is already in use." } }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+item:
+  parameters:
+    - name: productId
+      in: path
+      required: true
+      schema: { type: string }
+  patch:
+    operationId: updateProduct
+    summary: Edit or deactivate a product
+    description: >
+      Dispatcher only. Edits name, brand, unit label, sizes, temperature,
+      `active` and `sortOrder`; the SKU is immutable. Orders already placed keep
+      the name and size they were placed with. Deactivating removes the product
+      from the store's list without touching history. Recorded in the decision
+      log as `product.update` (with `before` and `after`).
+    tags: [products]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/products.yaml#/UpdateProductRequest" }
+          example: { active: false }
+    responses:
+      "200":
+        description: The product as it now stands.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/products.yaml#/Product" }
+            example:
+              id: "clx0prd3a2b3c4d5e6f7g8h9"
+              sku: "FA009"
+              name: "Samba Rice 5 kg"
+              brand: Fresh
+              tempRequirement: ambient
+              unitLabel: bag
+              kgPerUnit: 5.1
+              m3PerUnit: 0.007
+              active: false
+              sortOrder: 210
+              createdAt: "2026-10-04T03:00:00Z"
+              updatedAt: "2026-10-04T03:20:00Z"
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }

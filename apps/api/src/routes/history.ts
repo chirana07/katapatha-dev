@@ -25,7 +25,7 @@ import {
  * ids.
  */
 
-const ENTITY_TYPES = ["Order", "Plan", "PlanningDay", "Trip", "Shortfall", "Problem", "Vehicle", "Outlet", "CapacityAction"] as const;
+const ENTITY_TYPES = ["Order", "Plan", "PlanningDay", "Trip", "Shortfall", "Problem", "Vehicle", "Outlet", "CapacityAction", "Product"] as const;
 type EntityType = (typeof ENTITY_TYPES)[number];
 
 const ERROR_RESPONSE = {
@@ -138,6 +138,15 @@ async function authorise(user: SessionUser, entityType: EntityType, entityId: st
     case "Outlet": {
       const outlet = await prisma.outlet.findFirst({ where: { id: entityId, depotCode }, select: { id: true } });
       if (!outlet) deny();
+      return;
+    }
+    case "Product": {
+      // The catalogue is Waypoint-wide, so there is no depot to scope by: any
+      // dispatcher who maintains it may read its log. A store manager never
+      // reaches here — the branch above refuses anything but its own outlet
+      // and orders.
+      const product = await prisma.product.findUnique({ where: { id: entityId }, select: { id: true } });
+      if (!product) deny();
       return;
     }
     case "CapacityAction": {

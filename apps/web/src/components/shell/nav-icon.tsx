@@ -15,6 +15,7 @@ export type IconKind =
   | "orders"
   | "planning"
   | "vehicles"
+  | "products"
   | "map"
   | "exceptions"
   | "reports"
@@ -52,6 +53,12 @@ const PATHS: Record<IconKind, React.ReactNode> = {
       <path d="M16 10h3l2 3v4h-5" />
       <circle cx="7" cy="19" r="1.5" />
       <circle cx="18" cy="19" r="1.5" />
+    </>
+  ),
+  products: (
+    <>
+      <path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z" />
+      <path d="m4 7.5 8 4.5 8-4.5M12 12v9" />
     </>
   ),
   map: (
