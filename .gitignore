@@ -5,6 +5,7 @@ out/
 build/
 .turbo/
 coverage/
+screens/
 *.tsbuildinfo
 .env
 .env.local

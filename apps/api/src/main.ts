@@ -6,7 +6,13 @@ const fastify = await buildServer();
 
 // localhost, not 0.0.0.0, in development: the dev proxy and Playwright both
 // reach the API over IPv6 loopback, and binding only IPv4 breaks them.
-const host = process.env.NODE_ENV === "production" ? "0.0.0.0" : "localhost";
+//
+// HOST overrides it, which is what testing the driver app on a real handset
+// needs: the phone reaches this machine over the LAN, so a localhost-only
+// bind is unreachable no matter what base URL the app is given. Opt-in, so
+// the default for `pnpm dev` is unchanged.
+const host =
+  process.env.HOST ?? (process.env.NODE_ENV === "production" ? "0.0.0.0" : "localhost");
 
 try {
   await fastify.listen({ port, host });
