@@ -1,8 +1,27 @@
-# Proposal — D-05 "Defer order" drawer: contract additions
+# D-05 "Defer order" drawer: contract additions
 
-**Status:** draft for BE2 (planning routes) · consumer WEB1 (dispatcher shell)
+**Status:** implemented on `finish/d05-defer-drawer` (stacked on PR #17). Needs review from BE2 (planning routes) and WEB1 (dispatcher plan page).
 **Figma:** D-05 Defer order, file `kmgvjSEO1R4m7RCn1eaIQa`, node `128:1540`
 **Rule:** additive only (CONVENTIONS.md rule 8). No path changes, no field removals.
+
+### What shipped vs. the original proposal
+
+- A1–A5, B1 and C1 steps 1–3 are built as described below.
+- **A4 uses the reference calendar**, not "+1 day". `movesTo.date` is the next
+  `CalendarDay` with `isOperating`, so Sundays and holidays like 14 Apr are
+  skipped. Outside the calendar it skips Sundays.
+- **Permanent causes are handled honestly.** When the allocator marks a deferral
+  `permanent` (no vehicle in the fleet can carry it as it stands):
+  `movesTo.firstOnRun` is `false`, the drawer says "this was not a choice
+  between orders" in place of the lane ranking, publish leaves
+  `Deferral.rolledToDate` empty, and the store is told the order "could not be
+  delivered today" instead of being promised a slot. The demo seed's one
+  deferral, DEMO-012 (45 m³), is exactly this case.
+- The store message is built by one function, `deferralMessage()` in
+  `@katapatha/core/domain/deferral`. The API writes it into the notification
+  and the drawer previews the same string.
+- C1 step 4 (rolling the order into tomorrow's queue) is **not** done. It's
+  still its own ticket.
 
 ## Why
 
@@ -112,13 +131,12 @@ unit test covers every `RejectionCode`.
 
 ### A4 — next run date
 
-`movesTo.date` = the plan's `PlanningDay.date + 1 day`. Neither the dataset nor
-the docs define closed days, so the next calendar day is the honest default.
-If BE2 knows of closed days, this becomes "the next `PlanningDay` that isn't
-CLOSED". The window is the order's own window. `firstOnRun` is always `true`,
-because `prioritise.ts` rule 1 puts a deferred-yesterday order ahead of
-everything else. The copy should read "planned first on the next run", not
-"guaranteed".
+`movesTo.date` is the first `CalendarDay.isOperating` after the plan's date
+(`nextOperatingDate()` in core; Sundays are skipped outside the calendar). The
+window is the order's own window. `firstOnRun` is `true` because
+`prioritise.ts` rule 1 puts a deferred-yesterday order ahead of everything else,
+and `false` when the cause is permanent. The copy reads "planned first on the
+next run", not "guaranteed".
 
 ## B1 — new endpoint: competing orders
 
@@ -182,9 +200,9 @@ There is no contract shape change. Inside the existing publish transaction:
    `deferredYesterday: true`. This touches the queue for the next day and should
    be its own ticket.
 
-Until 1–3 land, the web should label the inline preview "what the store will
-see once notifications ship". Alternatively, WEB1 can drop "notify" from the
-button label.
+Steps 1–3 are done. The drawer's preview notes that the message is "sent to the
+store when the plan is published", which is when the `Notification` row is
+written.
 
 ## Related: `/planning-days?depot=` 422
 
