@@ -42,6 +42,10 @@
       "description": "Store manager ordering and receipt."
     },
     {
+      "name": "store",
+      "description": "The outlet's view of its own delivery day."
+    },
+    {
       "name": "planning",
       "description": "Dispatcher queue, allocation and publication."
     },
@@ -608,6 +612,157 @@
           },
           "422": {
             "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/store/today": {
+      "get": {
+        "operationId": "getStoreToday",
+        "summary": "Today at the caller's outlet",
+        "description": "One request for the whole Today screen: the receiving window, the incoming delivery with its five fixed steps, today's orders and the counts above them.\nAssembled server-side on purpose. The tracker state, \"how many stops before mine\" and the countdown all derive from the same trip, and a client that fetched them separately could render a delivery that is simultaneously two stops away and already delivered.\nScoped to the caller's own outlet; there is no outlet parameter, because a store manager has exactly one.\n",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "description": "Defaults to the current operating day.",
+            "schema": {
+              "$ref": "#/components/schemas/DateOnly"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The outlet's day.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreToday"
+                },
+                "example": {
+                  "outletId": "OUT074",
+                  "outletName": "Fresh Puttalam",
+                  "brand": "Fresh",
+                  "date": "2026-09-29",
+                  "receivingWindowOpen": "05:30",
+                  "receivingWindowClose": "08:00",
+                  "accessNote": "Use the rear dock. Security check at the gate.",
+                  "incoming": {
+                    "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
+                    "ref": "S1-082",
+                    "brand": "Fresh",
+                    "tempRequirement": "ambient",
+                    "units": 69,
+                    "etaAt": "07:21",
+                    "vehicleId": "VEH025",
+                    "districtName": "Puttalam",
+                    "depotCode": "Peliyagoda",
+                    "stopsBefore": 1,
+                    "legMinutes": 96,
+                    "minutesAway": 39,
+                    "departed": true,
+                    "steps": [
+                      {
+                        "key": "dispatched",
+                        "label": "Dispatched",
+                        "detail": "06:15",
+                        "state": "done"
+                      },
+                      {
+                        "key": "en_route",
+                        "label": "En route",
+                        "detail": "06:42",
+                        "state": "done"
+                      },
+                      {
+                        "key": "next_stop",
+                        "label": "Next stop",
+                        "detail": "OUT074",
+                        "state": "current"
+                      },
+                      {
+                        "key": "arriving",
+                        "label": "Arriving soon",
+                        "detail": "~07:21",
+                        "state": "todo"
+                      },
+                      {
+                        "key": "delivered",
+                        "label": "Delivered",
+                        "detail": null,
+                        "state": "todo"
+                      }
+                    ]
+                  },
+                  "orders": [
+                    {
+                      "id": "clx0ord1a2b3c4d5e6f7g8h9",
+                      "ref": "S1-082",
+                      "brand": "Fresh",
+                      "tempRequirement": "ambient",
+                      "units": 69,
+                      "volumeM3": 2.1,
+                      "weightKg": 320,
+                      "requestedDate": "2026-09-29",
+                      "state": "on_the_way",
+                      "etaAt": "07:21",
+                      "vehicleId": "VEH025",
+                      "stopsBefore": 1,
+                      "tripStopId": "clx0tst1a2b3c4d5e6f7g8h",
+                      "deliveredUnits": null,
+                      "receiptConfirmed": false,
+                      "deferral": null
+                    },
+                    {
+                      "id": "clx0ord2b3c4d5e6f7g8h9i0",
+                      "ref": "S1-083",
+                      "brand": "Fresh",
+                      "tempRequirement": "chilled",
+                      "units": 205,
+                      "volumeM3": 2.6,
+                      "weightKg": 410,
+                      "requestedDate": "2026-09-29",
+                      "state": "deferred",
+                      "etaAt": null,
+                      "vehicleId": null,
+                      "stopsBefore": null,
+                      "tripStopId": null,
+                      "deliveredUnits": null,
+                      "receiptConfirmed": false,
+                      "deferral": {
+                        "reasonCode": "REEFER_FULL",
+                        "rolledToDate": "2026-09-30",
+                        "acknowledged": false
+                      }
+                    }
+                  ],
+                  "counts": {
+                    "expected": 2,
+                    "confirmed": 0,
+                    "pending": 0,
+                    "issues": 0
+                  },
+                  "weather": {
+                    "place": "Puttalam",
+                    "temperatureC": 28,
+                    "label": "Light rain",
+                    "kind": "rain",
+                    "live": true,
+                    "observedAt": "2026-09-29T04:00:00Z"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       }
@@ -2383,6 +2538,481 @@
             "type": "boolean",
             "examples": [
               true
+            ]
+          }
+        }
+      },
+      "DeliveryStep": {
+        "type": "object",
+        "description": "One of the five fixed delivery steps. Fixed, because the product has no continuous vehicle position to animate — see DOMAIN.md.\n",
+        "required": [
+          "key",
+          "label",
+          "state"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "examples": [
+              "en_route"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "examples": [
+              "En route"
+            ]
+          },
+          "detail": {
+            "description": "The time or count under the label. Null when there is nothing honest to say.",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "done",
+              "current",
+              "todo"
+            ]
+          }
+        }
+      },
+      "IncomingDelivery": {
+        "type": "object",
+        "required": [
+          "orderId",
+          "ref",
+          "brand",
+          "tempRequirement",
+          "units",
+          "vehicleId",
+          "districtName",
+          "depotCode",
+          "stopsBefore",
+          "legMinutes",
+          "departed",
+          "steps"
+        ],
+        "properties": {
+          "orderId": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string",
+            "examples": [
+              "S1-082"
+            ]
+          },
+          "brand": {
+            "$ref": "#/components/schemas/Brand"
+          },
+          "tempRequirement": {
+            "$ref": "#/components/schemas/TempRequirement"
+          },
+          "units": {
+            "type": "integer",
+            "examples": [
+              69
+            ]
+          },
+          "etaAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClockTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vehicleId": {
+            "type": "string",
+            "examples": [
+              "VEH025"
+            ]
+          },
+          "districtName": {
+            "type": "string",
+            "examples": [
+              "Puttalam"
+            ]
+          },
+          "depotCode": {
+            "type": "string",
+            "examples": [
+              "Peliyagoda"
+            ]
+          },
+          "stopsBefore": {
+            "type": "integer",
+            "examples": [
+              1
+            ]
+          },
+          "legMinutes": {
+            "description": "Planned depot-to-district leg from the district travel table. Free-flow, no traffic model.",
+            "type": "integer",
+            "examples": [
+              96
+            ]
+          },
+          "minutesAway": {
+            "description": "Minutes until the planned arrival, and only when that is a sane number — positive and under four hours. Null otherwise, because a wrong countdown is worse than none.\n",
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "departed": {
+            "type": "boolean"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeliveryStep"
+            }
+          }
+        }
+      },
+      "StoreOrderState": {
+        "type": "string",
+        "description": "The narrower projection a store manager sees. Deliberately not OrderStatus: an outlet has no use for the difference between PLANNED and LOADED, and several OrderStatus values are never written at all.\n",
+        "enum": [
+          "queued",
+          "planned",
+          "on_the_way",
+          "delivered",
+          "deferred",
+          "cancelled"
+        ]
+      },
+      "StoreDeferral": {
+        "type": "object",
+        "description": "Why an order moved, and where it moved to. Shown to the outlet verbatim.",
+        "required": [
+          "reasonCode",
+          "acknowledged"
+        ],
+        "properties": {
+          "reasonCode": {
+            "type": "string",
+            "examples": [
+              "REEFER_FULL"
+            ]
+          },
+          "rolledToDate": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "acknowledged": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StoreOrder": {
+        "type": "object",
+        "required": [
+          "id",
+          "ref",
+          "brand",
+          "tempRequirement",
+          "units",
+          "requestedDate",
+          "state",
+          "receiptConfirmed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "clx0ord1a2b3c4d5e6f7g8h9"
+            ]
+          },
+          "ref": {
+            "type": "string",
+            "examples": [
+              "S1-082"
+            ]
+          },
+          "brand": {
+            "$ref": "#/components/schemas/Brand"
+          },
+          "tempRequirement": {
+            "$ref": "#/components/schemas/TempRequirement"
+          },
+          "units": {
+            "type": "integer",
+            "examples": [
+              69
+            ]
+          },
+          "volumeM3": {
+            "type": "number",
+            "examples": [
+              2.1
+            ]
+          },
+          "weightKg": {
+            "type": "number",
+            "examples": [
+              320
+            ]
+          },
+          "requestedDate": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "state": {
+            "$ref": "#/components/schemas/StoreOrderState"
+          },
+          "etaAt": {
+            "description": "Planned arrival, as a wall-clock time. Null until the order is on a published trip. This is a plan, not an observation — a client showing it must not imply the vehicle has been seen there.\n",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClockTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vehicleId": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stopsBefore": {
+            "description": "How many stops the vehicle serves before this one. The honest substitute for a position.",
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tripStopId": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deliveredUnits": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "receiptConfirmed": {
+            "type": "boolean"
+          },
+          "deferral": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StoreDeferral"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Weather": {
+        "type": "object",
+        "description": "Current conditions at the outlet's district, shown as context beside the operational figures. Nothing in the allocator reads it. `live` is false when the upstream fetch failed and the value fell back to the seeded calendar's monsoon flag — a client should say so rather than present it as observed.\n",
+        "required": [
+          "place",
+          "label",
+          "kind",
+          "live"
+        ],
+        "properties": {
+          "place": {
+            "type": "string",
+            "examples": [
+              "Puttalam"
+            ]
+          },
+          "temperatureC": {
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              28
+            ]
+          },
+          "label": {
+            "type": "string",
+            "examples": [
+              "Light rain"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "clear",
+              "cloudy",
+              "rain",
+              "storm",
+              "fog"
+            ]
+          },
+          "live": {
+            "type": "boolean"
+          },
+          "observedAt": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "StoreToday": {
+        "type": "object",
+        "description": "Everything the Today screen renders, in one request. Assembled server-side because the five-step tracker, the stop count and the countdown all derive from the same trip and must not be able to disagree with each other.\n",
+        "required": [
+          "outletId",
+          "date",
+          "receivingWindowOpen",
+          "receivingWindowClose",
+          "accessNote",
+          "orders",
+          "counts"
+        ],
+        "properties": {
+          "outletId": {
+            "type": "string",
+            "examples": [
+              "OUT074"
+            ]
+          },
+          "outletName": {
+            "type": "string",
+            "examples": [
+              "Fresh Puttalam"
+            ]
+          },
+          "brand": {
+            "$ref": "#/components/schemas/Brand"
+          },
+          "date": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "receivingWindowOpen": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "receivingWindowClose": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "accessNote": {
+            "type": "string",
+            "examples": [
+              "Use the rear dock. Security check at the gate."
+            ]
+          },
+          "incoming": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IncomingDelivery"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "orders": {
+            "description": "Today's orders for this outlet, newest first.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoreOrder"
+            }
+          },
+          "counts": {
+            "type": "object",
+            "required": [
+              "expected",
+              "confirmed",
+              "pending",
+              "issues"
+            ],
+            "properties": {
+              "expected": {
+                "type": "integer",
+                "examples": [
+                  2
+                ]
+              },
+              "confirmed": {
+                "type": "integer",
+                "examples": [
+                  0
+                ]
+              },
+              "pending": {
+                "description": "Delivered but not yet confirmed by the outlet.",
+                "type": "integer",
+                "examples": [
+                  1
+                ]
+              },
+              "issues": {
+                "type": "integer",
+                "examples": [
+                  0
+                ]
+              }
+            }
+          },
+          "weather": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Weather"
+              },
+              {
+                "type": "null"
+              }
             ]
           }
         }

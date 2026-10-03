@@ -198,6 +198,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/store/today": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Today at the caller's outlet
+         * @description One request for the whole Today screen: the receiving window, the incoming delivery with its five fixed steps, today's orders and the counts above them.
+         *     Assembled server-side on purpose. The tracker state, "how many stops before mine" and the countdown all derive from the same trip, and a client that fetched them separately could render a delivery that is simultaneously two stops away and already delivered.
+         *     Scoped to the caller's own outlet; there is no outlet parameter, because a store manager has exactly one.
+         */
+        get: operations["getStoreToday"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/planning-days": {
         parameters: {
             query?: never;
@@ -746,6 +768,124 @@ export interface components {
             unitsReceived: number;
             /** @example true */
             matches: boolean;
+        };
+        /** @description One of the five fixed delivery steps. Fixed, because the product has no continuous vehicle position to animate — see DOMAIN.md. */
+        DeliveryStep: {
+            /** @example en_route */
+            key: string;
+            /** @example En route */
+            label: string;
+            /** @description The time or count under the label. Null when there is nothing honest to say. */
+            detail?: string | null;
+            /** @enum {string} */
+            state: "done" | "current" | "todo";
+        };
+        IncomingDelivery: {
+            orderId: string;
+            /** @example S1-082 */
+            ref: string;
+            brand: components["schemas"]["Brand"];
+            tempRequirement: components["schemas"]["TempRequirement"];
+            /** @example 69 */
+            units: number;
+            etaAt?: components["schemas"]["ClockTime"] | null;
+            /** @example VEH025 */
+            vehicleId: string;
+            /** @example Puttalam */
+            districtName: string;
+            /** @example Peliyagoda */
+            depotCode: string;
+            /** @example 1 */
+            stopsBefore: number;
+            /**
+             * @description Planned depot-to-district leg from the district travel table. Free-flow, no traffic model.
+             * @example 96
+             */
+            legMinutes: number;
+            /** @description Minutes until the planned arrival, and only when that is a sane number — positive and under four hours. Null otherwise, because a wrong countdown is worse than none. */
+            minutesAway?: number | null;
+            departed: boolean;
+            steps: components["schemas"]["DeliveryStep"][];
+        };
+        /**
+         * @description The narrower projection a store manager sees. Deliberately not OrderStatus: an outlet has no use for the difference between PLANNED and LOADED, and several OrderStatus values are never written at all.
+         * @enum {string}
+         */
+        StoreOrderState: "queued" | "planned" | "on_the_way" | "delivered" | "deferred" | "cancelled";
+        /** @description Why an order moved, and where it moved to. Shown to the outlet verbatim. */
+        StoreDeferral: {
+            /** @example REEFER_FULL */
+            reasonCode: string;
+            rolledToDate?: components["schemas"]["DateOnly"] | null;
+            acknowledged: boolean;
+        };
+        StoreOrder: {
+            /** @example clx0ord1a2b3c4d5e6f7g8h9 */
+            id: string;
+            /** @example S1-082 */
+            ref: string;
+            brand: components["schemas"]["Brand"];
+            tempRequirement: components["schemas"]["TempRequirement"];
+            /** @example 69 */
+            units: number;
+            /** @example 2.1 */
+            volumeM3?: number;
+            /** @example 320 */
+            weightKg?: number;
+            requestedDate: components["schemas"]["DateOnly"];
+            state: components["schemas"]["StoreOrderState"];
+            /** @description Planned arrival, as a wall-clock time. Null until the order is on a published trip. This is a plan, not an observation — a client showing it must not imply the vehicle has been seen there. */
+            etaAt?: components["schemas"]["ClockTime"] | null;
+            vehicleId?: string | null;
+            /** @description How many stops the vehicle serves before this one. The honest substitute for a position. */
+            stopsBefore?: number | null;
+            tripStopId?: string | null;
+            deliveredUnits?: number | null;
+            receiptConfirmed: boolean;
+            deferral?: components["schemas"]["StoreDeferral"] | null;
+        };
+        /** @description Current conditions at the outlet's district, shown as context beside the operational figures. Nothing in the allocator reads it. `live` is false when the upstream fetch failed and the value fell back to the seeded calendar's monsoon flag — a client should say so rather than present it as observed. */
+        Weather: {
+            /** @example Puttalam */
+            place: string;
+            /** @example 28 */
+            temperatureC?: number | null;
+            /** @example Light rain */
+            label: string;
+            /** @enum {string} */
+            kind: "clear" | "cloudy" | "rain" | "storm" | "fog";
+            live: boolean;
+            observedAt?: string | null;
+        };
+        /** @description Everything the Today screen renders, in one request. Assembled server-side because the five-step tracker, the stop count and the countdown all derive from the same trip and must not be able to disagree with each other. */
+        StoreToday: {
+            /** @example OUT074 */
+            outletId: string;
+            /** @example Fresh Puttalam */
+            outletName?: string;
+            brand?: components["schemas"]["Brand"];
+            date: components["schemas"]["DateOnly"];
+            receivingWindowOpen: components["schemas"]["ClockTime"];
+            receivingWindowClose: components["schemas"]["ClockTime"];
+            /** @example Use the rear dock. Security check at the gate. */
+            accessNote: string;
+            incoming?: components["schemas"]["IncomingDelivery"] | null;
+            /** @description Today's orders for this outlet, newest first. */
+            orders: components["schemas"]["StoreOrder"][];
+            counts: {
+                /** @example 2 */
+                expected: number;
+                /** @example 0 */
+                confirmed: number;
+                /**
+                 * @description Delivered but not yet confirmed by the outlet.
+                 * @example 1
+                 */
+                pending: number;
+                /** @example 0 */
+                issues: number;
+            };
+            weather?: components["schemas"]["Weather"] | null;
         };
         PlanningDay: {
             /** @example clx0pd1a2b3c4d5e6f7g8h9i */
@@ -1626,6 +1766,145 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getStoreToday: {
+        parameters: {
+            query?: {
+                /** @description Defaults to the current operating day. */
+                date?: components["schemas"]["DateOnly"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The outlet's day. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "outletId": "OUT074",
+                     *       "outletName": "Fresh Puttalam",
+                     *       "brand": "Fresh",
+                     *       "date": "2026-09-29",
+                     *       "receivingWindowOpen": "05:30",
+                     *       "receivingWindowClose": "08:00",
+                     *       "accessNote": "Use the rear dock. Security check at the gate.",
+                     *       "incoming": {
+                     *         "orderId": "clx0ord1a2b3c4d5e6f7g8h9",
+                     *         "ref": "S1-082",
+                     *         "brand": "Fresh",
+                     *         "tempRequirement": "ambient",
+                     *         "units": 69,
+                     *         "etaAt": "07:21",
+                     *         "vehicleId": "VEH025",
+                     *         "districtName": "Puttalam",
+                     *         "depotCode": "Peliyagoda",
+                     *         "stopsBefore": 1,
+                     *         "legMinutes": 96,
+                     *         "minutesAway": 39,
+                     *         "departed": true,
+                     *         "steps": [
+                     *           {
+                     *             "key": "dispatched",
+                     *             "label": "Dispatched",
+                     *             "detail": "06:15",
+                     *             "state": "done"
+                     *           },
+                     *           {
+                     *             "key": "en_route",
+                     *             "label": "En route",
+                     *             "detail": "06:42",
+                     *             "state": "done"
+                     *           },
+                     *           {
+                     *             "key": "next_stop",
+                     *             "label": "Next stop",
+                     *             "detail": "OUT074",
+                     *             "state": "current"
+                     *           },
+                     *           {
+                     *             "key": "arriving",
+                     *             "label": "Arriving soon",
+                     *             "detail": "~07:21",
+                     *             "state": "todo"
+                     *           },
+                     *           {
+                     *             "key": "delivered",
+                     *             "label": "Delivered",
+                     *             "detail": null,
+                     *             "state": "todo"
+                     *           }
+                     *         ]
+                     *       },
+                     *       "orders": [
+                     *         {
+                     *           "id": "clx0ord1a2b3c4d5e6f7g8h9",
+                     *           "ref": "S1-082",
+                     *           "brand": "Fresh",
+                     *           "tempRequirement": "ambient",
+                     *           "units": 69,
+                     *           "volumeM3": 2.1,
+                     *           "weightKg": 320,
+                     *           "requestedDate": "2026-09-29",
+                     *           "state": "on_the_way",
+                     *           "etaAt": "07:21",
+                     *           "vehicleId": "VEH025",
+                     *           "stopsBefore": 1,
+                     *           "tripStopId": "clx0tst1a2b3c4d5e6f7g8h",
+                     *           "deliveredUnits": null,
+                     *           "receiptConfirmed": false,
+                     *           "deferral": null
+                     *         },
+                     *         {
+                     *           "id": "clx0ord2b3c4d5e6f7g8h9i0",
+                     *           "ref": "S1-083",
+                     *           "brand": "Fresh",
+                     *           "tempRequirement": "chilled",
+                     *           "units": 205,
+                     *           "volumeM3": 2.6,
+                     *           "weightKg": 410,
+                     *           "requestedDate": "2026-09-29",
+                     *           "state": "deferred",
+                     *           "etaAt": null,
+                     *           "vehicleId": null,
+                     *           "stopsBefore": null,
+                     *           "tripStopId": null,
+                     *           "deliveredUnits": null,
+                     *           "receiptConfirmed": false,
+                     *           "deferral": {
+                     *             "reasonCode": "REEFER_FULL",
+                     *             "rolledToDate": "2026-09-30",
+                     *             "acknowledged": false
+                     *           }
+                     *         }
+                     *       ],
+                     *       "counts": {
+                     *         "expected": 2,
+                     *         "confirmed": 0,
+                     *         "pending": 0,
+                     *         "issues": 0
+                     *       },
+                     *       "weather": {
+                     *         "place": "Puttalam",
+                     *         "temperatureC": 28,
+                     *         "label": "Light rain",
+                     *         "kind": "rain",
+                     *         "live": true,
+                     *         "observedAt": "2026-09-29T04:00:00Z"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["StoreToday"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     listPlanningDays: {

@@ -5,6 +5,7 @@ import autoload from "@fastify/autoload";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
+import { CONTRACT_AJV } from "./lib/ajv.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -27,15 +28,9 @@ export async function buildServer(): Promise<FastifyInstance> {
           ? undefined
           : { target: "pino-pretty", options: { translateTime: "HH:MM:ss", ignore: "pid,hostname" } },
     },
-    ajv: {
-      customOptions: {
-        // The contract says additionalProperties:false in request bodies and we
-        // want that enforced, not silently stripped.
-        removeAdditional: false,
-        coerceTypes: false,
-        allErrors: true,
-      },
-    },
+    // Shared with the route tests, which would otherwise run against default
+    // AJV options and silently fail to test the contract. See lib/ajv.ts.
+    ajv: CONTRACT_AJV,
   });
 
   await fastify.register(helmet, { contentSecurityPolicy: false });

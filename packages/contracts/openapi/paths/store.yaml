@@ -1,0 +1,110 @@
+# Owner: BE2
+#
+# The store console's own reads. Orders are still placed and confirmed through
+# /orders — this resource is the outlet's *view* of the day, which the existing
+# order endpoints cannot express without the client re-deriving the tracker,
+# the stop count and the countdown for itself.
+
+today:
+  get:
+    operationId: getStoreToday
+    summary: Today at the caller's outlet
+    description: >
+      One request for the whole Today screen: the receiving window, the
+      incoming delivery with its five fixed steps, today's orders and the
+      counts above them.
+
+      Assembled server-side on purpose. The tracker state, "how many stops
+      before mine" and the countdown all derive from the same trip, and a
+      client that fetched them separately could render a delivery that is
+      simultaneously two stops away and already delivered.
+
+      Scoped to the caller's own outlet; there is no outlet parameter, because
+      a store manager has exactly one.
+    tags: [store]
+    parameters:
+      - name: date
+        in: query
+        required: false
+        description: Defaults to the current operating day.
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+    responses:
+      "200":
+        description: The outlet's day.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/store.yaml#/StoreToday" }
+            example:
+              outletId: "OUT074"
+              outletName: "Fresh Puttalam"
+              brand: Fresh
+              date: "2026-09-29"
+              receivingWindowOpen: "05:30"
+              receivingWindowClose: "08:00"
+              accessNote: "Use the rear dock. Security check at the gate."
+              incoming:
+                orderId: "clx0ord1a2b3c4d5e6f7g8h9"
+                ref: "S1-082"
+                brand: Fresh
+                tempRequirement: ambient
+                units: 69
+                etaAt: "07:21"
+                vehicleId: "VEH025"
+                districtName: "Puttalam"
+                depotCode: "Peliyagoda"
+                stopsBefore: 1
+                legMinutes: 96
+                minutesAway: 39
+                departed: true
+                steps:
+                  - { key: "dispatched", label: "Dispatched", detail: "06:15", state: done }
+                  - { key: "en_route", label: "En route", detail: "06:42", state: done }
+                  - { key: "next_stop", label: "Next stop", detail: "OUT074", state: current }
+                  - { key: "arriving", label: "Arriving soon", detail: "~07:21", state: todo }
+                  - { key: "delivered", label: "Delivered", detail: null, state: todo }
+              orders:
+                - id: "clx0ord1a2b3c4d5e6f7g8h9"
+                  ref: "S1-082"
+                  brand: Fresh
+                  tempRequirement: ambient
+                  units: 69
+                  volumeM3: 2.1
+                  weightKg: 320
+                  requestedDate: "2026-09-29"
+                  state: on_the_way
+                  etaAt: "07:21"
+                  vehicleId: "VEH025"
+                  stopsBefore: 1
+                  tripStopId: "clx0tst1a2b3c4d5e6f7g8h"
+                  deliveredUnits: null
+                  receiptConfirmed: false
+                  deferral: null
+                - id: "clx0ord2b3c4d5e6f7g8h9i0"
+                  ref: "S1-083"
+                  brand: Fresh
+                  tempRequirement: chilled
+                  units: 205
+                  volumeM3: 2.6
+                  weightKg: 410
+                  requestedDate: "2026-09-29"
+                  state: deferred
+                  etaAt: null
+                  vehicleId: null
+                  stopsBefore: null
+                  tripStopId: null
+                  deliveredUnits: null
+                  receiptConfirmed: false
+                  deferral:
+                    reasonCode: "REEFER_FULL"
+                    rolledToDate: "2026-09-30"
+                    acknowledged: false
+              counts: { expected: 2, confirmed: 0, pending: 0, issues: 0 }
+              weather:
+                place: "Puttalam"
+                temperatureC: 28
+                label: "Light rain"
+                kind: rain
+                live: true
+                observedAt: "2026-09-29T04:00:00Z"
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
