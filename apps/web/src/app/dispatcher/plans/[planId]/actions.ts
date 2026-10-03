@@ -26,17 +26,25 @@ export async function confirmDeferrals(formData: FormData) {
   // Collect reasonCode:<assignmentId> entries from the form. The page emits
   // one hidden input per deferral so we know the full set we're confirming,
   // even if the dispatcher left some selects unchanged.
-  const decisions: Array<{ assignmentId: string; reasonCode: string }> = [];
+  // Errors reopen the drawer the dispatcher was in, so the choice isn't lost.
+  const defer = field(formData, "defer");
+  const back = (error: string) =>
+    defer && defer.length <= 128
+      ? `${home}?defer=${encodeURIComponent(defer)}&error=${error}`
+      : `${home}?error=${error}`;
+
+  const decisions: Array<{ assignmentId: string; reasonCode: string; note: string | null }> = [];
   for (const [name, value] of formData.entries()) {
     if (!name.startsWith("reasonCode:")) continue;
     const assignmentId = name.slice("reasonCode:".length);
     if (!assignmentId) continue;
     const reasonCode = typeof value === "string" ? value.trim() : "";
     if (!reasonCode) continue;
-    decisions.push({ assignmentId, reasonCode });
+    const note = field(formData, `note:${assignmentId}`).slice(0, 500);
+    decisions.push({ assignmentId, reasonCode, note: note || null });
   }
   if (decisions.length === 0) {
-    redirect(`${home}?error=deferrals_empty`);
+    redirect(back("deferrals_empty"));
   }
 
   let client;
@@ -63,7 +71,7 @@ export async function confirmDeferrals(formData: FormData) {
   if (result.error || !result.data) {
     if (result.response.status === 401) redirect(`/sign-in?next=${encodeURIComponent(home)}`);
     if (result.response.status === 403) redirect("/dispatcher?error=forbidden");
-    if (result.response.status === 422) redirect(`${home}?error=deferrals_rejected`);
+    if (result.response.status === 422) redirect(back("deferrals_rejected"));
     redirect(`${home}?error=unreachable`);
   }
 

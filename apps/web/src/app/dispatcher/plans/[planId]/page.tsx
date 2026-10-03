@@ -2,8 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { HOME_FOR_ROLE } from "@katapatha/core/domain/authPaths";
 import { api } from "@/lib/api";
-import { confirmDeferrals, publishPlan } from "./actions";
-import { DeferralRow } from "./deferral-row";
+import { deferralReasonLabel } from "@katapatha/core/domain/deferral";
+import { publishPlan } from "./actions";
+import { DeferDrawer } from "./defer-drawer";
 
 export const dynamic = "force-dynamic";
 
@@ -29,10 +30,6 @@ const DEFERRAL_FALLBACK = [
   "AFTER_CUTOFF",
 ] as const;
 
-function reasonLabel(code: string) {
-  return code.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
 function validUuid(value: string | undefined) {
   return Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
 }
@@ -49,7 +46,7 @@ export default async function PlanPage({
   searchParams,
 }: {
   params: Promise<{ planId: string }>;
-  searchParams: Promise<{ error?: string; notice?: string; retry?: string }>;
+  searchParams: Promise<{ error?: string; notice?: string; retry?: string; defer?: string }>;
 }) {
   const { planId } = await params;
   const query = await searchParams;
@@ -91,6 +88,20 @@ export default async function PlanPage({
   const pendingDeferralCount = deferrals.filter((d) => !d.reasonCode).length;
   const deferralReasons: string[] =
     (vocab.data?.deferralReasons as string[] | undefined) ?? [...DEFERRAL_FALLBACK];
+
+  // ?defer=<assignmentId> opens the D-05 drawer for that deferral.
+  const openDeferral = query.defer ? deferrals.find((d) => d.assignmentId === query.defer) : undefined;
+  let alternatives = null;
+  if (openDeferral && !openDeferral.cause?.permanent) {
+    try {
+      const alt = await client.GET("/plans/{planId}/deferrals/{assignmentId}/alternatives", {
+        params: { path: { planId, assignmentId: openDeferral.assignmentId } },
+      });
+      alternatives = alt.data ?? null;
+    } catch {
+      alternatives = null;
+    }
+  }
 
   const totalWeight = plan.data.trips.reduce((s, t) => s + (t.sumWeightKg ?? 0), 0);
   const totalVolume = plan.data.trips.reduce((s, t) => s + (t.sumVolumeM3 ?? 0), 0);
@@ -140,38 +151,43 @@ export default async function PlanPage({
               {pendingDeferralCount === 0 ? "all confirmed" : "pending"}
             </span>
           </div>
-          {plan.data.status === "DRAFT" ? (
-            <form action={confirmDeferrals} className="mt-4">
-              <input type="hidden" name="planId" value={plan.data.planId} />
-              <ul className="flex flex-col gap-4">
-                {deferrals.map((row) => (
-                  <DeferralRow key={row.assignmentId} deferral={row} allReasons={deferralReasons} />
-                ))}
-              </ul>
-              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5">
-                <p className="text-xs text-muted">
-                  Reasons come from the server vocabulary at <code className="rounded bg-raised px-1">/reference/vocabularies</code>. A deferral with no reason blocks publication.
-                </p>
-                <button type="submit" className="min-h-11 inline-flex items-center gap-2 rounded-[var(--radius-control)] bg-action px-4 font-semibold text-ink hover:brightness-95">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
-                    <circle cx="12" cy="12" r="9" /><path d="M8 12l3 3 5-6" />
-                  </svg>
-                  Defer and notify stores
-                </button>
-              </div>
-            </form>
-          ) : (
-            <ul className="mt-4 flex flex-col gap-2">
-              {deferrals.map((row) => (
-                <li key={row.assignmentId} className="flex items-center justify-between rounded-[var(--radius-control)] border border-line p-3 text-sm">
-                  <span className="font-semibold text-ink">{row.orderRef}</span>
-                  <span className="text-muted">
-                    {row.reasonCode ? reasonLabel(row.reasonCode) : "no reason recorded"}
-                  </span>
+          <ul className="mt-4 flex flex-col gap-2">
+            {deferrals.map((row) => {
+              const order = row.order;
+              const isDraft = plan.data.status === "DRAFT";
+              return (
+                <li key={row.assignmentId} className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-control)] border border-line p-3">
+                  <div className="min-w-0">
+                    <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink">
+                      {row.orderRef}
+                      {order ? <BrandChip brand={order.brand} /> : null}
+                      {row.cause?.permanent ? (
+                        <span className="rounded-md bg-red-50 px-2 py-0.5 text-xs font-semibold text-[color:var(--c-ruby)]">No vehicle fits</span>
+                      ) : null}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted">
+                      {order
+                        ? [order.outletId, order.outletName ?? order.districtName, `${order.units} units`, `${order.volumeM3} m³`].join(" · ")
+                        : row.orderId}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1 text-xs font-semibold ${row.reasonCode ? "border border-emerald-200 bg-emerald-50 text-emerald-700" : "border border-amber-200 bg-amber-50 text-amber-900"}`}>
+                      <span aria-hidden className="size-1.5 rounded-full bg-current" />
+                      {row.reasonCode ? deferralReasonLabel(row.reasonCode) : "Needs reason"}
+                    </span>
+                    <Link
+                      href={`${home}?defer=${encodeURIComponent(row.assignmentId)}`}
+                      scroll={false}
+                      className="inline-flex min-h-11 items-center rounded-[var(--radius-control)] border border-line px-3 text-sm font-semibold text-ink hover:bg-raised"
+                    >
+                      {isDraft ? (row.reasonCode ? "Review" : "Choose reason") : "View"}
+                    </Link>
+                  </div>
                 </li>
-              ))}
-            </ul>
-          )}
+              );
+            })}
+          </ul>
         </section>
       ) : null}
 
@@ -249,6 +265,17 @@ export default async function PlanPage({
           </div>
         </aside>
       </section>
+
+      {openDeferral ? (
+        <DeferDrawer
+          planId={plan.data.planId}
+          deferral={openDeferral}
+          alternatives={alternatives}
+          allReasons={deferralReasons}
+          closeHref={home}
+          readOnly={plan.data.status !== "DRAFT"}
+        />
+      ) : null}
     </main>
   );
 }
