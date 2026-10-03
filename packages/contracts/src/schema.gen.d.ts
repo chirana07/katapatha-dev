@@ -148,9 +148,29 @@ export interface paths {
         put?: never;
         /**
          * Place orders for the next operating day
-         * @description Units only. Outlet, brand, district and depot come from the session, never the body. Idempotent on `requestId`, so a retry over a flaky connection cannot double-order.
+         * @description Units only. Outlet, brand, district and depot come from the session, never the body. Idempotent on `requestId`, so a retry over a flaky connection cannot double-order. Each line becomes its own order. A line bigger than any vehicle allowed to carry it (Rule 5: an order travels whole) is rejected with 422 `ORDER_TOO_LARGE`; see GET /orders/limits and raise it as several lines.
          */
         post: operations["placeOrders"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How big one order can be for the signed-in store
+         * @description Per temperature: the outlet's unit-size estimate and the most units one order can hold on the roomiest vehicle allowed to carry it (reefers for chilled, vans for a van-only outlet). The whole depot fleet counts, workshop or not. Store manager only.
+         */
+        get: operations["getOrderLimits"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -791,6 +811,21 @@ export interface components {
                 /** @example 120 */
                 units: number;
             }[];
+        };
+        OrderLimit: {
+            /** @example 0.1125 */
+            m3PerUnit: number;
+            /** @example 8 */
+            kgPerUnit: number;
+            /**
+             * @description 0 when no vehicle at the depot can carry this temperature to the outlet.
+             * @example 302
+             */
+            maxUnitsPerOrder: number;
+        };
+        OrderLimits: {
+            chilled: components["schemas"]["OrderLimit"];
+            ambient: components["schemas"]["OrderLimit"];
         };
         ReceiptRequest: {
             /** @example 120 */
@@ -1789,6 +1824,41 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getOrderLimits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Order size limits. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "chilled": {
+                     *         "m3PerUnit": 0.09,
+                     *         "kgPerUnit": 8,
+                     *         "maxUnitsPerOrder": 333
+                     *       },
+                     *       "ambient": {
+                     *         "m3PerUnit": 0.1125,
+                     *         "kgPerUnit": 8,
+                     *         "maxUnitsPerOrder": 302
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OrderLimits"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
         };
     };
     getOrder: {

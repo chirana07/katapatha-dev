@@ -1,11 +1,23 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import type { components } from "@katapatha/contracts/types";
+import { splitUnits } from "@katapatha/core/domain/orderSize";
 import { placeOrder, type PlaceOrderState } from "./actions";
+
+type OrderLimits = components["schemas"]["OrderLimits"];
 
 const INITIAL_STATE: PlaceOrderState = {};
 
-export function OrderForm({ forDate, requestId }: { forDate: string; requestId: string }) {
+export function OrderForm({
+  forDate,
+  requestId,
+  limits,
+}: {
+  forDate: string;
+  requestId: string;
+  limits: OrderLimits | null;
+}) {
   const [state, formAction, pending] = useActionState(placeOrder, INITIAL_STATE);
   const [ambient, setAmbient] = useState(0);
   const [chilled, setChilled] = useState(0);
@@ -40,6 +52,13 @@ export function OrderForm({ forDate, requestId }: { forDate: string; requestId: 
             onChange={setChilled}
           />
         </div>
+
+        {limits ? (
+          <>
+            <SizeNotice label="Ambient" units={ambient} limit={limits.ambient} />
+            <SizeNotice label="Chilled" units={chilled} limit={limits.chilled} />
+          </>
+        ) : null}
 
         {state.error ? (
           <div role="alert" className="mt-4 rounded-lg bg-red-50 p-4 text-sm text-critical">
@@ -84,6 +103,47 @@ export function OrderForm({ forDate, requestId }: { forDate: string; requestId: 
         )}
       </aside>
     </form>
+  );
+}
+
+/**
+ * Rule 5 preview: an order travels whole on one vehicle. When the quantity is
+ * bigger than any vehicle that can reach this outlet carries, say so and show
+ * how it will be placed — the server action splits it the same way.
+ */
+function SizeNotice({
+  label,
+  units,
+  limit,
+}: {
+  label: string;
+  units: number;
+  limit: OrderLimits["ambient"];
+}) {
+  if (units <= 0 || units <= limit.maxUnitsPerOrder) return null;
+  const volume = (units * limit.m3PerUnit).toFixed(1);
+  if (limit.maxUnitsPerOrder <= 0) {
+    return (
+      <div role="status" className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-critical">
+        <p className="font-semibold">{label} goods can&apos;t be delivered to this outlet</p>
+        <p className="mt-1">No vehicle at your depot can carry them here. Contact your dispatcher.</p>
+      </div>
+    );
+  }
+  const parts = splitUnits(units, limit.maxUnitsPerOrder);
+  return (
+    <div role="status" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+      <p className="font-semibold">
+        {label}: about {volume} m³ is more than one vehicle can carry
+      </p>
+      <p className="mt-1">
+        An order travels whole on one vehicle, and the largest that can reach you takes {limit.maxUnitsPerOrder} units. It will be placed as{" "}
+        <span className="font-semibold">
+          {parts.length} orders of {parts.join(" + ")} units
+        </span>
+        .
+      </p>
+    </div>
   );
 }
 

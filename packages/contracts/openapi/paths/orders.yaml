@@ -40,7 +40,10 @@ collection:
     description: >
       Units only. Outlet, brand, district and depot come from the session, never
       the body. Idempotent on `requestId`, so a retry over a flaky connection
-      cannot double-order.
+      cannot double-order. Each line becomes its own order. A line bigger than
+      any vehicle allowed to carry it (Rule 5: an order travels whole) is
+      rejected with 422 `ORDER_TOO_LARGE`; see GET /orders/limits and raise it
+      as several lines.
     tags: [orders]
     requestBody:
       required: true
@@ -146,3 +149,24 @@ receipt:
       "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
       "404": { $ref: "../components/responses/common.yaml#/NotFound" }
       "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+limits:
+  get:
+    operationId: getOrderLimits
+    summary: How big one order can be for the signed-in store
+    description: >
+      Per temperature: the outlet's unit-size estimate and the most units one
+      order can hold on the roomiest vehicle allowed to carry it (reefers for
+      chilled, vans for a van-only outlet). The whole depot fleet counts,
+      workshop or not. Store manager only.
+    tags: [orders]
+    responses:
+      "200":
+        description: Order size limits.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/orders.yaml#/OrderLimits" }
+            example:
+              chilled: { m3PerUnit: 0.09, kgPerUnit: 8, maxUnitsPerOrder: 333 }
+              ambient: { m3PerUnit: 0.1125, kgPerUnit: 8, maxUnitsPerOrder: 302 }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
