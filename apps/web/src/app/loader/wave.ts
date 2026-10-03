@@ -25,8 +25,8 @@ export const TRIP_STATUS_LABEL: Record<TripStatus, string> = {
   CANCELLED: "Cancelled",
 };
 
-export function groupByWave(trips: Trip[]): { wave: Wave; trips: Trip[] }[] {
-  const buckets = new Map<Wave, Trip[]>();
+export function groupByWave<T extends Trip>(trips: T[]): { wave: Wave; trips: T[] }[] {
+  const buckets = new Map<Wave, T[]>();
   for (const wave of WAVE_ORDER) buckets.set(wave, []);
   for (const trip of trips) {
     const list = buckets.get(trip.wave) ?? [];

@@ -11,19 +11,6 @@ export const CONDITION_LABEL: Record<LoadCondition, string> = {
   MISSING: "Missing from pick",
 };
 
-export const CONDITION_HINT: Record<LoadCondition, string> = {
-  OK: "Expected and loaded units match.",
-  SHORT: "Fewer units loaded than ordered.",
-  DAMAGED: "Units arrived unfit to deliver.",
-  MISSING: "Units were not on the dock when checked.",
-};
-
-export const DISCREPANCY_CONDITIONS: LoadCondition[] = ["SHORT", "DAMAGED", "MISSING"];
-
-export function conditionNeedsReason(condition: LoadCondition): boolean {
-  return condition !== "OK";
-}
-
 // Fallback used when the vocabularies endpoint is unreachable. The server
 // vocabulary is authoritative when it loads, so this list is only a lifeline,
 // not a hardcoded replacement for product copy.

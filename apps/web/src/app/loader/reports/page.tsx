@@ -1,226 +1,187 @@
-import Link from "next/link";
-import { api } from "@/lib/api";
-import { readError } from "../api-errors";
-import { colomboToday, formatPlannedTime } from "../format";
+import { ButtonLink } from "@/components/ui/button";
+import { DataTable, RowCard, Td, Th, Tr } from "@/components/ui/data-table";
+import { DateControl } from "@/components/ui/date-control";
+import { PageBody, PageHeader } from "@/components/ui/page-header";
+import { Meter, StatCard, StatRow } from "@/components/ui/stat-card";
+import { EmptyState, ErrorPanel } from "@/components/ui/states";
+import { StatusPill } from "@/components/ui/status-pill";
+import { requireRole, scopeLabel } from "@/lib/auth";
+import { dateParam } from "@/lib/dates";
+import { longDate } from "@/lib/dates";
+import { readFailure } from "@/lib/failures";
+import { plural } from "@/lib/format";
+import { loadDock } from "../dock-data.server";
 import { HeaderClock } from "../header-clock";
-import { TRIP_STATUS_LABEL, type Trip, type TripStatus } from "../wave";
+import { CONDITION_LABEL } from "../reasons";
+import { buildReport } from "../reports-model";
+import { AlertIcon, BoxIcon, CheckIcon, TruckIcon } from "../stat-icons";
+import { TRIP_STATUS_LABEL } from "../wave";
 
 export const dynamic = "force-dynamic";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
+/**
+ * The day, as the dock can honestly report it. See reports-model.ts for what is
+ * left out and why: no on-time or load-duration figures (load checks carry no
+ * timestamps), no bay timeline (a trip has no bay), no export (the API has none).
+ */
 export default async function LoaderReportsPage({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
-  const dateParam = typeof params.date === "string" ? params.date : "";
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : colomboToday();
+  const user = await requireRole("LOADER", "/loader/reports");
+  const date = dateParam(params.date);
+  const day = await loadDock(date);
+  const subtitle = `${scopeLabel(user)} · what was loaded, checked and reported on ${longDate(date)}.`;
 
-  const client = await api();
-  const result = await client.GET("/trips", { params: { query: { date } } });
-
-  if (result.error || !result.data) {
-    const err = readError(result.response.status, "trips");
+  if (!day.ok) {
+    const failure = readFailure(day.status, "the day's loading figures");
     return (
-      <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
-        <section role="alert" className="rounded-[var(--radius-card)] border border-line bg-surface p-6">
-          <h1 className="text-2xl font-semibold text-critical">{err.title}</h1>
-          <p className="mt-2 text-sm text-muted">{err.detail}</p>
-          <Link href="/loader" className="mt-5 inline-flex min-h-11 items-center rounded-[var(--radius-control)] bg-action px-4 font-semibold text-ink hover:brightness-95">
-            Dock board
-          </Link>
-        </section>
-      </main>
+      <PageBody>
+        <PageHeader title="Reports" subtitle={subtitle} />
+        <ErrorPanel title={failure.title} detail={failure.detail} outcome="read" action={<ButtonLink href={`/loader/reports?date=${date}`}>Reload</ButtonLink>} />
+      </PageBody>
     );
   }
 
-  const trips = result.data;
-  const total = trips.length;
-  const byStatus = trips.reduce<Record<TripStatus, Trip[]>>((map, trip) => {
-    (map[trip.status] = map[trip.status] ?? []).push(trip);
-    return map;
-  }, {} as Record<TripStatus, Trip[]>);
-  const departed = (byStatus.DEPARTED ?? []).length + (byStatus.COMPLETED ?? []).length;
-  const ready = (byStatus.READY ?? []).length;
-  const loading = (byStatus.LOADING ?? []).length;
-  const planned = (byStatus.PLANNED ?? []).length;
-  const cancelled = (byStatus.CANCELLED ?? []).length;
-  const totalWeight = trips.reduce((s, t) => s + (t.sumWeightKg ?? 0), 0);
-  const totalVolume = trips.reduce((s, t) => s + (t.sumVolumeM3 ?? 0), 0);
+  const report = buildReport(day.trips);
+  const header = <PageHeader title="Reports" subtitle={subtitle} aside={<><DateControl date={date} path="/loader/reports" /><HeaderClock /></>} />;
 
-  const departedTrips = [...(byStatus.DEPARTED ?? []), ...(byStatus.COMPLETED ?? [])].sort(
-    (a, b) => (a.plannedDepartAt ?? "").localeCompare(b.plannedDepartAt ?? ""),
-  );
+  if (report.vehicles.total === 0) {
+    return (
+      <PageBody>
+        {header}
+        <EmptyState title="No trips published for this day" detail="There is nothing to report until the dispatcher publishes a plan. Pick another date." />
+      </PageBody>
+    );
+  }
 
   return (
-    <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
-      <header className="flex flex-col gap-4 border-b border-line pb-5 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-ink sm:text-3xl">Reports</h1>
-          <p className="mt-2 max-w-xl text-sm text-muted">
-            A snapshot of the dock day: how many vehicles are through the gate, how many are still being loaded, and the weight &amp; volume moved.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <form method="get" className="flex items-center gap-2">
-            <label htmlFor="date" className="sr-only">Report date</label>
-            <input
-              id="date"
-              name="date"
-              type="date"
-              defaultValue={date}
-              className="min-h-10 rounded-[var(--radius-control)] border border-line bg-surface px-3 text-sm text-ink"
-            />
-            <button
-              type="submit"
-              className="min-h-10 rounded-[var(--radius-control)] bg-[color:var(--c-navy)] px-3 text-sm font-semibold text-white hover:brightness-110"
-            >
-              Reload
-            </button>
-          </form>
-          <HeaderClock />
-        </div>
-      </header>
+    <PageBody>
+      {header}
 
-      {total === 0 ? (
-        <section className="mt-10 rounded-[var(--radius-card)] border border-dashed border-line bg-surface p-8 text-center">
-          <h2 className="text-lg font-semibold text-ink">No trips published for {date}</h2>
-          <p className="mx-auto mt-2 max-w-xl text-sm text-muted">
-            The dispatcher may not have published a plan for this date, or it was superseded. Pick a different date to see its dock totals.
+      <StatRow>
+        <StatCard
+          icon={<TruckIcon />}
+          value={`${report.vehicles.released} / ${report.vehicles.total}`}
+          label="Vehicles released"
+          foot="Ready, departed or completed"
+        />
+        <StatCard
+          icon={<CheckIcon />}
+          value={`${report.lines.checked} / ${report.lines.total}`}
+          label="Orders checked"
+          foot={report.lines.checked === report.lines.total ? "Every order has a load check." : `${report.lines.total - report.lines.checked} still to check`}
+          footTone={report.lines.checked === report.lines.total ? "good" : "neutral"}
+        />
+        <StatCard
+          icon={<BoxIcon />}
+          value={`${report.units.percent}%`}
+          label="Units loaded"
+          foot={`${report.units.loaded} of ${report.units.expected} units`}
+        >
+          <Meter value={report.units.loaded} max={report.units.expected} level="near" label="Units loaded" />
+        </StatCard>
+        <StatCard
+          icon={<AlertIcon />}
+          value={report.shortages.length}
+          label="Orders reported"
+          tone={report.shortages.length > 0 ? "warn" : "neutral"}
+          foot={
+            report.shortages.length === 0
+              ? "No shortage, damage or missing line reported."
+              : `${report.shortageUnits} units short in all · ${report.waiting === 0 ? "none waiting on the dispatcher" : `${report.waiting} waiting on the dispatcher`}`
+          }
+          footTone={report.shortages.length > 0 ? "warn" : "neutral"}
+        />
+      </StatRow>
+
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <section className="flex min-w-0 flex-col gap-2" aria-labelledby="log-heading">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 id="log-heading" className="font-bold text-ink">
+              Vehicle log
+            </h2>
+            <p className="text-sm text-muted">{plural(report.log.length, "vehicle")}</p>
+          </div>
+          <DataTable
+            caption="Every vehicle on the day, with its load checks and result"
+            head={
+              <tr>
+                <Th>Vehicle</Th>
+                <Th>Route</Th>
+                <Th>Departs</Th>
+                <Th>Status</Th>
+                <Th numeric>Orders checked</Th>
+                <Th numeric>Units</Th>
+                <Th>Result</Th>
+              </tr>
+            }
+            cards={report.log.map(({ trip, result }) => (
+              <RowCard key={trip.id}>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="font-bold text-ink">
+                    {trip.vehicleId} <span className="font-normal text-muted">Trip {trip.tripNo} · departs {trip.plannedDepartAt ?? "—"}</span>
+                  </p>
+                  <StatusPill label={result.label} tone={result.tone} />
+                </div>
+                <p className="tabular mt-1 text-sm text-muted">
+                  {trip.districtName} · {TRIP_STATUS_LABEL[trip.status]}
+                  {trip.load ? ` · ${trip.load.checked} of ${trip.load.lines} checked · ${trip.load.loadedUnits} / ${trip.load.expectedUnits} units` : ""}
+                </p>
+              </RowCard>
+            ))}
+          >
+            {report.log.map(({ trip, result }) => (
+              <Tr key={trip.id}>
+                <Td>
+                  <span className="whitespace-nowrap">
+                    <span className="font-bold text-ink">{trip.vehicleId}</span> <span className="text-muted">Trip {trip.tripNo}</span>
+                  </span>
+                </Td>
+                <Td>{trip.districtName}</Td>
+                <Td>
+                  <span className="tabular">{trip.plannedDepartAt ?? "—"}</span>
+                </Td>
+                <Td>{TRIP_STATUS_LABEL[trip.status]}</Td>
+                <Td numeric><span className="whitespace-nowrap">{trip.load ? `${trip.load.checked} / ${trip.load.lines}` : "—"}</span></Td>
+                <Td numeric><span className="whitespace-nowrap">{trip.load ? `${trip.load.loadedUnits} / ${trip.load.expectedUnits}` : "—"}</span></Td>
+                <Td>
+                  <StatusPill label={result.label} tone={result.tone} dot={false} />
+                </Td>
+              </Tr>
+            ))}
+          </DataTable>
+        </section>
+
+        <section className="rounded-card border border-line bg-surface p-4" aria-labelledby="reported-heading">
+          <h2 id="reported-heading" className="flex items-center gap-2 font-bold text-ink">
+            Reported at the dock
+            {report.shortages.length > 0 ? <span className="tabular rounded-full bg-raised px-1.5 py-0.5 text-xs font-semibold text-muted">{report.shortages.length}</span> : null}
+          </h2>
+          {report.shortages.length === 0 ? (
+            <p className="mt-2 text-sm text-muted">Nothing was reported short, damaged or missing on this day.</p>
+          ) : (
+            <ul className="mt-3 flex flex-col divide-y divide-line">
+              {report.shortages.map((row) => (
+                <li key={`${row.tripId}:${row.orderRef}`} className="py-3 first:pt-0 last:pb-0">
+                  <p className="font-semibold text-ink">
+                    {row.vehicleId} · {row.orderRef} · {CONDITION_LABEL[row.condition]}
+                  </p>
+                  <p className="tabular text-sm text-muted">
+                    {row.outletId} · loaded {row.loadedUnits} of {row.expectedUnits}
+                    {row.shortBy > 0 ? ` · ${row.shortBy} short` : ""}
+                  </p>
+                  <p className={`text-sm ${row.state === "waiting" ? "font-semibold text-warn-ink" : "text-muted"}`}>{row.outcome}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-3 text-xs text-muted">
+            The dock records what was reported; the dispatcher decides each one in Exceptions, and their decision shows here once
+            made.
           </p>
         </section>
-      ) : (
-        <>
-          <section aria-label="Day totals" className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Vehicles today" value={total} detail={`${departed} already departed`} />
-            <Stat label="On the dock" value={loading + ready} detail={`${loading} loading · ${ready} ready`} accent="info" />
-            <Stat label="Still to load" value={planned} detail={planned === 0 ? "Queue is clear." : "Awaiting a loader to pick them up."} accent="muted" />
-            <Stat label="Weight &amp; volume" value={`${(totalWeight / 1000).toFixed(1)} t`} detail={`${totalVolume.toFixed(1)} m³ across every trip`} />
-          </section>
-
-          <section aria-labelledby="status-breakdown" className="mt-8">
-            <h2 id="status-breakdown" className="text-lg font-semibold text-ink">Status breakdown</h2>
-            <div className="mt-3 overflow-hidden rounded-[var(--radius-card)] border border-line bg-surface">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-line bg-raised text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                    <th scope="col" className="px-4 py-2.5">Status</th>
-                    <th scope="col" className="px-4 py-2.5 text-right">Vehicles</th>
-                    <th scope="col" className="px-4 py-2.5">Share of day</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <StatusRow label="Departed" count={departed} total={total} tone="info" />
-                  <StatusRow label="Ready" count={ready} total={total} tone="success" />
-                  <StatusRow label="Loading" count={loading} total={total} tone="warning" />
-                  <StatusRow label="Planned" count={planned} total={total} tone="muted" />
-                  {cancelled > 0 && <StatusRow label="Cancelled" count={cancelled} total={total} tone="critical" />}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section aria-labelledby="departures" className="mt-8">
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 id="departures" className="text-lg font-semibold text-ink">Departures today</h2>
-              <span className="text-sm text-muted">{departedTrips.length} vehicles</span>
-            </div>
-            {departedTrips.length === 0 ? (
-              <p className="mt-3 rounded-[var(--radius-card)] border border-dashed border-line bg-surface p-6 text-sm text-muted">
-                Nothing has departed yet. Loaders release trips to driver claim once every line is checked.
-              </p>
-            ) : (
-              <div className="mt-3 overflow-hidden rounded-[var(--radius-card)] border border-line bg-surface">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-line bg-raised text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                      <th scope="col" className="px-4 py-2.5">Vehicle · Trip</th>
-                      <th scope="col" className="px-4 py-2.5">Route</th>
-                      <th scope="col" className="px-4 py-2.5">Depart</th>
-                      <th scope="col" className="px-4 py-2.5">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {departedTrips.map((trip) => (
-                      <tr key={trip.id} className="border-b border-line last:border-0">
-                        <td className="px-4 py-3">
-                          <p className="font-semibold text-ink">{trip.vehicleId}</p>
-                          <p className="text-xs text-muted">Trip {trip.tripNo} · {trip.brand}</p>
-                        </td>
-                        <td className="px-4 py-3 text-ink">{trip.districtName}</td>
-                        <td className="tabular px-4 py-3 text-ink">{formatPlannedTime(trip.plannedDepartAt)}</td>
-                        <td className="px-4 py-3 text-xs font-semibold text-muted">{TRIP_STATUS_LABEL[trip.status]}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        </>
-      )}
-    </main>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  detail,
-  accent = "default",
-}: {
-  label: string;
-  value: number | string;
-  detail: string;
-  accent?: "default" | "info" | "muted";
-}) {
-  const bg =
-    accent === "info"
-      ? "bg-blue-50 border-blue-100"
-      : accent === "muted"
-        ? "bg-raised border-line"
-        : "bg-surface border-line";
-  return (
-    <article className={`rounded-[var(--radius-card)] border p-4 ${bg}`}>
-      <p className="tabular text-2xl font-semibold text-ink">{value}</p>
-      <p className="text-sm text-muted">{label}</p>
-      <p className="mt-2 text-xs text-muted">{detail}</p>
-    </article>
-  );
-}
-
-function StatusRow({
-  label,
-  count,
-  total,
-  tone,
-}: {
-  label: string;
-  count: number;
-  total: number;
-  tone: "success" | "warning" | "muted" | "info" | "critical";
-}) {
-  const share = total > 0 ? Math.round((count / total) * 100) : 0;
-  const bar =
-    tone === "success"
-      ? "bg-emerald-500"
-      : tone === "warning"
-        ? "bg-action"
-        : tone === "critical"
-          ? "bg-[color:var(--c-ruby)]"
-          : tone === "info"
-            ? "bg-link"
-            : "bg-muted";
-  return (
-    <tr className="border-b border-line last:border-0">
-      <td className="px-4 py-3 font-semibold text-ink">{label}</td>
-      <td className="tabular px-4 py-3 text-right text-ink">{count}</td>
-      <td className="px-4 py-3">
-        <div className="flex items-center gap-3">
-          <div className="h-1.5 flex-1 max-w-xs rounded-full bg-raised">
-            <div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.min(share, 100)}%` }} />
-          </div>
-          <span className="tabular text-xs text-muted w-10 text-right">{share}%</span>
-        </div>
-      </td>
-    </tr>
+      </div>
+    </PageBody>
   );
 }

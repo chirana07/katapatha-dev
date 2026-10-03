@@ -29,6 +29,7 @@ export function StatCard({
   footTone = "neutral",
   icon,
   tone = "neutral",
+  children,
 }: {
   value: ReactNode;
   label: string;
@@ -38,6 +39,9 @@ export function StatCard({
   icon?: ReactNode;
   /** Tints the whole card. Reserve it for cards that are themselves an alert. */
   tone?: Tone;
+  /** Block content between the figure and `foot`, e.g. a Meter. `foot` is a
+   *  paragraph, so a meter (a div) cannot live inside it. */
+  children?: ReactNode;
 }) {
   const shell =
     tone === "neutral"
@@ -63,6 +67,7 @@ export function StatCard({
           <p className="mt-0.5 truncate text-sm text-muted">{label}</p>
         </div>
       </div>
+      {children ? <div className="mt-3">{children}</div> : null}
       {foot ? <p className={`mt-3 text-xs font-semibold ${FOOT_CLASS[footTone]}`}>{foot}</p> : null}
     </div>
   );

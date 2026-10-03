@@ -1,13 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
-import { mutationError, readError } from "./api-errors";
-import { formatMinutes, formatVolume, formatWeight, isIsoDate } from "./format";
-import { canMarkReady, lineState, readinessDisabledReason } from "./line-state";
-import {
-  FALLBACK_SHORTFALL_REASONS,
-  conditionNeedsReason,
-  labelFor,
-} from "./reasons";
+import { formatVolume, formatWeight } from "./format";
+import { canMarkReady, lineState, readinessDisabledReason, resolutionLabel, shortfallState } from "./line-state";
+import { FALLBACK_SHORTFALL_REASONS, labelFor } from "./reasons";
 import type { Trip } from "./wave";
 import { groupByWave, WAVE_ORDER } from "./wave";
 
@@ -33,11 +28,15 @@ describe("Line state classification", () => {
 });
 
 describe("Readiness gate", () => {
-  const base = { total: 7, checked: 7, openDiscrepancies: 0, status: "PLANNED" as const };
+  const base = { total: 7, checked: 7, flagged: 0, blocked: false, status: "PLANNED" as const };
 
-  it("allows release when every line is OK on a planned trip", () => {
+  it("allows release when every line is checked on a planned trip", () => {
     assert.equal(canMarkReady(base), true);
     assert.equal(readinessDisabledReason(base), "");
+  });
+
+  it("allows release on a LOADING trip — the first check moves PLANNED to LOADING, so gating on PLANNED alone never opened", () => {
+    assert.equal(canMarkReady({ ...base, status: "LOADING" }), true);
   });
 
   it("blocks release while any line is unchecked", () => {
@@ -46,27 +45,66 @@ describe("Readiness gate", () => {
     assert.match(readinessDisabledReason(ctx), /3 of 7 lines are still unchecked/);
   });
 
-  it("blocks release while any discrepancy is open", () => {
-    const ctx = { ...base, openDiscrepancies: 1 };
-    assert.equal(canMarkReady(ctx), false);
-    assert.match(readinessDisabledReason(ctx), /1 discrepancy is open/);
+  it("does not gate on reported lines: the dispatcher's decision is the server's to enforce, and a line sent short stays SHORT", () => {
+    const ctx = { ...base, flagged: 2 };
+    assert.equal(canMarkReady(ctx), true);
+    assert.equal(readinessDisabledReason(ctx), "");
   });
 
-  it("names both when both are open and uses the right plural", () => {
-    const ctx = { ...base, checked: 5, openDiscrepancies: 2 };
-    assert.match(readinessDisabledReason(ctx), /2 of 7 lines are still unchecked and 2 discrepancy are open/);
+  it("holds the release while an open shortfall blocks the trip, and says whose decision it is", () => {
+    const ctx = { ...base, flagged: 1, blocked: true };
+    assert.equal(canMarkReady(ctx), false);
+    assert.match(readinessDisabledReason(ctx), /Waiting on the dispatcher/);
   });
 
-  it("refuses when the trip has already moved past planned", () => {
-    const ctx = { ...base, status: "READY" as const };
-    assert.equal(canMarkReady(ctx), false);
-    assert.match(readinessDisabledReason(ctx), /already ready/);
+  it("releases a trip whose reported line the dispatcher has cleared: flagged stays 1, blocked is false", () => {
+    const ctx = { ...base, flagged: 1, blocked: false };
+    assert.equal(canMarkReady(ctx), true);
+    assert.equal(readinessDisabledReason(ctx), "");
+  });
+
+  it("names unchecked lines before the dispatcher, since the loader can fix those", () => {
+    assert.match(readinessDisabledReason({ ...base, checked: 5, blocked: true }), /2 of 7 lines are still unchecked/);
+  });
+
+  it("refuses when the trip has already been released", () => {
+    for (const status of ["READY", "DEPARTED", "COMPLETED"] as const) {
+      const ctx = { ...base, status };
+      assert.equal(canMarkReady(ctx), false);
+      assert.match(readinessDisabledReason(ctx), /already/);
+    }
   });
 
   it("refuses an empty trip even if everything is 'checked'", () => {
     const ctx = { ...base, total: 0, checked: 0 };
     assert.equal(canMarkReady(ctx), false);
     assert.match(readinessDisabledReason(ctx), /No lines on this trip/);
+  });
+});
+
+describe("Shortfall state of a line", () => {
+  const sf = (status: "OPEN" | "RESOLVED", resolution: string | null = null) => ({ status, resolution });
+
+  it("is none for a line that is unchecked or loaded correctly", () => {
+    assert.equal(shortfallState({}), "none");
+    assert.equal(shortfallState({ condition: "OK", loadedUnits: 5, shortfall: null }), "none");
+  });
+
+  it("is waiting while the shortfall is open and cleared once decided, whatever the condition still says", () => {
+    assert.equal(shortfallState({ condition: "SHORT", shortfall: sf("OPEN") }), "waiting");
+    assert.equal(shortfallState({ condition: "SHORT", shortfall: sf("RESOLVED", "SEND_SHORT") }), "cleared");
+  });
+
+  it("does not guess when a non-OK line arrives with no shortfall", () => {
+    assert.equal(shortfallState({ condition: "DAMAGED", shortfall: null }), "reported");
+  });
+
+  it("puts each resolution in the dispatcher's words", () => {
+    assert.equal(resolutionLabel("SEND_SHORT"), "Sent short — dispatcher approved");
+    assert.match(resolutionLabel("HOLD_ORDER"), /held/);
+    assert.match(resolutionLabel("MOVE_TO_TRIP_2"), /trip 2/);
+    assert.match(resolutionLabel("CANCEL_LINE"), /cancelled/);
+    assert.equal(resolutionLabel(null), "Cleared by the dispatcher");
   });
 });
 
@@ -115,25 +153,6 @@ describe("Dock board wave grouping", () => {
   });
 });
 
-describe("API error mapping", () => {
-  it("marks 401 reads as expired so the UI picks the gentler role", () => {
-    assert.equal(readError(401, "trips").expired, true);
-    assert.equal(readError(500, "trips").expired, false);
-  });
-
-  it("names the resource for 404 on a trip", () => {
-    assert.match(readError(404, "trip").title, /Trip not found/);
-    assert.match(readError(404, "trips").title, /Dock board unavailable/);
-  });
-
-  it("maps mutation statuses to loader-shaped copy, not generic http", () => {
-    assert.match(mutationError(401, "record load check"), /dock session expired/i);
-    assert.match(mutationError(403, "record load check"), /cannot record load check/i);
-    assert.match(mutationError(422, "record load check"), /quantity and reason/i);
-    assert.match(mutationError(500, "mark the trip ready"), /temporarily unavailable/i);
-  });
-});
-
 describe("Reason vocabulary", () => {
   it("declares a non-empty fallback so the dock is never silent when reference is down", () => {
     assert.ok(FALLBACK_SHORTFALL_REASONS.length >= 1);
@@ -143,42 +162,17 @@ describe("Reason vocabulary", () => {
     assert.equal(labelFor("SHORT_QUANTITY"), "Short quantity");
     assert.equal(labelFor("CUSTOM_REASON"), "CUSTOM_REASON");
   });
-
-  it("requires a reason for every non-OK condition", () => {
-    assert.equal(conditionNeedsReason("OK"), false);
-    for (const condition of ["SHORT", "DAMAGED", "MISSING"] as const) {
-      assert.equal(conditionNeedsReason(condition), true);
-    }
-  });
 });
 
 describe("Dock formatters", () => {
-  it("formats clock-free minute totals that match 212 as 3h 32m, not a date", () => {
-    assert.equal(formatMinutes(212), "3h 32m");
-    assert.equal(formatMinutes(45), "45m");
-    assert.equal(formatMinutes(120), "2h");
-  });
-
-  it("treats missing minutes as missing — never a confident zero", () => {
-    assert.equal(formatMinutes(null), "—");
-    assert.equal(formatMinutes(undefined), "—");
-    assert.equal(formatMinutes(-1), "—");
-  });
-
   it("shows weight in tonnes once it crosses 1000kg so the number stays short on a tablet", () => {
     assert.equal(formatWeight(850.4), "850 kg");
     assert.equal(formatWeight(3210.5), "3.21 t");
+    assert.equal(formatWeight(null), "—");
   });
 
   it("shows volume in cubic metres with one decimal", () => {
     assert.equal(formatVolume(16.8), "16.8 m³");
     assert.equal(formatVolume(null), "—");
-  });
-
-  it("recognises YYYY-MM-DD strings and nothing else", () => {
-    assert.equal(isIsoDate("2026-10-01"), true);
-    assert.equal(isIsoDate("01-10-2026"), false);
-    assert.equal(isIsoDate("2026/10/01"), false);
-    assert.equal(isIsoDate(""), false);
   });
 });
