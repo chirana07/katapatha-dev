@@ -66,7 +66,7 @@ DeliveryStep:
 
 IncomingDelivery:
   type: object
-  required: [orderId, ref, brand, tempRequirement, units, vehicleId, districtName, depotCode, stopsBefore, legMinutes, departed, steps]
+  required: [orderId, ref, brand, tempRequirement, units, vehicleId, districtName, depotCode, stopsBefore, legMinutes, departed, arrival, steps]
   properties:
     orderId: { type: string }
     ref: { type: string, examples: ["S1-082"] }
@@ -89,6 +89,34 @@ IncomingDelivery:
         is worse than none.
       oneOf: [{ type: integer }, { type: "null" }]
     departed: { type: boolean }
+    report:
+      description: >
+        What the driver's phone last reported for this trip, and how old that is
+        — the position itself is not shown to a store. Null until something has
+        been reported since the trip left. `lamp` is true once the report is old
+        enough that the arrival is an estimate (Lamp Mode).
+      oneOf:
+        - type: "null"
+        - type: object
+          required: [reportedAt, ageSeconds, lamp]
+          properties:
+            reportedAt: { type: string, format: date-time, examples: ["2026-09-29T01:11:00Z"] }
+            ageSeconds: { type: integer, examples: [1320] }
+            lamp: { type: boolean, examples: [true] }
+    arrival:
+      description: >
+        The arrival, stated as strongly as the evidence allows. `plan` is the
+        planned time before the vehicle has left. `report` is a single time,
+        used only while a fresh report supports it. `estimate` is a range
+        (`from`–`to`) once it is uncertain: the client must show a range, not a
+        time, and must not show a countdown from it.
+      type: object
+      required: [basis, at, from, to]
+      properties:
+        basis: { type: string, enum: [plan, report, estimate] }
+        at: { oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }] }
+        from: { oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }] }
+        to: { oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }] }
     steps:
       type: array
       items: { $ref: "#/DeliveryStep" }
@@ -107,7 +135,9 @@ Weather:
     label: { type: string, examples: ["Light rain"] }
     kind: { type: string, enum: [clear, cloudy, rain, storm, fog] }
     live: { type: boolean }
-    observedAt: { oneOf: [{ type: string, format: date-time }, { type: "null" }] }
+    observedAt:
+      description: Wall-clock time of the observation, Colombo. Null when `live` is false.
+      oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }]
 
 StoreToday:
   type: object
@@ -115,10 +145,13 @@ StoreToday:
     Everything the Today screen renders, in one request. Assembled server-side
     because the five-step tracker, the stop count and the countdown all derive
     from the same trip and must not be able to disagree with each other.
-  required: [outletId, date, receivingWindowOpen, receivingWindowClose, accessNote, orders, counts]
+  required: [outletId, outletName, date, receivingWindowOpen, receivingWindowClose, accessNote, orders, counts]
   properties:
     outletId: { type: string, examples: ["OUT074"] }
-    outletName: { type: string, examples: ["Fresh Puttalam"] }
+    outletName:
+      type: string
+      description: The outlet's display name, else its brand and district. Always present.
+      examples: ["Fresh Puttalam"]
     brand: { $ref: "./common.yaml#/Brand" }
     date: { $ref: "./common.yaml#/DateOnly" }
     receivingWindowOpen: { $ref: "./common.yaml#/ClockTime" }

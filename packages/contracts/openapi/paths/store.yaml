@@ -56,6 +56,8 @@ today:
                 legMinutes: 96
                 minutesAway: 39
                 departed: true
+                report: { reportedAt: "2026-09-29T01:11:00Z", ageSeconds: 120, lamp: false }
+                arrival: { basis: report, at: "07:21", from: null, to: null }
                 steps:
                   - { key: "dispatched", label: "Dispatched", detail: "06:15", state: done }
                   - { key: "en_route", label: "En route", detail: "06:42", state: done }
@@ -105,6 +107,6 @@ today:
                 label: "Light rain"
                 kind: rain
                 live: true
-                observedAt: "2026-09-29T04:00:00Z"
+                observedAt: "09:30"
       "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
       "403": { $ref: "../components/responses/common.yaml#/Forbidden" }

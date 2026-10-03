@@ -754,6 +754,17 @@
                     "legMinutes": 96,
                     "minutesAway": 39,
                     "departed": true,
+                    "report": {
+                      "reportedAt": "2026-09-29T01:11:00Z",
+                      "ageSeconds": 120,
+                      "lamp": false
+                    },
+                    "arrival": {
+                      "basis": "report",
+                      "at": "07:21",
+                      "from": null,
+                      "to": null
+                    },
                     "steps": [
                       {
                         "key": "dispatched",
@@ -841,7 +852,7 @@
                     "label": "Light rain",
                     "kind": "rain",
                     "live": true,
-                    "observedAt": "2026-09-29T04:00:00Z"
+                    "observedAt": "09:30"
                   }
                 }
               }
@@ -1749,6 +1760,70 @@
         }
       }
     },
+    "/trips/{tripId}": {
+      "parameters": [
+        {
+          "name": "tripId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getTrip",
+        "summary": "One published trip at the caller's depot",
+        "description": "The loading screen needs the trip's vehicle, route, day and whether it is held at the dock, and until now had to find it by listing a day's trips. A trip at another depot answers 404, the same as one that does not exist.\n",
+        "tags": [
+          "loading"
+        ],
+        "responses": {
+          "200": {
+            "description": "The trip.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trip"
+                },
+                "example": {
+                  "id": "clx0trp1a2b3c4d5e6f7g8h",
+                  "vehicleId": "VEH101",
+                  "tripNo": 1,
+                  "brand": "Fresh",
+                  "districtName": "Colombo",
+                  "wave": "PREDAWN",
+                  "status": "LOADING",
+                  "plannedDepartAt": "03:30",
+                  "plannedMinutes": 212,
+                  "sumWeightKg": 3210.5,
+                  "sumVolumeM3": 16.8,
+                  "blocked": true,
+                  "chiller": {
+                    "tempC": 6,
+                    "targetMinC": 2,
+                    "targetMaxC": 5,
+                    "inRange": false,
+                    "source": "LOADER_AT_BAY",
+                    "recordedByName": "Ranjith Silva",
+                    "recordedAt": "2026-04-09T22:30:00.000Z",
+                    "ageSeconds": 3660
+                  },
+                  "date": "2026-04-09",
+                  "depotCode": "Peliyagoda"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
     "/trips/{tripId}/load-list": {
       "parameters": [
         {
@@ -1786,7 +1861,8 @@
                       "seq": 3,
                       "expectedUnits": 120,
                       "loadedUnits": null,
-                      "condition": null
+                      "condition": null,
+                      "shortfall": null
                     }
                   ]
                 }
@@ -6113,6 +6189,7 @@
           "stopsBefore",
           "legMinutes",
           "departed",
+          "arrival",
           "steps"
         ],
         "properties": {
@@ -6191,6 +6268,93 @@
           },
           "departed": {
             "type": "boolean"
+          },
+          "report": {
+            "description": "What the driver's phone last reported for this trip, and how old that is — the position itself is not shown to a store. Null until something has been reported since the trip left. `lamp` is true once the report is old enough that the arrival is an estimate (Lamp Mode).\n",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "reportedAt",
+                  "ageSeconds",
+                  "lamp"
+                ],
+                "properties": {
+                  "reportedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "examples": [
+                      "2026-09-29T01:11:00Z"
+                    ]
+                  },
+                  "ageSeconds": {
+                    "type": "integer",
+                    "examples": [
+                      1320
+                    ]
+                  },
+                  "lamp": {
+                    "type": "boolean",
+                    "examples": [
+                      true
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "arrival": {
+            "description": "The arrival, stated as strongly as the evidence allows. `plan` is the planned time before the vehicle has left. `report` is a single time, used only while a fresh report supports it. `estimate` is a range (`from`–`to`) once it is uncertain: the client must show a range, not a time, and must not show a countdown from it.\n",
+            "type": "object",
+            "required": [
+              "basis",
+              "at",
+              "from",
+              "to"
+            ],
+            "properties": {
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "plan",
+                  "report",
+                  "estimate"
+                ]
+              },
+              "at": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ClockTime"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "from": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ClockTime"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "to": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ClockTime"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
           },
           "steps": {
             "type": "array",
@@ -6412,10 +6576,10 @@
             "type": "boolean"
           },
           "observedAt": {
+            "description": "Wall-clock time of the observation, Colombo. Null when `live` is false.",
             "oneOf": [
               {
-                "type": "string",
-                "format": "date-time"
+                "$ref": "#/components/schemas/ClockTime"
               },
               {
                 "type": "null"
@@ -6429,6 +6593,7 @@
         "description": "Everything the Today screen renders, in one request. Assembled server-side because the five-step tracker, the stop count and the countdown all derive from the same trip and must not be able to disagree with each other.\n",
         "required": [
           "outletId",
+          "outletName",
           "date",
           "receivingWindowOpen",
           "receivingWindowClose",
@@ -6445,6 +6610,7 @@
           },
           "outletName": {
             "type": "string",
+            "description": "The outlet's display name, else its brand and district. Always present.",
             "examples": [
               "Fresh Puttalam"
             ]
@@ -6845,6 +7011,75 @@
           "CANCELLED"
         ]
       },
+      "ChillerSource": {
+        "type": "string",
+        "enum": [
+          "LOADER_AT_BAY",
+          "DRIVER_ON_ARRIVAL"
+        ],
+        "description": "Where the gauge was read. LOADER_AT_BAY is recorded by a loader or dispatcher; DRIVER_ON_ARRIVAL by the driver.\n"
+      },
+      "ChillerReadingView": {
+        "type": "object",
+        "description": "A person's reading of a chiller gauge — a loader at the bay or a driver on arrival. It is not a sensor feed; show who read it and how long ago.\n",
+        "required": [
+          "tempC",
+          "targetMinC",
+          "targetMaxC",
+          "inRange",
+          "source",
+          "recordedByName",
+          "recordedAt",
+          "ageSeconds"
+        ],
+        "properties": {
+          "tempC": {
+            "type": "number",
+            "examples": [
+              3.8
+            ]
+          },
+          "targetMinC": {
+            "type": "number",
+            "examples": [
+              2
+            ]
+          },
+          "targetMaxC": {
+            "type": "number",
+            "examples": [
+              5
+            ]
+          },
+          "inRange": {
+            "type": "boolean",
+            "description": "tempC within the target band stored on the reading, both ends included."
+          },
+          "source": {
+            "$ref": "#/components/schemas/ChillerSource"
+          },
+          "recordedByName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "Ranjith Silva"
+            ]
+          },
+          "recordedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ageSeconds": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [
+              600
+            ]
+          }
+        }
+      },
       "Trip": {
         "type": "object",
         "required": [
@@ -6913,6 +7148,34 @@
             "type": "number",
             "examples": [
               16.8
+            ]
+          },
+          "blocked": {
+            "type": "boolean",
+            "description": "An open shortfall is holding this trip at the dock. Present on the loading endpoints (`/trips`, `/trips/{id}`), not on the plan board.\n",
+            "examples": [
+              false
+            ]
+          },
+          "chiller": {
+            "description": "The latest chiller reading for this trip — a person's reading of a gauge, not a sensor feed. Null when nobody has recorded one. Present on the loading endpoints.\n",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ChillerReadingView"
+              }
+            ]
+          },
+          "date": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "depotCode": {
+            "type": "string",
+            "description": "Only on `GET /trips/{tripId}`.",
+            "examples": [
+              "Peliyagoda"
             ]
           }
         }
@@ -7741,6 +8004,50 @@
                     "DAMAGED",
                     "MISSING",
                     null
+                  ]
+                },
+                "shortfall": {
+                  "description": "The shortfall raised for this line and what became of it. A line the dispatcher sent short keeps condition SHORT; this says the dock is no longer waiting on it. Additive.\n",
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "blocksDeparture"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "OPEN",
+                            "RESOLVED"
+                          ]
+                        },
+                        "blocksDeparture": {
+                          "type": "boolean"
+                        },
+                        "resolution": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "enum": [
+                            "SEND_SHORT",
+                            "HOLD_ORDER",
+                            "MOVE_TO_TRIP_2",
+                            "CANCEL_LINE",
+                            null
+                          ]
+                        }
+                      }
+                    }
                   ]
                 }
               }
@@ -8842,75 +9149,6 @@
             "enum": [
               "PREDAWN",
               "DAYTIME"
-            ]
-          }
-        }
-      },
-      "ChillerSource": {
-        "type": "string",
-        "enum": [
-          "LOADER_AT_BAY",
-          "DRIVER_ON_ARRIVAL"
-        ],
-        "description": "Where the gauge was read. LOADER_AT_BAY is recorded by a loader or dispatcher; DRIVER_ON_ARRIVAL by the driver.\n"
-      },
-      "ChillerReadingView": {
-        "type": "object",
-        "description": "A person's reading of a chiller gauge — a loader at the bay or a driver on arrival. It is not a sensor feed; show who read it and how long ago.\n",
-        "required": [
-          "tempC",
-          "targetMinC",
-          "targetMaxC",
-          "inRange",
-          "source",
-          "recordedByName",
-          "recordedAt",
-          "ageSeconds"
-        ],
-        "properties": {
-          "tempC": {
-            "type": "number",
-            "examples": [
-              3.8
-            ]
-          },
-          "targetMinC": {
-            "type": "number",
-            "examples": [
-              2
-            ]
-          },
-          "targetMaxC": {
-            "type": "number",
-            "examples": [
-              5
-            ]
-          },
-          "inRange": {
-            "type": "boolean",
-            "description": "tempC within the target band stored on the reading, both ends included."
-          },
-          "source": {
-            "$ref": "#/components/schemas/ChillerSource"
-          },
-          "recordedByName": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "examples": [
-              "Ranjith Silva"
-            ]
-          },
-          "recordedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "ageSeconds": {
-            "type": "integer",
-            "minimum": 0,
-            "examples": [
-              600
             ]
           }
         }

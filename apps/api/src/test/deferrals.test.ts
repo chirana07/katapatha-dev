@@ -147,6 +147,28 @@ describe("describeDeferrals", () => {
     });
   });
 
+  it("reads the metric's name from a draft stored with the allocator's whole record", async () => {
+    // Drafts built before the allocator's {name, have, limit, unit} record was
+    // flattened carry it as an object. The board serialised it against a string
+    // schema and returned 500, which stopped the plan being published.
+    const deferred = assignment("A3", "DEFERRED");
+    deferred.explanation = {
+      reasonCode: "NO_REEFER_AVAILABLE",
+      permanent: false,
+      explanation: [],
+      nearMiss: {
+        vehicleId: "VEH043",
+        metric: { name: "volume", have: 31.4, limit: 30, unit: "m3" },
+        short: 1.4,
+        unit: "m3",
+      },
+    } as never;
+
+    const [row] = await describeDeferrals(plan([deferred]));
+
+    expect(row?.cause?.nearMiss).toEqual({ vehicleId: "VEH043", metric: "volume", short: 1.4, unit: "m3" });
+  });
+
   it("suggests the workshop, not a full fleet, when the vehicles were only off the road", async () => {
     const deferred = assignment("A2", "DEFERRED");
     deferred.explanation = {

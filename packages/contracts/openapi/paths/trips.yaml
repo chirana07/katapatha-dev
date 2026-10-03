@@ -60,6 +60,54 @@ loadList:
                   expectedUnits: 120
                   loadedUnits: null
                   condition: null
+                  shortfall: null
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+
+item:
+  parameters:
+    - name: tripId
+      in: path
+      required: true
+      schema: { type: string }
+  get:
+    operationId: getTrip
+    summary: One published trip at the caller's depot
+    description: >
+      The loading screen needs the trip's vehicle, route, day and whether it is
+      held at the dock, and until now had to find it by listing a day's trips.
+      A trip at another depot answers 404, the same as one that does not exist.
+    tags: [loading]
+    responses:
+      "200":
+        description: The trip.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/trips.yaml#/Trip" }
+            example:
+              id: "clx0trp1a2b3c4d5e6f7g8h"
+              vehicleId: "VEH101"
+              tripNo: 1
+              brand: Fresh
+              districtName: "Colombo"
+              wave: PREDAWN
+              status: LOADING
+              plannedDepartAt: "03:30"
+              plannedMinutes: 212
+              sumWeightKg: 3210.5
+              sumVolumeM3: 16.8
+              blocked: true
+              chiller:
+                tempC: 6
+                targetMinC: 2
+                targetMaxC: 5
+                inRange: false
+                source: LOADER_AT_BAY
+                recordedByName: "Ranjith Silva"
+                recordedAt: "2026-04-09T22:30:00.000Z"
+                ageSeconds: 3660
+              date: "2026-04-09"
+              depotCode: Peliyagoda
       "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
       "404": { $ref: "../components/responses/common.yaml#/NotFound" }
 

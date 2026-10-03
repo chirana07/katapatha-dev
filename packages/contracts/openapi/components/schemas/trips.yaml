@@ -14,6 +14,22 @@ Trip:
     plannedMinutes: { type: integer, examples: [212] }
     sumWeightKg: { type: number, examples: [3210.5] }
     sumVolumeM3: { type: number, examples: [16.8] }
+    blocked:
+      type: boolean
+      description: >
+        An open shortfall is holding this trip at the dock. Present on the
+        loading endpoints (`/trips`, `/trips/{id}`), not on the plan board.
+      examples: [false]
+    chiller:
+      description: >
+        The latest chiller reading for this trip — a person's reading of a
+        gauge, not a sensor feed. Null when nobody has recorded one. Present on
+        the loading endpoints.
+      oneOf:
+        - type: "null"
+        - $ref: "./vehicles.yaml#/ChillerReadingView"
+    date: { $ref: "./common.yaml#/DateOnly" }
+    depotCode: { type: string, description: "Only on `GET /trips/{tripId}`.", examples: ["Peliyagoda"] }
 
 LoadList:
   type: object
@@ -40,6 +56,22 @@ LoadList:
           condition:
             type: [string, "null"]
             enum: [OK, SHORT, DAMAGED, MISSING, null]
+          shortfall:
+            description: >
+              The shortfall raised for this line and what became of it. A line the
+              dispatcher sent short keeps condition SHORT; this says the dock is no
+              longer waiting on it. Additive.
+            oneOf:
+              - type: "null"
+              - type: object
+                required: [id, status, blocksDeparture]
+                properties:
+                  id: { type: string }
+                  status: { type: string, enum: [OPEN, RESOLVED] }
+                  blocksDeparture: { type: boolean }
+                  resolution:
+                    type: [string, "null"]
+                    enum: [SEND_SHORT, HOLD_ORDER, MOVE_TO_TRIP_2, CANCEL_LINE, null]
 
 LoadCheckRequest:
   type: object

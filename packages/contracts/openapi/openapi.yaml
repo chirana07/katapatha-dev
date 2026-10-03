@@ -129,6 +129,7 @@ paths:
 
   # ---- loading / driver / sync (owner BE3) ----
   /trips:                                     { $ref: "./paths/trips.yaml#/collection" }
+  /trips/{tripId}:                            { $ref: "./paths/trips.yaml#/item" }
   /trips/{tripId}/load-list:                  { $ref: "./paths/trips.yaml#/loadList" }
   /trips/{tripId}/load-checks/{orderId}:      { $ref: "./paths/trips.yaml#/loadCheck" }
   /trips/{tripId}/readiness:                  { $ref: "./paths/trips.yaml#/readiness" }

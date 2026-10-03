@@ -488,6 +488,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/trips/{tripId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tripId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * One published trip at the caller's depot
+         * @description The loading screen needs the trip's vehicle, route, day and whether it is held at the dock, and until now had to find it by listing a day's trips. A trip at another depot answers 404, the same as one that does not exist.
+         */
+        get: operations["getTrip"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/trips/{tripId}/load-list": {
         parameters: {
             query?: never;
@@ -1413,6 +1435,26 @@ export interface components {
             /** @description Minutes until the planned arrival, and only when that is a sane number — positive and under four hours. Null otherwise, because a wrong countdown is worse than none. */
             minutesAway?: number | null;
             departed: boolean;
+            /** @description What the driver's phone last reported for this trip, and how old that is — the position itself is not shown to a store. Null until something has been reported since the trip left. `lamp` is true once the report is old enough that the arrival is an estimate (Lamp Mode). */
+            report?: null | {
+                /**
+                 * Format: date-time
+                 * @example 2026-09-29T01:11:00Z
+                 */
+                reportedAt: string;
+                /** @example 1320 */
+                ageSeconds: number;
+                /** @example true */
+                lamp: boolean;
+            };
+            /** @description The arrival, stated as strongly as the evidence allows. `plan` is the planned time before the vehicle has left. `report` is a single time, used only while a fresh report supports it. `estimate` is a range (`from`–`to`) once it is uncertain: the client must show a range, not a time, and must not show a countdown from it. */
+            arrival: {
+                /** @enum {string} */
+                basis: "plan" | "report" | "estimate";
+                at: components["schemas"]["ClockTime"] | null;
+                from: components["schemas"]["ClockTime"] | null;
+                to: components["schemas"]["ClockTime"] | null;
+            };
             steps: components["schemas"]["DeliveryStep"][];
         };
         /**
@@ -1463,14 +1505,18 @@ export interface components {
             /** @enum {string} */
             kind: "clear" | "cloudy" | "rain" | "storm" | "fog";
             live: boolean;
-            observedAt?: string | null;
+            /** @description Wall-clock time of the observation, Colombo. Null when `live` is false. */
+            observedAt?: components["schemas"]["ClockTime"] | null;
         };
         /** @description Everything the Today screen renders, in one request. Assembled server-side because the five-step tracker, the stop count and the countdown all derive from the same trip and must not be able to disagree with each other. */
         StoreToday: {
             /** @example OUT074 */
             outletId: string;
-            /** @example Fresh Puttalam */
-            outletName?: string;
+            /**
+             * @description The outlet's display name, else its brand and district. Always present.
+             * @example Fresh Puttalam
+             */
+            outletName: string;
             brand?: components["schemas"]["Brand"];
             date: components["schemas"]["DateOnly"];
             receivingWindowOpen: components["schemas"]["ClockTime"];
@@ -1592,6 +1638,29 @@ export interface components {
         Wave: "PREDAWN" | "DAYTIME";
         /** @enum {string} */
         TripStatus: "PLANNED" | "LOADING" | "READY" | "DEPARTED" | "COMPLETED" | "CANCELLED";
+        /**
+         * @description Where the gauge was read. LOADER_AT_BAY is recorded by a loader or dispatcher; DRIVER_ON_ARRIVAL by the driver.
+         * @enum {string}
+         */
+        ChillerSource: "LOADER_AT_BAY" | "DRIVER_ON_ARRIVAL";
+        /** @description A person's reading of a chiller gauge — a loader at the bay or a driver on arrival. It is not a sensor feed; show who read it and how long ago. */
+        ChillerReadingView: {
+            /** @example 3.8 */
+            tempC: number;
+            /** @example 2 */
+            targetMinC: number;
+            /** @example 5 */
+            targetMaxC: number;
+            /** @description tempC within the target band stored on the reading, both ends included. */
+            inRange: boolean;
+            source: components["schemas"]["ChillerSource"];
+            /** @example Ranjith Silva */
+            recordedByName: string | null;
+            /** Format: date-time */
+            recordedAt: string;
+            /** @example 600 */
+            ageSeconds: number;
+        };
         Trip: {
             /** @example clx0trp1a2b3c4d5e6f7g8h */
             id: string;
@@ -1614,6 +1683,19 @@ export interface components {
             sumWeightKg?: number;
             /** @example 16.8 */
             sumVolumeM3?: number;
+            /**
+             * @description An open shortfall is holding this trip at the dock. Present on the loading endpoints (`/trips`, `/trips/{id}`), not on the plan board.
+             * @example false
+             */
+            blocked?: boolean;
+            /** @description The latest chiller reading for this trip — a person's reading of a gauge, not a sensor feed. Null when nobody has recorded one. Present on the loading endpoints. */
+            chiller?: null | components["schemas"]["ChillerReadingView"];
+            date?: components["schemas"]["DateOnly"];
+            /**
+             * @description Only on `GET /trips/{tripId}`.
+             * @example Peliyagoda
+             */
+            depotCode?: string;
         };
         /** @description One vehicle's day against its limits, as the allocator measured it when the plan was built. These are the bars on the board: trips used of two, minutes used of each wave's budget, fuel committed of the weekly quota. */
         VehicleMeter: {
@@ -1865,6 +1947,15 @@ export interface components {
                 loadedUnits?: number | null;
                 /** @enum {string|null} */
                 condition?: "OK" | "SHORT" | "DAMAGED" | "MISSING" | null;
+                /** @description The shortfall raised for this line and what became of it. A line the dispatcher sent short keeps condition SHORT; this says the dock is no longer waiting on it. Additive. */
+                shortfall?: null | {
+                    id: string;
+                    /** @enum {string} */
+                    status: "OPEN" | "RESOLVED";
+                    blocksDeparture: boolean;
+                    /** @enum {string|null} */
+                    resolution?: "SEND_SHORT" | "HOLD_ORDER" | "MOVE_TO_TRIP_2" | "CANCEL_LINE" | null;
+                };
             }[];
         };
         LoadCheckRequest: {
@@ -2253,29 +2344,6 @@ export interface components {
             status: "PLANNED" | "LOADING" | "READY" | "DEPARTED" | "COMPLETED" | "CANCELLED";
             /** @enum {string} */
             wave: "PREDAWN" | "DAYTIME";
-        };
-        /**
-         * @description Where the gauge was read. LOADER_AT_BAY is recorded by a loader or dispatcher; DRIVER_ON_ARRIVAL by the driver.
-         * @enum {string}
-         */
-        ChillerSource: "LOADER_AT_BAY" | "DRIVER_ON_ARRIVAL";
-        /** @description A person's reading of a chiller gauge — a loader at the bay or a driver on arrival. It is not a sensor feed; show who read it and how long ago. */
-        ChillerReadingView: {
-            /** @example 3.8 */
-            tempC: number;
-            /** @example 2 */
-            targetMinC: number;
-            /** @example 5 */
-            targetMaxC: number;
-            /** @description tempC within the target band stored on the reading, both ends included. */
-            inRange: boolean;
-            source: components["schemas"]["ChillerSource"];
-            /** @example Ranjith Silva */
-            recordedByName: string | null;
-            /** Format: date-time */
-            recordedAt: string;
-            /** @example 600 */
-            ageSeconds: number;
         };
         /** @description The last position the driver's phone reported — not a live position. Show it with its age; plot it as reported. The map is schematic. */
         ReportedPosition: {
@@ -3823,6 +3891,17 @@ export interface operations {
                      *         "legMinutes": 96,
                      *         "minutesAway": 39,
                      *         "departed": true,
+                     *         "report": {
+                     *           "reportedAt": "2026-09-29T01:11:00Z",
+                     *           "ageSeconds": 120,
+                     *           "lamp": false
+                     *         },
+                     *         "arrival": {
+                     *           "basis": "report",
+                     *           "at": "07:21",
+                     *           "from": null,
+                     *           "to": null
+                     *         },
                      *         "steps": [
                      *           {
                      *             "key": "dispatched",
@@ -3910,7 +3989,7 @@ export interface operations {
                      *         "label": "Light rain",
                      *         "kind": "rain",
                      *         "live": true,
-                     *         "observedAt": "2026-09-29T04:00:00Z"
+                     *         "observedAt": "09:30"
                      *       }
                      *     }
                      */
@@ -4575,6 +4654,58 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
         };
     };
+    getTrip: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tripId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The trip. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "clx0trp1a2b3c4d5e6f7g8h",
+                     *       "vehicleId": "VEH101",
+                     *       "tripNo": 1,
+                     *       "brand": "Fresh",
+                     *       "districtName": "Colombo",
+                     *       "wave": "PREDAWN",
+                     *       "status": "LOADING",
+                     *       "plannedDepartAt": "03:30",
+                     *       "plannedMinutes": 212,
+                     *       "sumWeightKg": 3210.5,
+                     *       "sumVolumeM3": 16.8,
+                     *       "blocked": true,
+                     *       "chiller": {
+                     *         "tempC": 6,
+                     *         "targetMinC": 2,
+                     *         "targetMaxC": 5,
+                     *         "inRange": false,
+                     *         "source": "LOADER_AT_BAY",
+                     *         "recordedByName": "Ranjith Silva",
+                     *         "recordedAt": "2026-04-09T22:30:00.000Z",
+                     *         "ageSeconds": 3660
+                     *       },
+                     *       "date": "2026-04-09",
+                     *       "depotCode": "Peliyagoda"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Trip"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     getLoadList: {
         parameters: {
             query?: never;
@@ -4604,7 +4735,8 @@ export interface operations {
                      *           "seq": 3,
                      *           "expectedUnits": 120,
                      *           "loadedUnits": null,
-                     *           "condition": null
+                     *           "condition": null,
+                     *           "shortfall": null
                      *         }
                      *       ]
                      *     }

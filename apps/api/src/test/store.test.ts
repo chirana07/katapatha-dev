@@ -36,7 +36,8 @@ const storeManager: SessionUser = {
 
 const outlet = {
   id: "OUT074",
-  displayName: "Fresh Puttalam",
+  // Widened: the fixture network has no display names at all.
+  displayName: "Fresh Puttalam" as string | null,
   brand: "Fresh" as const,
   districtName: "Puttalam",
   dockType: "rear_dock" as const,
@@ -82,9 +83,10 @@ async function build(prismaStub: Record<string, unknown>, user: SessionUser = st
   return server;
 }
 
-function prismaWith(found: typeof outlet | null) {
+function prismaWith(found: typeof outlet | null, openProblems: { orderId: string | null }[] = []) {
   return {
     outlet: { findUnique: vi.fn().mockResolvedValue(found) },
+    problem: { findMany: vi.fn().mockResolvedValue(openProblems) },
     calendarDay: { findUnique: vi.fn().mockResolvedValue({ monsoon: false }) },
   };
 }
@@ -172,6 +174,34 @@ describe("GET /v1/store/today", () => {
     expect(body.receivingWindowClose).toBe("11:00");
     expect(body.accessNote).toContain("rear dock");
     expect(body.accessNote).toContain("Security check");
+  });
+
+  it("counts an order with a problem still open against it as an issue, not only a short delivery", async () => {
+    loadStoreOrdersMock.mockResolvedValue([
+      order({ id: "ord-1", requestedDate: "2026-09-29", state: "delivered", deliveredUnits: 69, receiptConfirmed: true }),
+      order({ id: "ord-2", requestedDate: "2026-09-29", state: "delivered", deliveredUnits: 69 }),
+    ]);
+    loadIncomingDeliveryMock.mockResolvedValue(null);
+    getWeatherMock.mockResolvedValue(null as never);
+    const server = await build(prismaWith(outlet, [{ orderId: "ord-1" }, { orderId: null }]));
+    servers.push(server);
+
+    const response = await server.inject({ method: "GET", url: "/v1/store/today?date=2026-09-29" });
+
+    // Delivered in full, so the old rule counted zero.
+    expect(response.json().counts.issues).toBe(1);
+  });
+
+  it("always names the outlet, falling back to its brand and district", async () => {
+    loadStoreOrdersMock.mockResolvedValue([]);
+    loadIncomingDeliveryMock.mockResolvedValue(null);
+    getWeatherMock.mockResolvedValue(null as never);
+    const server = await build(prismaWith({ ...outlet, displayName: null }));
+    servers.push(server);
+
+    const response = await server.inject({ method: "GET", url: "/v1/store/today?date=2026-09-29" });
+
+    expect(response.json().outletName).toBe("Fresh Puttalam");
   });
 
   it("refuses an account with no outlet rather than guessing one", async () => {

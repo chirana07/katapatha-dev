@@ -19,7 +19,8 @@ vi.mock("../lib/db.js", () => ({
   prisma: {
     trip: { findMany: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
     loadCheck: { upsert: vi.fn() },
-    shortfall: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    shortfall: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    chillerReading: { findMany: vi.fn() },
     auditEvent: { createMany: vi.fn() },
     $transaction: vi.fn(),
   },
@@ -66,6 +67,9 @@ describe("the loader's trip routes", () => {
     vi.resetAllMocks();
     // Access is granted by default; the denial cases opt out explicitly.
     requireLoaderTripMock.mockResolvedValue({} as never);
+    // Nothing holds a trip and nobody has read a gauge, unless a test says so.
+    vi.mocked(prisma.shortfall.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.chillerReading.findMany).mockResolvedValue([] as never);
     // Every mutation runs inside one transaction. Handing the callback the same
     // mocked client keeps the assertions about `tx.*` calls readable.
     vi.mocked(prisma.$transaction).mockImplementation(
@@ -137,6 +141,31 @@ describe("the loader's trip routes", () => {
       expect(response.json()[0]).toMatchObject({ id: "TRP001", plannedMinutes: 182 });
     });
 
+    it("marks a trip held by an open shortfall, and carries its latest chiller reading", async () => {
+      const server = await serverFor();
+      vi.mocked(prisma.trip.findMany).mockResolvedValue([trip, { ...trip, id: "TRP002" }] as never);
+      vi.mocked(prisma.shortfall.findMany).mockResolvedValue([{ tripId: "TRP002" }] as never);
+      vi.mocked(prisma.chillerReading.findMany).mockResolvedValue([
+        {
+          tripId: "TRP001", tempC: 6, targetMinC: 2, targetMaxC: 5, source: "LOADER_AT_BAY",
+          recordedByName: "Ranjith Silva", recordedAt: new Date(Date.now() - 61 * 60_000),
+        },
+      ] as never);
+
+      const response = await server.inject({ method: "GET", url: "/v1/trips?date=2026-04-09" });
+
+      const [first, second] = response.json() as Array<{ blocked: boolean; chiller: Record<string, unknown> | null }>;
+      expect(first!.blocked).toBe(false);
+      expect(first!.chiller).toMatchObject({ tempC: 6, inRange: false, recordedByName: "Ranjith Silva" });
+      expect(first!.chiller!.ageSeconds).toBeGreaterThanOrEqual(61 * 60);
+      expect(second!.blocked).toBe(true);
+      expect(second!.chiller).toBeNull();
+      // Blocking means open AND blocking departure; a resolved one frees the vehicle.
+      expect(vi.mocked(prisma.shortfall.findMany).mock.calls[0]![0]).toMatchObject({
+        where: { status: "OPEN", blocksDeparture: true },
+      });
+    });
+
     it("returns nothing, and queries nothing, for an account with no depot", async () => {
       const server = await serverFor({ ...loader, depotCode: null });
 
@@ -145,6 +174,35 @@ describe("the loader's trip routes", () => {
       expect(response.statusCode).toBe(200);
       expect(response.json()).toEqual([]);
       expect(prisma.trip.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("GET /v1/trips/:tripId", () => {
+    it("returns one trip with its day and depot, once the depot check passes", async () => {
+      const server = await serverFor();
+      requireLoaderTripMock.mockResolvedValue({
+        ...trip,
+        plannedMinutes: 182.4,
+        plan: { planningDay: { date: new Date("2026-04-09T00:00:00.000Z"), depotCode: "Peliyagoda" } },
+      } as never);
+      vi.mocked(prisma.shortfall.findMany).mockResolvedValue([{ tripId: "TRP001" }] as never);
+
+      const response = await server.inject({ method: "GET", url: "/v1/trips/TRP001" });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        id: "TRP001", vehicleId: "VEH043", plannedMinutes: 182, blocked: true,
+        date: "2026-04-09", depotCode: "Peliyagoda", chiller: null,
+      });
+    });
+
+    it("answers 404, not 403, for a trip at another depot", async () => {
+      const server = await serverFor();
+      requireLoaderTripMock.mockRejectedValue(new Error("denied"));
+
+      const response = await server.inject({ method: "GET", url: "/v1/trips/TRP999" });
+
+      expect(response.statusCode).toBe(404);
     });
   });
 
@@ -158,6 +216,9 @@ describe("the loader's trip routes", () => {
         { seq: 1, outletId: "OUT100", orders: [{ order: { id: "ORD1", ref: "ORD-1", units: 10 } }] },
       ],
       loadChecks: [{ orderId: "ORD2", loadedUnits: 18, condition: "SHORT" as const }],
+      shortfalls: [] as Array<{
+        id: string; orderId: string; status: "OPEN" | "RESOLVED"; blocksDeparture: boolean; resolution: string | null;
+      }>,
     };
 
     it("returns the lines in reverse delivery order, because the dock loads back to front", async () => {
@@ -198,6 +259,31 @@ describe("the loader's trip routes", () => {
         condition: "SHORT",
       });
       expect(lines[0]).toMatchObject({ orderId: "ORD3", loadedUnits: null, condition: null });
+    });
+
+    it("says what became of a line's shortfall, so a cleared line is not mistaken for a waiting one", async () => {
+      const server = await serverFor();
+      vi.mocked(prisma.trip.findUnique).mockResolvedValue({
+        ...loadListTrip,
+        shortfalls: [
+          // Newest first: the open one on ORD3 is the current word on it, the
+          // resolved one beneath it is history.
+          { id: "SF3", orderId: "ORD3", status: "OPEN", blocksDeparture: true, resolution: null },
+          { id: "SF2", orderId: "ORD2", status: "RESOLVED", blocksDeparture: false, resolution: "SEND_SHORT" },
+          { id: "SF1", orderId: "ORD3", status: "RESOLVED", blocksDeparture: false, resolution: "HOLD_ORDER" },
+        ],
+      } as never);
+
+      const response = await server.inject({ method: "GET", url: "/v1/trips/TRP001/load-list" });
+
+      const lines = response.json().lines as Array<{ orderId: string; shortfall: unknown }>;
+      expect(lines.find((l) => l.orderId === "ORD3")!.shortfall).toEqual({
+        id: "SF3", status: "OPEN", blocksDeparture: true, resolution: null,
+      });
+      expect(lines.find((l) => l.orderId === "ORD2")!.shortfall).toEqual({
+        id: "SF2", status: "RESOLVED", blocksDeparture: false, resolution: "SEND_SHORT",
+      });
+      expect(lines.find((l) => l.orderId === "ORD1")!.shortfall).toBeNull();
     });
 
     it("answers 404 for a trip outside the loader's depot", async () => {

@@ -70,7 +70,7 @@ const INCOMING_DELIVERY = {
   additionalProperties: false,
   required: [
     "orderId", "ref", "brand", "tempRequirement", "units", "vehicleId",
-    "districtName", "depotCode", "stopsBefore", "legMinutes", "departed", "steps",
+    "districtName", "depotCode", "stopsBefore", "legMinutes", "departed", "arrival", "steps",
   ],
   properties: {
     orderId: { type: "string" },
@@ -86,6 +86,27 @@ const INCOMING_DELIVERY = {
     legMinutes: { type: "integer" },
     minutesAway: { type: ["integer", "null"] },
     departed: { type: "boolean" },
+    report: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["reportedAt", "ageSeconds", "lamp"],
+      properties: {
+        reportedAt: { type: "string" },
+        ageSeconds: { type: "integer" },
+        lamp: { type: "boolean" },
+      },
+    },
+    arrival: {
+      type: "object",
+      additionalProperties: false,
+      required: ["basis", "at", "from", "to"],
+      properties: {
+        basis: { type: "string", enum: ["plan", "report", "estimate"] },
+        at: NULLABLE_CLOCK,
+        from: NULLABLE_CLOCK,
+        to: NULLABLE_CLOCK,
+      },
+    },
     steps: {
       type: "array",
       items: {
@@ -222,7 +243,9 @@ export default async function (fastify: FastifyInstance) {
 
     return {
       outletId: outlet.id,
-      ...(outlet.displayName ? { outletName: outlet.displayName } : {}),
+      // A name the outlet has been given, else the brand and district — never
+      // absent, so a client does not have to invent a heading.
+      outletName: outlet.displayName ?? `${outlet.brand} ${outlet.districtName}`,
       brand: outlet.brand,
       date: day,
       // The mall window, where there is one, is the binding constraint: a mall
@@ -232,7 +255,7 @@ export default async function (fastify: FastifyInstance) {
       accessNote: accessNoteFor(outlet),
       incoming,
       orders,
-      counts: countsFor(orders),
+      counts: countsFor(orders, await openIssueOrderIds(fastify, orders)),
       weather,
     };
   });
@@ -253,14 +276,31 @@ async function firstIncoming(orders: StoreOrderView[]) {
   return candidate ? await loadIncomingDelivery(candidate) : null;
 }
 
-function countsFor(orders: StoreOrderView[]) {
+/**
+ * Orders with a problem still open against them. The count was only "delivered
+ * short" before, so an outlet that had reported damage saw zero issues.
+ */
+async function openIssueOrderIds(fastify: FastifyInstance, orders: StoreOrderView[]): Promise<Set<string>> {
+  if (orders.length === 0) return new Set();
+  const rows = await fastify.prisma.problem.findMany({
+    where: { orderId: { in: orders.map((o) => o.id) }, status: { not: "RESOLVED" } },
+    select: { orderId: true },
+  });
+  return new Set(rows.flatMap((r) => (r.orderId ? [r.orderId] : [])));
+}
+
+function countsFor(orders: StoreOrderView[], withOpenIssue: Set<string> = new Set()) {
   return {
     expected: orders.filter((order) => order.state === "planned" || order.state === "on_the_way").length,
     confirmed: orders.filter((order) => order.receiptConfirmed).length,
     // Delivered but not yet confirmed by the outlet — the one thing on this
     // screen that is the store manager's own action to take.
     pending: orders.filter((order) => order.state === "delivered" && !order.receiptConfirmed).length,
-    issues: orders.filter((order) => order.deliveredUnits !== null && order.deliveredUnits < order.units).length,
+    issues: orders.filter(
+      (order) =>
+        withOpenIssue.has(order.id) ||
+        (order.deliveredUnits !== null && order.deliveredUnits < order.units),
+    ).length,
   };
 }
 

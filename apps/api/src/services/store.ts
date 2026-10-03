@@ -2,6 +2,13 @@
 
 import { nextOperatingDate as coreNextOperatingDate } from "@katapatha/core/domain/deferral";
 import { prisma } from "../lib/db";
+import {
+  ageSecondsOf,
+  clockMinutes,
+  clockOf,
+  isLamp,
+  lateMinutes,
+} from "./positions";
 
 /**
  * What a store manager needs to know.
@@ -212,7 +219,56 @@ export interface IncomingDelivery {
   /** Minutes from now until the planned arrival, when that is a sane number. */
   minutesAway: number | null;
   departed: boolean;
+  /**
+   * What the driver's phone last reported for this trip, and how old that is.
+   * Null when nothing has been reported since the trip was released. Position
+   * itself is not exposed to a store — the age is the claim that matters.
+   */
+  report: { reportedAt: string; ageSeconds: number; lamp: boolean } | null;
+  /**
+   * The arrival, stated as strongly as the evidence allows: a single time only
+   * while a fresh report supports it, a range once it is uncertain, and the
+   * plan before the vehicle has left. See `estimateArrival`.
+   */
+  arrival: ArrivalEstimate;
   steps: DeliveryStep[];
+}
+
+export interface ArrivalEstimate {
+  basis: "plan" | "report" | "estimate";
+  /** Set for basis "plan" and "report". */
+  at: string | null;
+  /** Set for basis "estimate". */
+  from: string | null;
+  to: string | null;
+}
+
+/**
+ * DOMAIN.md: "An arrival time is a range once it is uncertain. A single clock
+ * time is shown only while a fresh report supports it."
+ *
+ * Centre = the planned arrival pushed back by how far behind the trip already
+ * is (the slip at the last stop the driver arrived at). Uncertainty grows with
+ * the age of the last report: five minutes early at most, and up to the report's
+ * age late, never narrower than fifteen minutes nor wider than forty-five. It is
+ * a judgement, written down here so nobody mistakes the width for a statistic.
+ */
+export function estimateArrival(input: {
+  etaAt: string | null;
+  departed: boolean;
+  slipMinutes: number;
+  reportAgeSeconds: number | null;
+}): ArrivalEstimate {
+  if (!input.etaAt) return { basis: "plan", at: null, from: null, to: null };
+  if (!input.departed) return { basis: "plan", at: input.etaAt, from: null, to: null };
+
+  const centre = clockMinutes(input.etaAt) + input.slipMinutes;
+  const fresh = input.reportAgeSeconds !== null && !isLamp(input.reportAgeSeconds);
+  if (fresh) return { basis: "report", at: clockOf(centre), from: null, to: null };
+
+  const ageMinutes = input.reportAgeSeconds === null ? 0 : Math.round(input.reportAgeSeconds / 60);
+  const width = Math.min(45, Math.max(15, ageMinutes));
+  return { basis: "estimate", at: null, from: clockOf(centre - 5), to: clockOf(centre + width) };
 }
 
 /** Device-free clock, matching the convention the driver's events are written in. */
@@ -299,6 +355,29 @@ export async function loadIncomingDelivery(
     },
   ];
 
+  // Only reports made while this trip was out count: a ping from the dock
+  // before departure says nothing about where the vehicle is now.
+  const latest = departed
+    ? await prisma.vehiclePing.findFirst({
+        where: { tripId: stop.tripId },
+        orderBy: { recordedAt: "desc" },
+        select: { recordedAt: true },
+      })
+    : null;
+  const now = new Date();
+  const report = latest
+    ? (() => {
+        const ageSeconds = ageSecondsOf(latest.recordedAt, now);
+        return { reportedAt: latest.recordedAt.toISOString(), ageSeconds, lamp: isLamp(ageSeconds) };
+      })()
+    : null;
+  const tripStops = departed
+    ? await prisma.tripStop.findMany({
+        where: { tripId: stop.tripId },
+        select: { seq: true, plannedArrivalAt: true, arrivedAt: true, status: true },
+      })
+    : [];
+
   return {
     orderId: view.id,
     ref: view.ref,
@@ -306,6 +385,13 @@ export async function loadIncomingDelivery(
     tempRequirement: view.tempRequirement,
     units: view.units,
     etaAt: view.etaAt,
+    report,
+    arrival: estimateArrival({
+      etaAt: view.etaAt,
+      departed,
+      slipMinutes: lateMinutes(tripStops),
+      reportAgeSeconds: report?.ageSeconds ?? null,
+    }),
     vehicleId: stop.trip.vehicleId,
     districtName: stop.outlet.districtName,
     depotCode: stop.outlet.depotCode,

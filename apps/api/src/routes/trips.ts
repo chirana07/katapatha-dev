@@ -3,6 +3,7 @@ import type { LoadCondition, TripStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { requireLoaderTrip, requireOrderOnTrip } from "../lib/authorization.js";
 import { recordDecisions } from "../lib/audit.js";
+import { chillerView } from "../services/vehicles.js";
 
 /**
  * Owner: BE3
@@ -49,6 +50,33 @@ const TRIP = {
     plannedMinutes: { type: "integer" },
     sumWeightKg: { type: "number" },
     sumVolumeM3: { type: "number" },
+    // Additive. Whether an open shortfall is holding this trip at the dock, and
+    // the latest chiller reading for a refrigerated vehicle. Both were only
+    // readable by a dispatcher, so the loader could not tell a line the
+    // dispatcher had cleared from one still waiting.
+    blocked: { type: "boolean" },
+    chiller: {
+      oneOf: [
+        { type: "null" },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["tempC", "targetMinC", "targetMaxC", "inRange", "source", "recordedAt", "ageSeconds"],
+          properties: {
+            tempC: { type: "number" },
+            targetMinC: { type: "number" },
+            targetMaxC: { type: "number" },
+            inRange: { type: "boolean" },
+            source: { type: "string", enum: ["LOADER_AT_BAY", "DRIVER_ON_ARRIVAL"] },
+            recordedByName: { oneOf: [{ type: "string" }, { type: "null" }] },
+            recordedAt: { type: "string" },
+            ageSeconds: { type: "integer" },
+          },
+        },
+      ],
+    },
+    date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+    depotCode: { type: "string" },
   },
 } as const;
 
@@ -81,6 +109,30 @@ const LOAD_LIST = {
               { type: "null" },
             ],
           },
+          // Additive. The shortfall raised for this line, if any, and what became
+          // of it. A line the dispatcher sent short keeps condition SHORT
+          // forever; this is what says the dock is no longer waiting on it.
+          shortfall: {
+            oneOf: [
+              { type: "null" },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "status", "blocksDeparture"],
+                properties: {
+                  id: { type: "string" },
+                  status: { type: "string", enum: ["OPEN", "RESOLVED"] },
+                  blocksDeparture: { type: "boolean" },
+                  resolution: {
+                    oneOf: [
+                      { type: "string", enum: ["SEND_SHORT", "HOLD_ORDER", "MOVE_TO_TRIP_2", "CANCEL_LINE"] },
+                      { type: "null" },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
         },
       },
     },
@@ -104,6 +156,57 @@ const LOAD_CHECK_RESPONSE = {
 function parseDate(value: unknown): Date | undefined {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
   return new Date(`${value}T00:00:00.000Z`);
+}
+
+type TripRow = Awaited<ReturnType<typeof prisma.trip.findMany>>[number];
+type TripExtras = Awaited<ReturnType<typeof tripExtras>>;
+
+/** The trip as the loader sees it, with what is holding it at the dock. */
+function tripView(trip: TripRow, extras: TripExtras, more: { date?: string; depotCode?: string } = {}) {
+  return {
+    id: trip.id,
+    vehicleId: trip.vehicleId,
+    tripNo: trip.tripNo as 1 | 2,
+    brand: trip.brand,
+    districtName: trip.districtName,
+    wave: trip.wave,
+    status: trip.status,
+    plannedDepartAt: trip.plannedDepartAt,
+    plannedMinutes: Math.round(trip.plannedMinutes),
+    sumWeightKg: trip.sumWeightKg,
+    sumVolumeM3: trip.sumVolumeM3,
+    blocked: extras.blocked.has(trip.id),
+    chiller: extras.chiller.get(trip.id) ?? null,
+    ...more,
+  };
+}
+
+/**
+ * Two lookups for a set of trips, each one query: which are held by an open
+ * shortfall, and the latest chiller reading on each.
+ */
+async function tripExtras(tripIds: string[]) {
+  if (tripIds.length === 0) {
+    return { blocked: new Set<string>(), chiller: new Map<string, ReturnType<typeof chillerView>>() };
+  }
+  const [open, readings] = await Promise.all([
+    prisma.shortfall.findMany({
+      where: { tripId: { in: tripIds }, status: "OPEN", blocksDeparture: true },
+      select: { tripId: true },
+    }),
+    prisma.chillerReading.findMany({
+      where: { tripId: { in: tripIds } },
+      orderBy: [{ tripId: "asc" }, { recordedAt: "desc" }],
+      distinct: ["tripId"],
+    }),
+  ]);
+  const now = new Date();
+  return {
+    blocked: new Set(open.map((s) => s.tripId)),
+    chiller: new Map(
+      readings.flatMap((r) => (r.tripId ? [[r.tripId, chillerView(r, now)] as const] : [])),
+    ),
+  };
 }
 
 export default async function (fastify: FastifyInstance) {
@@ -148,19 +251,40 @@ export default async function (fastify: FastifyInstance) {
         take: 100,
       });
 
-      return trips.map((trip) => ({
-        id: trip.id,
-        vehicleId: trip.vehicleId,
-        tripNo: trip.tripNo as 1 | 2,
-        brand: trip.brand,
-        districtName: trip.districtName,
-        wave: trip.wave,
-        status: trip.status,
-        plannedDepartAt: trip.plannedDepartAt,
-        plannedMinutes: Math.round(trip.plannedMinutes),
-        sumWeightKg: trip.sumWeightKg,
-        sumVolumeM3: trip.sumVolumeM3,
-      }));
+      const extras = await tripExtras(trips.map((t) => t.id));
+      return trips.map((trip) => tripView(trip, extras));
+    },
+  );
+
+  fastify.get(
+    "/trips/:tripId",
+    {
+      schema: {
+        params: {
+          type: "object",
+          required: ["tripId"],
+          properties: { tripId: { type: "string", minLength: 1 } },
+        },
+        response: { 200: TRIP, 403: ERROR_RESPONSE, 404: ERROR_RESPONSE },
+      },
+    },
+    async (request, reply) => {
+      const user = request.requireRole("LOADER", "DISPATCHER");
+      const { tripId } = request.params as { tripId: string };
+
+      let found;
+      try {
+        found = await requireLoaderTrip(user, tripId);
+      } catch {
+        return reply
+          .status(404)
+          .send({ error: { code: "NOT_FOUND", message: "Trip not found at this depot." } });
+      }
+      const extras = await tripExtras([found.id]);
+      return tripView(found, extras, {
+        date: found.plan.planningDay.date.toISOString().slice(0, 10),
+        depotCode: found.plan.planningDay.depotCode,
+      });
     },
   );
 
@@ -214,6 +338,11 @@ export default async function (fastify: FastifyInstance) {
               condition: true,
             },
           },
+          // Newest first, so the first one per order is the one that counts.
+          shortfalls: {
+            orderBy: { raisedAt: "desc" },
+            select: { id: true, orderId: true, status: true, blocksDeparture: true, resolution: true },
+          },
         },
       });
       if (!trip) {
@@ -223,6 +352,8 @@ export default async function (fastify: FastifyInstance) {
       }
 
       const checkByOrderId = new Map(trip.loadChecks.map((c) => [c.orderId, c]));
+      const shortfallByOrderId = new Map<string, (typeof trip.shortfalls)[number]>();
+      for (const s of trip.shortfalls) if (!shortfallByOrderId.has(s.orderId)) shortfallByOrderId.set(s.orderId, s);
       const lines = trip.stops.flatMap((stop) =>
         stop.orders.map(({ order }) => {
           const check = checkByOrderId.get(order.id);
@@ -234,6 +365,11 @@ export default async function (fastify: FastifyInstance) {
             expectedUnits: order.units,
             loadedUnits: check?.loadedUnits ?? null,
             condition: check?.condition ?? null,
+            shortfall: shortfallByOrderId.has(order.id)
+              ? (({ id, status, blocksDeparture, resolution }) => ({ id, status, blocksDeparture, resolution }))(
+                  shortfallByOrderId.get(order.id)!,
+                )
+              : null,
           };
         }),
       );

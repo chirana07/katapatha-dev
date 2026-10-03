@@ -312,7 +312,10 @@ export async function runAutoPlan(
             reasonCode: d.reasonCode,
             permanent: d.permanent,
             explanation: d.explanation,
-            nearMiss: d.nearMiss ?? null,
+            // The allocator's metric is a record ({name, have, limit, unit});
+            // the contract and every reader want the metric's name. Stored
+            // flat, because a plan whose board returns 500 cannot be published.
+            nearMiss: d.nearMiss ? { ...d.nearMiss, metric: d.nearMiss.metric.name } : null,
             suggestion: d.suggestion ?? null,
           }),
         },

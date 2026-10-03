@@ -23,7 +23,14 @@ interface StoredCause {
   reasonCode?: string;
   permanent?: boolean;
   explanation?: Array<{ code: string; count: number; sample?: string }>;
-  nearMiss?: { vehicleId: string; metric: string; short: number; unit: string } | null;
+  // `metric` is a string now. Drafts built before that was fixed stored the
+  // allocator's whole record, so a reader must accept both.
+  nearMiss?: {
+    vehicleId: string;
+    metric: string | { name: string };
+    short: number;
+    unit: string;
+  } | null;
   suggestion?: string | null;
 }
 
@@ -48,7 +55,12 @@ function causeOf(assignment: LoadedAssignment) {
       count: line.count,
       sample: line.sample ?? null,
     })),
-    nearMiss: raw.nearMiss ?? null,
+    nearMiss: raw.nearMiss
+      ? {
+          ...raw.nearMiss,
+          metric: typeof raw.nearMiss.metric === "string" ? raw.nearMiss.metric : raw.nearMiss.metric.name,
+        }
+      : null,
     suggestion: raw.suggestion ?? null,
   };
 }
