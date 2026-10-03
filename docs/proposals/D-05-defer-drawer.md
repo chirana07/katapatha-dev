@@ -20,6 +20,15 @@
 - The store message is built by one function, `deferralMessage()` in
   `@katapatha/core/domain/deferral`. The API writes it into the notification
   and the drawer previews the same string.
+- **The store actually sees it.** `GET /orders` gains an optional `deferral`
+  (`reasonCode`, `rolledToDate`) from the latest *published* deferral. The
+  store list shows "Moves to Fri 10 Apr", and the order page shows the same
+  message the drawer previewed. (The `Notification` row is also written, but
+  no screen reads notifications yet.)
+- **Rehearsal scenarios:** `pnpm demo:scenario <default|reefer-tight|reefer-out>`
+  after `demo:reset` sets which vehicles are in the workshop on the hero day,
+  so the allocator produces real competitive deferrals. `reefer-out` defers
+  DEMO-006 at OUT074, which Fathima can see.
 - C1 step 4 (rolling the order into tomorrow's queue) is **not** done. It's
   still its own ticket.
 

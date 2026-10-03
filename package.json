@@ -20,7 +20,8 @@
     "db:seed": "pnpm --filter @katapatha/api db:seed",
     "db:studio": "pnpm --filter @katapatha/api db:studio",
     "demo:reset": "node scripts/demo-reset.mjs",
-    "demo:smoke": "node scripts/demo-smoke.mjs"
+    "demo:smoke": "node scripts/demo-smoke.mjs",
+    "demo:scenario": "pnpm --filter @katapatha/api exec tsx prisma/seed/scenario.ts"
   },
   "devDependencies": {
     "turbo": "2.5.8",
