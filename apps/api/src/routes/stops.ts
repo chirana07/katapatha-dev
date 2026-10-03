@@ -1,40 +1,13 @@
 import type { FastifyInstance } from "fastify";
-import type { ConflictState, ProblemKind } from "@prisma/client";
-import { prisma } from "../lib/db.js";
+import { resolveStopAccess } from "../services/conflicts.js";
 import {
-  detectConflict,
-  loadConflictContexts,
-  recordConflictedEvent,
-  resolveStopAccess,
-  type StopConflictContext,
-} from "../services/conflicts.js";
-import {
-  arriveAtStop,
-  completeStop,
-  reportProblem,
-  startUnloading,
-} from "../services/delivery.js";
-
-// Driver-reported problem reasons from the vocabulary → Prisma ProblemKind.
-// The vocab is the one BE1 publishes at /reference/vocabularies.problemReasons;
-// anything we don't recognise falls back to OTHER so the dispatcher still
-// sees the event rather than losing it to a strict mapping.
-function toProblemKind(code: string | null | undefined): ProblemKind {
-  switch (code) {
-    case "OUTLET_CLOSED":
-      return "OUTLET_CLOSED";
-    case "ROAD_BLOCKED":
-      return "ROAD_BLOCKED";
-    case "VEHICLE_BREAKDOWN":
-      return "VEHICLE_BREAKDOWN";
-    case "ACCESS_DENIED":
-      return "ACCESS_DENIED";
-    case "DELIVERY_REFUSED":
-      return "DELIVERY_REFUSED";
-    default:
-      return "OTHER";
-  }
-}
+  applyStopEvents,
+  EVENT_BODY_LIMIT,
+  EVENT_RESULT_PROPERTIES,
+  InvalidEventError,
+  STOP_EVENT_REQUEST_ITEM,
+  type IncomingEvent,
+} from "../services/stopEvents.js";
 
 /**
  * Owner: BE3
@@ -44,11 +17,16 @@ function toProblemKind(code: string | null | undefined): ProblemKind {
  * endpoint, which is also what the sync batch endpoint drains to — same
  * applier, online or outbox, so the two paths cannot diverge.
  *
- * Idempotency: every incoming event carries a client-minted ULID. If
- * that id is already in StopEvent, we count it as a duplicate without
- * re-applying. The underlying services also no-op if the stop is
- * already past the state the event would advance it to, so a replay
- * from a flaky driver phone is always safe.
+ * Idempotency: every incoming event carries a client-minted ULID, and it IS
+ * the StopEvent primary key. An id already stored is a duplicate: counted, not
+ * re-applied, and none of its side effects (order and stop status, the store's
+ * notification, the decision log) run again. See services/stopEvents.ts, which
+ * the sync route shares, so the two paths are one applier.
+ *
+ * Validation: unlike the sync route, a bad event fails the whole request with
+ * 422 and writes nothing, because the caller here is a person who can fix it.
+ * An event the stop's state refuses (a delivery for a stop already completed)
+ * comes back in `rejected` instead.
  *
  * Conflicts: a stop can move to another vehicle, or be delivered by one,
  * between the moment the device recorded a fact and the moment it reaches
@@ -76,55 +54,16 @@ const ERROR_RESPONSE = {
 const SUBMIT_EVENTS_RESULT = {
   type: "object",
   additionalProperties: false,
-  required: ["accepted", "duplicates", "conflicts", "results"],
-  properties: {
-    accepted: { type: "integer" },
-    duplicates: { type: "integer" },
-    conflicts: { type: "integer" },
-    results: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["id", "status"],
-        properties: {
-          id: { type: "string" },
-          status: { type: "string", enum: ["accepted", "duplicate", "conflict"] },
-          conflictState: {
-            oneOf: [
-              { type: "string", enum: ["NONE", "STALE_ASSIGNMENT", "SUPERSEDED"] },
-              { type: "null" },
-            ],
-          },
-        },
-      },
-    },
-  },
+  required: ["accepted", "duplicates", "conflicts", "results", "rejected"],
+  properties: EVENT_RESULT_PROPERTIES,
 } as const;
-
-type IncomingEvent = {
-  id: string;
-  type:
-    | "ARRIVED"
-    | "UNLOAD_START"
-    | "DELIVERED"
-    | "PART_DELIVERED"
-    | "FAILED"
-    | "SKIPPED"
-    | "POD_CAPTURED";
-  occurredAt: string;
-  orderId?: string | null;
-  deliveredUnits?: number | null;
-  recipientName?: string | null;
-  signatureData?: string | null;
-  photoData?: string | null;
-  reasonCode?: string | null;
-};
 
 export default async function (fastify: FastifyInstance) {
   fastify.post(
     "/stops/:stopId/events",
     {
+      // Eight pages of receipt photo do not fit in Fastify's default 1 MiB.
+      bodyLimit: EVENT_BODY_LIMIT,
       schema: {
         params: {
           type: "object",
@@ -137,39 +76,7 @@ export default async function (fastify: FastifyInstance) {
           required: ["deviceId", "events"],
           properties: {
             deviceId: { type: "string", minLength: 1 },
-            events: {
-              type: "array",
-              minItems: 1,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["id", "type", "occurredAt"],
-                properties: {
-                  id: { type: "string", pattern: "^[0-9A-HJKMNP-TV-Z]{26}$" },
-                  type: {
-                    type: "string",
-                    enum: [
-                      "ARRIVED",
-                      "UNLOAD_START",
-                      "DELIVERED",
-                      "PART_DELIVERED",
-                      "FAILED",
-                      "SKIPPED",
-                      "POD_CAPTURED",
-                    ],
-                  },
-                  occurredAt: { type: "string", format: "date-time" },
-                  orderId: { oneOf: [{ type: "string" }, { type: "null" }] },
-                  deliveredUnits: {
-                    oneOf: [{ type: "integer", minimum: 0 }, { type: "null" }],
-                  },
-                  recipientName: { oneOf: [{ type: "string" }, { type: "null" }] },
-                  signatureData: { oneOf: [{ type: "string" }, { type: "null" }] },
-                  photoData: { oneOf: [{ type: "string" }, { type: "null" }] },
-                  reasonCode: { oneOf: [{ type: "string" }, { type: "null" }] },
-                },
-              },
-            },
+            events: { type: "array", minItems: 1, items: STOP_EVENT_REQUEST_ITEM },
           },
         },
         response: {
@@ -194,221 +101,31 @@ export default async function (fastify: FastifyInstance) {
           .status(404)
           .send({ error: { code: "NOT_FOUND", message: "Stop not on this driver's run." } });
       }
-      const actor = { userId: user.id, vehicleId: user.defaultVehicleId, deviceId: body.deviceId };
 
-      // Dedup first: any event id already recorded is a duplicate. The stored
-      // conflictState comes back with it so a replayed conflict can be reported
-      // as the conflict it was rather than as a plain duplicate.
-      const incomingIds = body.events.map((e) => e.id);
-      const existing = await prisma.stopEvent.findMany({
-        where: { id: { in: incomingIds } },
-        select: { id: true, conflictState: true },
-      });
-      const recordedState = new Map(existing.map((e) => [e.id, e.conflictState]));
-
-      // Ownership history, but only when something here would be applied: a
-      // request that is entirely a replay decides nothing with it.
-      const hasNewWork = body.events.some((e) => !recordedState.has(e.id));
-      const conflictContexts: Map<string, StopConflictContext> = hasNewWork
-        ? await loadConflictContexts([stopId])
-        : new Map();
-
-      const results: Array<{
-        id: string;
-        status: "accepted" | "duplicate" | "conflict";
-        conflictState: ConflictState | null;
-      }> = [];
-      let accepted = 0;
-      let duplicates = 0;
-      let conflicts = 0;
-
-      // Group completion events (DELIVERED/PART_DELIVERED + POD_CAPTURED) so
-      // we can call completeStop once with the right line list — the service
-      // takes an array of {orderId, units, expected}.
-      const completionLines: Array<{ eventId: string; orderId: string; units: number; expected: number }> = [];
-      let completionRecipient: string | null = null;
-      let completionSignature: string | undefined;
-      let completionPhoto: string | undefined;
-      let podEventId: string | null = null;
-      // The POD event's device clock stands for the whole completion, since a
-      // delivery is one act even though it produces several events.
-      let completionOccurredAt: Date | undefined;
-
-      // Preload expected units per order on this stop for the completion path.
-      const stopOrders = await prisma.tripStopOrder.findMany({
-        where: { tripStopId: stopId },
-        select: { order: { select: { id: true, units: true } } },
-      });
-      const expectedById = new Map(stopOrders.map((row) => [row.order.id, row.order.units]));
-
-      for (const event of body.events) {
-        const alreadyRecorded = recordedState.get(event.id);
-        if (alreadyRecorded !== undefined) {
-          // A duplicate either way — the row exists and nothing is re-applied.
-          // But a replay of a conflicted event is still reported as a conflict,
-          // with the state the server stored, so the device settles the row
-          // terminally instead of retrying it forever. It is counted under
-          // `duplicates`: the conflict was counted when it was first detected,
-          // and counting it again on every replay would be a lie about how many
-          // conflicts happened.
-          duplicates += 1;
-          results.push(
-            alreadyRecorded === "NONE"
-              ? { id: event.id, status: "duplicate", conflictState: "NONE" }
-              : { id: event.id, status: "conflict", conflictState: alreadyRecorded },
-          );
-          continue;
-        }
-
-        const occurredAt = new Date(event.occurredAt);
-        // Access granted only on the strength of a reassignment means the stop
-        // is someone else's now, so the event cannot apply to it whatever its
-        // timing: their assignment is stale by definition.
-        const conflictState: ConflictState =
-          access === "REASSIGNED_AWAY"
-            ? "STALE_ASSIGNMENT"
-            : detectConflict(conflictContexts.get(stopId), { occurredAt }, actor);
-
-        if (conflictState !== "NONE") {
-          await recordConflictedEvent({
-            stopId,
-            conflictState,
-            fact: { ...event, occurredAt },
-            orderOnStop: event.orderId != null && expectedById.has(event.orderId),
-            actor,
-          });
-          conflicts += 1;
-          results.push({ id: event.id, status: "conflict", conflictState });
-          continue;
-        }
-
-        // The client's own identity and timing for this fact. The id becomes the
-        // StopEvent primary key, which is what makes the dedup check above work at
-        // all: with a server-generated id the table never contains the ids being
-        // looked up, so every replay reports `accepted` and `duplicate` -- which
-        // the contract calls "a success, not an error" -- could never be returned.
-        // occurredAt is the DEVICE clock; the server's receipt time is recorded
-        // separately by StopEvent.recordedAt.
-        const meta = { id: event.id, occurredAt, deviceId: body.deviceId };
-
-        try {
-          if (event.type === "ARRIVED") {
-            await arriveAtStop(stopId, user, meta);
-          } else if (event.type === "UNLOAD_START") {
-            await startUnloading(stopId, user, meta);
-          } else if (event.type === "DELIVERED" || event.type === "PART_DELIVERED") {
-            if (!event.orderId || event.deliveredUnits == null) {
-              return reply.status(422).send({
-                error: {
-                  code: "DELIVERED_INCOMPLETE",
-                  message: "DELIVERED/PART_DELIVERED events need orderId and deliveredUnits.",
-                },
-              });
-            }
-            const expected = expectedById.get(event.orderId);
-            if (expected == null) {
-              return reply.status(422).send({
-                error: {
-                  code: "ORDER_NOT_ON_STOP",
-                  message: "That order is not on this stop.",
-                },
-              });
-            }
-            completionLines.push({
-              eventId: event.id,
-              orderId: event.orderId,
-              units: event.deliveredUnits,
-              expected,
-            });
-            if (event.recipientName) completionRecipient = event.recipientName;
-          } else if (event.type === "POD_CAPTURED") {
-            if (event.recipientName) completionRecipient = event.recipientName;
-            if (event.signatureData) completionSignature = event.signatureData;
-            if (event.photoData) completionPhoto = event.photoData;
-            podEventId = event.id;
-            completionOccurredAt = meta.occurredAt;
-          } else if (event.type === "FAILED") {
-            await reportProblem(
-              user,
-              {
-                kind: toProblemKind(event.reasonCode),
-                note: event.reasonCode ?? "Driver reported a problem.",
-                tripStopId: stopId,
-                outcome: "FAILED",
-              },
-              meta,
-            );
-          } else if (event.type === "SKIPPED") {
-            // A problem with a reason, but NOT a failure: the outlet may have been
-            // closed and the driver moved on. DOMAIN.md keeps SKIPPED and FAILED
-            // as separate stop statuses, so the outcome is passed through rather
-            // than flattened to FAILED.
-            await reportProblem(
-              user,
-              {
-                kind: toProblemKind(event.reasonCode),
-                note: event.reasonCode ?? "Stop skipped.",
-                tripStopId: stopId,
-                outcome: "SKIPPED",
-              },
-              meta,
-            );
-          }
-
-          accepted += 1;
-          results.push({ id: event.id, status: "accepted", conflictState: "NONE" });
-        } catch (error) {
-          return reply.status(409).send({
-            error: {
-              code: "APPLY_FAILED",
-              message: error instanceof Error ? error.message : "Could not apply event.",
-            },
-          });
-        }
-      }
-
-      // Flush any grouped completion in one service call. The client's ULIDs are
-      // passed through -- one per delivered line plus the POD's -- so they become
-      // the StopEvent primary keys and the dedup check above can recognise a
-      // replay. completeStop also no-ops when the stop is already DONE, so the
-      // state machine is a second line of defence rather than the only one.
-      if (completionLines.length > 0) {
-        if (!completionRecipient) {
-          return reply.status(422).send({
-            error: {
-              code: "RECIPIENT_REQUIRED",
-              message: "A delivery completion needs the recipient's name on a POD event.",
-            },
-          });
-        }
-        await completeStop(
-          stopId,
+      try {
+        // The URL names the stop. A tripStopId in the body is accepted (the
+        // contract's StopEvent carries one so the outbox can send one shape to
+        // both endpoints) and ignored.
+        const result = await applyStopEvents({
           user,
-          {
-            recipientName: completionRecipient,
-            delivered: completionLines.map((l) => ({
-              orderId: l.orderId,
-              units: l.units,
-              expected: l.expected,
-              eventId: l.eventId,
-            })),
-            signatureData: completionSignature,
-            photoData: completionPhoto,
-            podEventId: podEventId ?? undefined,
+          deviceId: body.deviceId,
+          events: body.events.map((event) => ({ ...event, tripStopId: stopId })),
+          strict: true,
+          knownAccess: new Map([[stopId, access]]),
+          log: request.log,
+        });
+        return reply.status(200).send(result);
+      } catch (error) {
+        if (error instanceof InvalidEventError) {
+          return reply.status(422).send({ error: { code: error.code, message: error.message } });
+        }
+        return reply.status(409).send({
+          error: {
+            code: "APPLY_FAILED",
+            message: error instanceof Error ? error.message : "Could not apply event.",
           },
-          {
-            occurredAt: completionOccurredAt,
-            deviceId: body.deviceId,
-          },
-        );
+        });
       }
-
-      return reply.status(200).send({
-        accepted,
-        duplicates,
-        conflicts,
-        results,
-      });
     },
   );
 }

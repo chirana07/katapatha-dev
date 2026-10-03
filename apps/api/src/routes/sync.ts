@@ -1,44 +1,19 @@
 import type { FastifyInstance } from "fastify";
-import type { ConflictState, ProblemKind } from "@prisma/client";
 import {
   DEFERRAL_REASONS,
   PROBLEM_REASONS,
   SHORTFALL_REASONS,
 } from "@katapatha/core/domain/reasons";
 import { prisma } from "../lib/db.js";
-import {
-  detectConflict,
-  loadConflictContexts,
-  recordConflictedEvent,
-  resolveStopAccess,
-  type StopAccess,
-  type StopConflictContext,
-} from "../services/conflicts.js";
 import { accessNoteFor } from "../services/store.js";
+import { loadRun } from "../services/delivery.js";
 import {
-  arriveAtStop,
-  completeStop,
-  loadRun,
-  reportProblem,
-  startUnloading,
-} from "../services/delivery.js";
-
-function toProblemKind(code: string | null | undefined): ProblemKind {
-  switch (code) {
-    case "OUTLET_CLOSED":
-      return "OUTLET_CLOSED";
-    case "ROAD_BLOCKED":
-      return "ROAD_BLOCKED";
-    case "VEHICLE_BREAKDOWN":
-      return "VEHICLE_BREAKDOWN";
-    case "ACCESS_DENIED":
-      return "ACCESS_DENIED";
-    case "DELIVERY_REFUSED":
-      return "DELIVERY_REFUSED";
-    default:
-      return "OTHER";
-  }
-}
+  applyStopEvents,
+  EVENT_BODY_LIMIT,
+  EVENT_RESULT_PROPERTIES,
+  STOP_EVENT_REQUEST_ITEM,
+  type IncomingEvent,
+} from "../services/stopEvents.js";
 
 /**
  * Owner: BE3
@@ -49,9 +24,17 @@ function toProblemKind(code: string | null | undefined): ProblemKind {
  *   mobile outbox tries first. One batch may span several stops, so every
  *   event carries `tripStopId` (an additive contract field) and the server
  *   routes each one. It runs the same applier as POST /stops/{stopId}/events
- *   so the online and offline paths cannot diverge; on top of that it measures
- *   device clock skew and writes a SyncLog row. Replaying an identical batch
- *   reports every event as a duplicate and changes nothing.
+ *   (services/stopEvents.ts) so the online and offline paths cannot diverge;
+ *   on top of that it measures device clock skew and writes a SyncLog row.
+ *   Replaying an identical batch reports every event as a duplicate and
+ *   changes nothing.
+ *
+ *   Each event is judged on its own. A stop the driver cannot see, an invalid
+ *   payload or a transition the stop refuses puts THAT event in `rejected` and
+ *   the rest of the batch still applies: the outbox sends what it queued over
+ *   hours, and one poisoned event must not hold the others hostage. A malformed
+ *   request (bad JSON shape) is still a 422 for the whole batch, since nothing
+ *   in it can be trusted to be routed.
  * - GET /sync/stop-events?sinceSeq=N → the server-tail pull a reconnecting
  *   device uses to learn about events it missed (a stop reassigned to another
  *   vehicle while the phone was offline).
@@ -91,6 +74,24 @@ const STOP_EVENT_ITEM = {
   required: ["id", "type", "occurredAt"],
   properties: {
     id: { type: "string" },
+    tripStopId: { type: "string" },
+    // Metadata only. The pull is a list of up to 500 events and a page is up to
+    // a megabyte of base64, so the images are not in it.
+    pages: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "seq", "kind", "qualityFlags", "capturedAt"],
+        properties: {
+          id: { type: "string" },
+          seq: { type: "integer" },
+          kind: { type: "string", enum: ["RECEIPT", "SIGNATURE", "PHOTO"] },
+          qualityFlags: { type: "array", items: { type: "string" } },
+          capturedAt: { type: "string", format: "date-time" },
+        },
+      },
+    },
     type: {
       type: "string",
       enum: [
@@ -187,58 +188,29 @@ function latestServerSeq(): Promise<number> {
 const BATCH_RESULT = {
   type: "object",
   additionalProperties: false,
-  required: ["accepted", "duplicates", "conflicts", "clockSkewMs", "serverSeq", "results"],
+  required: [
+    "accepted",
+    "duplicates",
+    "conflicts",
+    "rejected",
+    "clockSkewMs",
+    "serverSeq",
+    "results",
+  ],
   properties: {
-    accepted: { type: "integer" },
-    duplicates: { type: "integer" },
-    conflicts: { type: "integer" },
+    ...EVENT_RESULT_PROPERTIES,
     clockSkewMs: { type: "integer" },
     serverSeq: { type: "integer" },
-    results: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["id", "status"],
-        properties: {
-          id: { type: "string" },
-          status: { type: "string", enum: ["accepted", "duplicate", "conflict"] },
-          conflictState: {
-            oneOf: [
-              { type: "string", enum: ["NONE", "STALE_ASSIGNMENT", "SUPERSEDED"] },
-              { type: "null" },
-            ],
-          },
-        },
-      },
-    },
   },
 } as const;
-
-type IncomingSyncEvent = {
-  id: string;
-  type:
-    | "ARRIVED"
-    | "UNLOAD_START"
-    | "DELIVERED"
-    | "PART_DELIVERED"
-    | "FAILED"
-    | "SKIPPED"
-    | "POD_CAPTURED";
-  occurredAt: string;
-  tripStopId?: string | null;
-  orderId?: string | null;
-  deliveredUnits?: number | null;
-  recipientName?: string | null;
-  signatureData?: string | null;
-  photoData?: string | null;
-  reasonCode?: string | null;
-};
 
 export default async function (fastify: FastifyInstance) {
   fastify.post(
     "/sync/stop-events",
     {
+      // A batch may carry several deliveries' worth of receipt pages; Fastify's
+      // default 1 MiB is below the outbox's own batch cap.
+      bodyLimit: EVENT_BODY_LIMIT,
       schema: {
         body: {
           type: "object",
@@ -247,38 +219,7 @@ export default async function (fastify: FastifyInstance) {
           properties: {
             deviceId: { type: "string", minLength: 1 },
             clientClockAt: { type: "string", format: "date-time" },
-            events: {
-              type: "array",
-              minItems: 1,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["id", "type", "occurredAt"],
-                properties: {
-                  id: { type: "string", pattern: "^[0-9A-HJKMNP-TV-Z]{26}$" },
-                  type: {
-                    type: "string",
-                    enum: [
-                      "ARRIVED",
-                      "UNLOAD_START",
-                      "DELIVERED",
-                      "PART_DELIVERED",
-                      "FAILED",
-                      "SKIPPED",
-                      "POD_CAPTURED",
-                    ],
-                  },
-                  occurredAt: { type: "string", format: "date-time" },
-                  tripStopId: { oneOf: [{ type: "string" }, { type: "null" }] },
-                  orderId: { oneOf: [{ type: "string" }, { type: "null" }] },
-                  deliveredUnits: { oneOf: [{ type: "integer", minimum: 0 }, { type: "null" }] },
-                  recipientName: { oneOf: [{ type: "string" }, { type: "null" }] },
-                  signatureData: { oneOf: [{ type: "string" }, { type: "null" }] },
-                  photoData: { oneOf: [{ type: "string" }, { type: "null" }] },
-                  reasonCode: { oneOf: [{ type: "string" }, { type: "null" }] },
-                },
-              },
-            },
+            events: { type: "array", minItems: 1, items: STOP_EVENT_REQUEST_ITEM },
           },
         },
         response: {
@@ -294,249 +235,16 @@ export default async function (fastify: FastifyInstance) {
       const body = request.body as {
         deviceId: string;
         clientClockAt: string;
-        events: IncomingSyncEvent[];
+        events: IncomingEvent[];
       };
 
-      // Every event in the batch must know its stop — the batch spans several
-      // of them and the server dispatches by this id. The mobile outbox has
-      // stop_id on every row already; a missing field is a client bug.
-      const missingStop = body.events.find((event) => !event.tripStopId);
-      if (missingStop) {
-        return reply.status(422).send({
-          error: {
-            code: "MISSING_TRIP_STOP_ID",
-            message:
-              "Every event in a /sync batch must carry tripStopId. Use POST /stops/:stopId/events when the stopId lives in the URL instead.",
-          },
-        });
-      }
-
-      // Scope-check each distinct stop. The driver can only drain events for
-      // stops on their claimed vehicle's run — a batch that touches someone
-      // else's stop fails fast with no partial writes. A stop that has since
-      // been reassigned away from them is the exception: it was theirs when the
-      // device recorded these events, so those events are stale rather than
-      // unauthorised and the loop below records them as conflicts.
-      const stopIds = Array.from(new Set(body.events.map((event) => event.tripStopId!)));
-      const accessByStop = new Map<string, StopAccess>();
-      for (const stopId of stopIds) {
-        const access = await resolveStopAccess(user, stopId);
-        if (access === "DENIED") {
-          return reply.status(403).send({
-            error: {
-              code: "STOP_NOT_ON_RUN",
-              message: `Stop ${stopId} is not on this driver's run.`,
-            },
-          });
-        }
-        accessByStop.set(stopId, access);
-      }
-
-      const actor = { userId: user.id, vehicleId: user.defaultVehicleId, deviceId: body.deviceId };
-
-      // Dedup by StopEvent.id in one query — a replay from a flaky phone sees
-      // every id again and the server reports duplicate without re-applying.
-      // The stored conflictState rides along so a replayed conflict is reported
-      // as the conflict it was rather than as a plain duplicate.
-      const incomingIds = body.events.map((event) => event.id);
-      const existing = await prisma.stopEvent.findMany({
-        where: { id: { in: incomingIds } },
-        select: { id: true, conflictState: true },
+      const result = await applyStopEvents({
+        user,
+        deviceId: body.deviceId,
+        events: body.events,
+        strict: false,
+        log: request.log,
       });
-      const recordedState = new Map(existing.map((row) => [row.id, row.conflictState]));
-
-      // Ownership history, but only when something in the batch would be
-      // applied. A batch that is entirely duplicates is the common case on an
-      // endpoint the outbox retries every few seconds, and it decides nothing.
-      const hasNewWork = body.events.some((event) => !recordedState.has(event.id));
-      const conflictContexts: Map<string, StopConflictContext> = hasNewWork
-        ? await loadConflictContexts(stopIds)
-        : new Map();
-
-      // Pre-load expected units per stop for the completion grouping.
-      const stopOrders = await prisma.tripStopOrder.findMany({
-        where: { tripStopId: { in: stopIds } },
-        select: { tripStopId: true, order: { select: { id: true, units: true } } },
-      });
-      const expectedByStopAndOrder = new Map<string, Map<string, number>>();
-      for (const row of stopOrders) {
-        const inner = expectedByStopAndOrder.get(row.tripStopId) ?? new Map<string, number>();
-        inner.set(row.order.id, row.order.units);
-        expectedByStopAndOrder.set(row.tripStopId, inner);
-      }
-
-      type ResultRow = {
-        id: string;
-        status: "accepted" | "duplicate" | "conflict";
-        conflictState: ConflictState | null;
-      };
-      const results: ResultRow[] = [];
-      let accepted = 0;
-      let duplicates = 0;
-      let conflicts = 0;
-
-      type CompletionPlan = {
-        recipient: string | null;
-        signature?: string;
-        photo?: string;
-        /** The client's ULID for the stop-level POD_CAPTURED event. */
-        podEventId?: string;
-        /** The POD event's device clock, which stands for the whole completion. */
-        occurredAt?: Date;
-        lines: Array<{ eventId: string; orderId: string; units: number; expected: number }>;
-      };
-      const completionsByStop = new Map<string, CompletionPlan>();
-
-      for (const event of body.events) {
-        const alreadyRecorded = recordedState.get(event.id);
-        if (alreadyRecorded !== undefined) {
-          // A duplicate either way — the row exists and nothing is re-applied.
-          // A replay of a conflicted event is still reported as a conflict, so
-          // the device settles the row terminally rather than retrying it
-          // forever, but it counts under `duplicates`: the conflict was counted
-          // when it was first detected, and counting it again on every replay
-          // would be a lie about how many conflicts happened, in the response
-          // and in SyncLog alike.
-          duplicates += 1;
-          results.push(
-            alreadyRecorded === "NONE"
-              ? { id: event.id, status: "duplicate", conflictState: "NONE" }
-              : { id: event.id, status: "conflict", conflictState: alreadyRecorded },
-          );
-          continue;
-        }
-
-        const stopId = event.tripStopId!;
-        const occurredAt = new Date(event.occurredAt);
-        // Access granted only on the strength of a reassignment means the stop
-        // is someone else's now, so the event cannot apply to it whatever its
-        // timing: their assignment is stale by definition.
-        const conflictState: ConflictState =
-          accessByStop.get(stopId) === "REASSIGNED_AWAY"
-            ? "STALE_ASSIGNMENT"
-            : detectConflict(conflictContexts.get(stopId), { occurredAt }, actor);
-
-        if (conflictState !== "NONE") {
-          await recordConflictedEvent({
-            stopId,
-            conflictState,
-            fact: { ...event, occurredAt },
-            orderOnStop:
-              event.orderId != null &&
-              expectedByStopAndOrder.get(stopId)?.has(event.orderId) === true,
-            actor,
-          });
-          conflicts += 1;
-          results.push({ id: event.id, status: "conflict", conflictState });
-          continue;
-        }
-
-        // The client's identity and timing for this fact, exactly as the per-stop
-        // route passes them. Without this the services mint their own ULID, so
-        // the dedup query above would look for ids that are never stored and
-        // `duplicates` would be structurally 0 on this path -- and occurredAt
-        // would be the drain time rather than the moment the driver was at the
-        // outlet. This endpoint is the one the outbox tries FIRST, so the
-        // guarantee has to hold here, not only on the fallback.
-        const meta = { id: event.id, occurredAt, deviceId: body.deviceId };
-
-        try {
-          if (event.type === "ARRIVED") {
-            await arriveAtStop(stopId, user, meta);
-          } else if (event.type === "UNLOAD_START") {
-            await startUnloading(stopId, user, meta);
-          } else if (event.type === "DELIVERED" || event.type === "PART_DELIVERED") {
-            if (!event.orderId || event.deliveredUnits == null) {
-              return reply.status(422).send({
-                error: {
-                  code: "DELIVERED_INCOMPLETE",
-                  message: "DELIVERED/PART_DELIVERED events need orderId and deliveredUnits.",
-                },
-              });
-            }
-            const expected = expectedByStopAndOrder.get(stopId)?.get(event.orderId);
-            if (expected == null) {
-              return reply.status(422).send({
-                error: {
-                  code: "ORDER_NOT_ON_STOP",
-                  message: `Order ${event.orderId} is not on stop ${stopId}.`,
-                },
-              });
-            }
-            const plan = completionsByStop.get(stopId) ?? { recipient: null, lines: [] };
-            plan.lines.push({
-              eventId: event.id,
-              orderId: event.orderId,
-              units: event.deliveredUnits,
-              expected,
-            });
-            if (event.recipientName) plan.recipient = event.recipientName;
-            completionsByStop.set(stopId, plan);
-          } else if (event.type === "POD_CAPTURED") {
-            const plan = completionsByStop.get(stopId) ?? { recipient: null, lines: [] };
-            if (event.recipientName) plan.recipient = event.recipientName;
-            if (event.signatureData) plan.signature = event.signatureData;
-            if (event.photoData) plan.photo = event.photoData;
-            plan.podEventId = event.id;
-            plan.occurredAt = meta.occurredAt;
-            completionsByStop.set(stopId, plan);
-          } else if (event.type === "FAILED" || event.type === "SKIPPED") {
-            // outcome, so a skip is recorded as SKIPPED rather than flattened to
-            // FAILED -- DOMAIN.md keeps them as distinct stop statuses.
-            await reportProblem(
-              user,
-              {
-                kind: toProblemKind(event.reasonCode),
-                note: event.reasonCode ?? (event.type === "SKIPPED" ? "Stop skipped." : "Problem reported."),
-                tripStopId: stopId,
-                outcome: event.type,
-              },
-              meta,
-            );
-          }
-
-          accepted += 1;
-          results.push({ id: event.id, status: "accepted", conflictState: "NONE" });
-        } catch (error) {
-          return reply.status(409).send({
-            error: {
-              code: "APPLY_FAILED",
-              message: error instanceof Error ? error.message : "Could not apply event.",
-            },
-          });
-        }
-      }
-
-      for (const [stopId, plan] of completionsByStop) {
-        if (plan.lines.length === 0) continue;
-        if (!plan.recipient) {
-          return reply.status(422).send({
-            error: {
-              code: "RECIPIENT_REQUIRED",
-              message: `Stop ${stopId}'s delivery completion needs the recipient's name on a POD event.`,
-            },
-          });
-        }
-        await completeStop(
-          stopId,
-          user,
-          {
-            recipientName: plan.recipient,
-            delivered: plan.lines.map((line) => ({
-              orderId: line.orderId,
-              units: line.units,
-              expected: line.expected,
-              // Was collected into plan.lines and then dropped here, which is
-              // what made a replayed delivery look new.
-              eventId: line.eventId,
-            })),
-            signatureData: plan.signature,
-            photoData: plan.photo,
-            podEventId: plan.podEventId,
-          },
-          { occurredAt: plan.occurredAt, deviceId: body.deviceId },
-        );
-      }
 
       const now = new Date();
       const clientClock = new Date(body.clientClockAt);
@@ -556,26 +264,21 @@ export default async function (fastify: FastifyInstance) {
       const clockSkewMs = Math.max(-2_147_483_648, Math.min(2_147_483_647, rawSkewMs));
       const serverSeq = await latestServerSeq();
 
+      // SyncLog has no column for rejections: batchSize minus the three counts is
+      // how many were refused or left for a retry.
       await prisma.syncLog.create({
         data: {
           deviceId: body.deviceId,
           userId: user.id,
           batchSize: body.events.length,
-          accepted,
-          duplicates,
-          conflicts,
+          accepted: result.accepted,
+          duplicates: result.duplicates,
+          conflicts: result.conflicts,
           clockSkewMs,
         },
       });
 
-      return reply.status(200).send({
-        accepted,
-        duplicates,
-        conflicts,
-        clockSkewMs,
-        serverSeq,
-        results,
-      });
+      return reply.status(200).send({ ...result, clockSkewMs, serverSeq });
     },
   );
 
@@ -635,6 +338,12 @@ export default async function (fastify: FastifyInstance) {
         },
         orderBy: { recordedAt: "asc" },
         take: 500,
+        include: {
+          podPages: {
+            orderBy: { seq: "asc" },
+            select: { id: true, seq: true, kind: true, qualityFlags: true, capturedAt: true },
+          },
+        },
       });
 
       const serverSeq = rows.length > 0
@@ -645,6 +354,7 @@ export default async function (fastify: FastifyInstance) {
         serverSeq,
         events: rows.map((event) => ({
           id: event.id,
+          tripStopId: event.tripStopId,
           type: event.type,
           occurredAt: event.occurredAt.toISOString(),
           orderId: event.orderId,
@@ -653,6 +363,13 @@ export default async function (fastify: FastifyInstance) {
           signatureData: event.signatureData,
           photoData: event.photoData,
           reasonCode: null,
+          pages: event.podPages.map((page) => ({
+            id: page.id,
+            seq: page.seq,
+            kind: page.kind,
+            qualityFlags: page.qualityFlags,
+            capturedAt: page.capturedAt.toISOString(),
+          })),
         })),
       };
     },

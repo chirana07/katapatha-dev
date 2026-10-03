@@ -46,6 +46,16 @@ StopEvent:
     an event — online or from the offline outbox — is idempotent by
     construction. `occurredAt` is the DEVICE clock and must be presented as
     "recorded on device"; the server records its own receipt time separately.
+
+    The `id` is the row's primary key. An id the server already holds is a
+    `duplicate`: nothing is applied a second time (no order or stop status
+    change, no notification, no decision-log entry). An id that is valid for
+    one stop is `rejected` (`ID_REUSED`) when sent for another.
+
+    Proof of delivery travels on a `POD_CAPTURED` event. Send `pages`; the
+    legacy `signatureData` / `photoData` fields remain accepted for clients that
+    predate pages. If both are sent, `pages` win and the legacy fields on that
+    event are ignored (not stored), so a picture is never held twice.
   required: [id, type, occurredAt]
   properties:
     id: { $ref: "./common.yaml#/Ulid" }
@@ -57,9 +67,25 @@ StopEvent:
     orderId: { type: [string, "null"], examples: [null] }
     deliveredUnits: { type: [integer, "null"], examples: [null] }
     recipientName: { type: [string, "null"], examples: [null] }
-    signatureData: { type: [string, "null"], description: Base64 data URL., examples: [null] }
-    photoData: { type: [string, "null"], description: Base64 data URL., examples: [null] }
+    signatureData:
+      type: [string, "null"]
+      description: Base64 data URL. Legacy single-image field; ignored when `pages` is non-empty.
+      examples: [null]
+    photoData:
+      type: [string, "null"]
+      description: Base64 data URL. Legacy single-image field; ignored when `pages` is non-empty.
+      examples: [null]
     reasonCode: { type: [string, "null"], examples: [null] }
+    pages:
+      type: array
+      maxItems: 8
+      description: >
+        Multi-page proof of delivery (a receipt with several sheets, a signature,
+        a photo of the goods). Only on `POD_CAPTURED`; any other type is rejected
+        (`PAGES_ON_NON_POD`). At most 8. Stored in array order (`seq`), in the
+        same transaction as the event, so the pages exist if and only if the
+        event does. Each page id is a client ULID and idempotent like the event.
+      items: { $ref: "./stops.yaml#/PodPage" }
     tripStopId:
       type: [string, "null"]
       description: >
@@ -67,8 +93,87 @@ StopEvent:
         several stops and the server needs to route each event to the right
         one). Ignored and may be null on POST /stops/{stopId}/events, where
         the URL already carries the stop. Additive field; existing clients
-        that omit it keep working on the per-stop path.
+        that omit it keep working on the per-stop path. On the sync path an
+        event without it is `rejected` (`MISSING_TRIP_STOP_ID`) on its own;
+        it does not fail the batch.
       examples: ["clx0stp1a2b3c4d5e6f7g8h"]
+
+PodPage:
+  type: object
+  description: >
+    One page of proof of delivery as the driver's phone captured it. The id is
+    client-minted, so replaying a page cannot store it twice.
+  required: [id, kind, data, capturedAt]
+  additionalProperties: false
+  properties:
+    id: { $ref: "./common.yaml#/Ulid" }
+    kind:
+      type: string
+      enum: [RECEIPT, SIGNATURE, PHOTO]
+      examples: ["RECEIPT"]
+    data:
+      type: string
+      maxLength: 1048576
+      pattern: '^data:image/(png|jpeg|webp|svg\+xml);base64,'
+      description: >
+        A base64 image data URL (png, jpeg, webp or svg), at most 1,048,576
+        characters (about 768 KiB of image). Anything else is rejected; the
+        request-level limit is 12 MiB.
+      examples: ["data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBD"]
+    qualityFlags:
+      type: [array, "null"]
+      maxItems: 8
+      description: >
+        What the capture screen flagged at the time (blurry, cropped, dark), as
+        short upper-case codes, kept so a disputed receipt can be examined with
+        what the driver was told. Empty or omitted when nothing was flagged.
+      items: { type: string, pattern: '^[A-Z][A-Z0-9_]{1,31}$', examples: ["BLURRY"] }
+    capturedAt:
+      type: string
+      format: date-time
+      description: Device clock when the page was captured.
+      examples: ["2026-09-30T04:55:30Z"]
+
+PodPageSummary:
+  type: object
+  description: >
+    A stored page without its image. Lists carry this; the image is not in a
+    list of up to 500 events.
+  required: [id, seq, kind, qualityFlags, capturedAt]
+  properties:
+    id: { $ref: "./common.yaml#/Ulid" }
+    seq: { type: integer, description: "Position in capture order, starting at 0.", examples: [0] }
+    kind: { type: string, enum: [RECEIPT, SIGNATURE, PHOTO], examples: ["RECEIPT"] }
+    qualityFlags: { type: array, items: { type: string }, examples: [["BLURRY"]] }
+    capturedAt: { type: string, format: date-time, examples: ["2026-09-30T04:55:30Z"] }
+
+PulledStopEvent:
+  type: object
+  description: >
+    A stored StopEvent as GET /sync/stop-events returns it. Same fields as
+    StopEvent, plus the stop it belongs to, but `pages` carry metadata only.
+  required: [id, type, occurredAt]
+  properties:
+    id: { $ref: "./common.yaml#/Ulid" }
+    tripStopId: { type: string, examples: ["clx0stp1a2b3c4d5e6f7g8h"] }
+    type:
+      type: string
+      enum: [ARRIVED, UNLOAD_START, DELIVERED, PART_DELIVERED, FAILED, SKIPPED, POD_CAPTURED]
+      examples: ["POD_CAPTURED"]
+    occurredAt: { type: string, format: date-time, examples: ["2026-09-30T04:56:00Z"] }
+    orderId: { type: [string, "null"], examples: [null] }
+    deliveredUnits: { type: [integer, "null"], examples: [null] }
+    recipientName: { type: [string, "null"], examples: ["K. Jayasuriya"] }
+    signatureData:
+      type: [string, "null"]
+      description: Legacy single image, present only on events recorded without pages.
+      examples: [null]
+    photoData:
+      type: [string, "null"]
+      description: Legacy single image, present only on events recorded without pages.
+      examples: [null]
+    reasonCode: { type: [string, "null"], examples: [null] }
+    pages: { type: array, items: { $ref: "./stops.yaml#/PodPageSummary" } }
 
 SubmitEventsRequest:
   type: object
@@ -97,21 +202,58 @@ EventResult:
       type: [string, "null"]
       enum: [NONE, STALE_ASSIGNMENT, SUPERSEDED, null]
 
+EventRejection:
+  type: object
+  description: >
+    An event the server refused for a reason retrying cannot change, so the
+    device should stop sending it and show the reason.
+  required: [id, code, message]
+  properties:
+    id: { $ref: "./common.yaml#/Ulid" }
+    code:
+      type: string
+      description: >
+        One of STOP_NOT_ON_RUN (a stop the caller cannot see; same answer whether
+        or not it exists), MISSING_TRIP_STOP_ID, ID_REUSED, ID_COLLISION,
+        DELIVERED_INCOMPLETE, ORDER_NOT_ON_STOP, RECIPIENT_REQUIRED,
+        POD_WITHOUT_DELIVERY, POD_REJECTED, POD_ALREADY_IN_REQUEST,
+        STOP_ALREADY_CLOSED, STATE_MISMATCH, PAGES_ON_NON_POD, TOO_MANY_PAGES,
+        DUPLICATE_PAGE_ID, PAGE_DATA_INVALID, PAGE_TOO_LARGE,
+        INVALID_OCCURRED_AT. Clients should treat unknown codes as terminal.
+      examples: ["STOP_NOT_ON_RUN"]
+    message: { type: string, examples: ["Stop clx0stp9z8y7x6w5v4u3t2s is not on this driver's run."] }
+
 SubmitEventsResult:
   type: object
-  required: [accepted, duplicates, conflicts, results]
+  description: >
+    Per-event outcomes. Every event sent is in exactly one of `results`
+    (accepted, duplicate or conflict) or `rejected`. An event in neither failed
+    for an unexpected reason (the database, say): it was NOT applied and is safe
+    to send again.
+  required: [accepted, duplicates, conflicts, results, rejected]
   properties:
     accepted: { type: integer, examples: [3] }
     duplicates: { type: integer, examples: [0] }
     conflicts: { type: integer, examples: [0] }
     results: { type: array, items: { $ref: "./stops.yaml#/EventResult" } }
+    rejected: { type: array, items: { $ref: "./stops.yaml#/EventRejection" } }
 
 SyncBatchRequest:
   type: object
   description: >
-    The offline outbox drain. Events may span several stops. This is the same
-    applier as POST /stops/{stopId}/events, batched and unscoped, so the online
-    and offline paths can never diverge.
+    The offline outbox drain. Events may span several stops, and each must carry
+    `tripStopId`. This is the same applier as POST /stops/{stopId}/events,
+    batched, so the online and offline paths can never diverge.
+
+    Events are applied per stop in `occurredAt` order (ties keep their position
+    in the batch). Each is judged on its own: a stop the caller cannot see, an
+    invalid payload or a transition the stop refuses puts that event in
+    `rejected` and the rest of the batch still applies. A conflict
+    (STALE_ASSIGNMENT, SUPERSEDED) is recorded but not applied. A replayed batch
+    reports every event as a duplicate and changes nothing.
+
+    A delivery is one act: its DELIVERED/PART_DELIVERED lines and POD_CAPTURED
+    event must travel in the same batch, and succeed or fail together.
   required: [deviceId, clientClockAt, events]
   additionalProperties: false
   properties:
@@ -119,7 +261,9 @@ SyncBatchRequest:
     clientClockAt:
       type: string
       format: date-time
-      description: Device clock at drain time, used to measure skew.
+      description: >
+        Device clock at drain time, used to measure skew. Skew is reported and
+        logged, never used to rewrite `occurredAt`, which stays the device clock.
       examples: ["2026-09-30T06:02:11Z"]
     events:
       type: array
@@ -132,7 +276,12 @@ SyncBatchResult:
     - type: object
       required: [clockSkewMs, serverSeq]
       properties:
-        clockSkewMs: { type: integer, examples: [842] }
+        clockSkewMs:
+          type: integer
+          description: >
+            Server time minus `clientClockAt`, in ms, clamped to the 32-bit
+            range (a handset with a reset clock reports decades).
+          examples: [842]
         serverSeq:
           type: integer
           format: int64

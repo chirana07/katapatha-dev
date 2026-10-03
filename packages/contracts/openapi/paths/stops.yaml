@@ -13,12 +13,56 @@ events:
       StopEvents. The client mints each event's ULID, so this is idempotent by
       construction and the offline outbox has exactly one write shape to replay.
       `duplicate` in the response is a success, not a failure.
+
+      A POD carries its proof as `pages` (up to 8; see PodPage). An event that
+      fails validation fails the whole request with 422 and writes nothing; an
+      event the stop's state refuses (a delivery for a stop already completed)
+      is reported in `rejected`. A `tripStopId` in an event is accepted and
+      ignored: the URL names the stop.
     tags: [driver]
     requestBody:
       required: true
       content:
         application/json:
           schema: { $ref: "../components/schemas/stops.yaml#/SubmitEventsRequest" }
+          examples:
+            arrival:
+              summary: Record arrival
+              value:
+                deviceId: device-7f3a91
+                events:
+                  - id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWE"
+                    type: ARRIVED
+                    occurredAt: "2026-09-30T04:12:00Z"
+            deliveryWithPages:
+              summary: A delivery with a two-sheet receipt and a signature
+              value:
+                deviceId: device-7f3a91
+                events:
+                  - id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWG"
+                    type: DELIVERED
+                    occurredAt: "2026-09-30T04:55:00Z"
+                    orderId: "clx0ord1a2b3c4d5e6f7g8h9"
+                    deliveredUnits: 120
+                  - id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWH"
+                    type: POD_CAPTURED
+                    occurredAt: "2026-09-30T04:56:00Z"
+                    recipientName: K. Jayasuriya
+                    pages:
+                      - id: "01JB2X8Q9K7YC4V3M0ZQ5T6PG1"
+                        kind: RECEIPT
+                        data: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBD"
+                        qualityFlags: []
+                        capturedAt: "2026-09-30T04:55:20Z"
+                      - id: "01JB2X8Q9K7YC4V3M0ZQ5T6PG2"
+                        kind: RECEIPT
+                        data: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBD"
+                        qualityFlags: [CROPPED]
+                        capturedAt: "2026-09-30T04:55:35Z"
+                      - id: "01JB2X8Q9K7YC4V3M0ZQ5T6PG3"
+                        kind: SIGNATURE
+                        data: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4="
+                        capturedAt: "2026-09-30T04:55:50Z"
     responses:
       "200":
         description: Events applied.
@@ -33,6 +77,7 @@ events:
                 - id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWE"
                   status: accepted
                   conflictState: NONE
+              rejected: []
       "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
       "404": { $ref: "../components/responses/common.yaml#/NotFound" }
       "409": { $ref: "../components/responses/common.yaml#/Conflict" }

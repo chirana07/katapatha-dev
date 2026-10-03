@@ -8,12 +8,41 @@ stopEvents:
       several stops, so the online and offline paths can never diverge. Writes a
       SyncLog row and measures device clock skew. Replaying an identical batch
       must report every event as a duplicate and change nothing.
+
+      Every event carries `tripStopId`; the server routes by it and authorises
+      each event against the caller's own run. A stop the caller cannot see
+      rejects THAT event (`STOP_NOT_ON_RUN`), not the batch: the response is 200
+      and the event is listed under `rejected`. Events apply per stop in
+      `occurredAt` order. A malformed request (shape, a ULID that is not a ULID,
+      a ninth page, non-data-URL page data) is a 422 for the whole batch, since
+      nothing in it can be trusted to route; semantic problems with one event
+      are `rejected` and the rest still apply.
+
+      Retrying an identical batch is safe at any point, including after a
+      response was lost. The request body may be up to 12 MiB.
     tags: [sync]
     requestBody:
       required: true
       content:
         application/json:
           schema: { $ref: "../components/schemas/stops.yaml#/SyncBatchRequest" }
+          example:
+            deviceId: device-7f3a91
+            clientClockAt: "2026-09-30T06:02:11Z"
+            events:
+              - id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWE"
+                type: ARRIVED
+                occurredAt: "2026-09-30T04:12:00Z"
+                tripStopId: "clx0stp1a2b3c4d5e6f7g8h"
+              - id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWF"
+                type: UNLOAD_START
+                occurredAt: "2026-09-30T04:15:00Z"
+                tripStopId: "clx0stp1a2b3c4d5e6f7g8h"
+              - id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWG"
+                type: FAILED
+                occurredAt: "2026-09-30T05:20:00Z"
+                tripStopId: "clx0stp9z8y7x6w5v4u3t2s"
+                reasonCode: ROAD_BLOCKED
     responses:
       "200":
         description: Batch applied.
@@ -36,6 +65,7 @@ stopEvents:
                 - id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWG"
                   status: accepted
                   conflictState: NONE
+              rejected: []
       "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
       "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
   get:
@@ -43,7 +73,9 @@ stopEvents:
     summary: Pull events recorded since a sequence number
     description: >
       Lets a reconnecting device learn about changes it missed, such as a stop
-      reassigned to another vehicle while it was offline.
+      reassigned to another vehicle while it was offline. A POD's `pages` are
+      listed as metadata only (no image data): this is a list of up to 500
+      events.
     tags: [sync]
     parameters:
       - name: sinceSeq
@@ -62,10 +94,31 @@ stopEvents:
                 serverSeq: { type: integer, format: int64 }
                 events:
                   type: array
-                  items: { $ref: "../components/schemas/stops.yaml#/StopEvent" }
+                  items: { $ref: "../components/schemas/stops.yaml#/PulledStopEvent" }
             example:
               serverSeq: 10428
-              events: []
+              events:
+                - id: "01JB2X8Q9K7YC4V3M0ZQ5T6RWH"
+                  tripStopId: "clx0stp1a2b3c4d5e6f7g8h"
+                  type: POD_CAPTURED
+                  occurredAt: "2026-09-30T04:56:00Z"
+                  orderId: null
+                  deliveredUnits: null
+                  recipientName: K. Jayasuriya
+                  signatureData: null
+                  photoData: null
+                  reasonCode: null
+                  pages:
+                    - id: "01JB2X8Q9K7YC4V3M0ZQ5T6PG1"
+                      seq: 0
+                      kind: RECEIPT
+                      qualityFlags: []
+                      capturedAt: "2026-09-30T04:55:20Z"
+                    - id: "01JB2X8Q9K7YC4V3M0ZQ5T6PG3"
+                      seq: 1
+                      kind: SIGNATURE
+                      qualityFlags: []
+                      capturedAt: "2026-09-30T04:55:50Z"
       "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
 
 bootstrap:

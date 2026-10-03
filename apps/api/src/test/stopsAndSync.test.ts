@@ -17,7 +17,10 @@ import {
   loadRun,
   reportProblem,
   startUnloading,
+  StopStateError,
 } from "../services/delivery.js";
+import { CONTRACT_AJV } from "../lib/ajv.js";
+import { MAX_POD_PAGE_CHARS } from "../services/stopEvents.js";
 
 /**
  * The stop-event applier, on both of its paths.
@@ -42,7 +45,11 @@ vi.mock("../lib/db.js", () => ({
 
 vi.mock("../lib/authorization.js", () => ({ requireDriverStop: vi.fn() }));
 
-vi.mock("../services/delivery.js", () => ({
+// The state machine is mocked; StopStateError and recordConflictedFact stay
+// real, the first because the applier matches on it and the second because it
+// is the write the conflict tests assert on.
+vi.mock("../services/delivery.js", async (importActual) => ({
+  ...(await importActual<typeof import("../services/delivery.js")>()),
   arriveAtStop: vi.fn(),
   startUnloading: vi.fn(),
   completeStop: vi.fn(),
@@ -74,6 +81,11 @@ const driver: SessionUser = {
   outletId: null,
   defaultVehicleId: "VEH043",
 };
+
+/** A StopEvent row as the dedup query reads it back. */
+function stored(id: string, conflictState = "NONE", stopId = STOP) {
+  return { id, conflictState, tripStopId: stopId, actorUserId: "USR012" };
+}
 
 /** A stop that is on the driver's run and that nobody else has touched. */
 function cleanStop(id = STOP) {
@@ -108,7 +120,7 @@ describe("the stop-event applier", () => {
   });
 
   async function serverFor(user: SessionUser = driver) {
-    const server = Fastify({ logger: false });
+    const server = Fastify({ logger: false, ajv: CONTRACT_AJV });
     servers.push(server);
     server.decorateRequest("requireRole", function () {
       return user;
@@ -152,9 +164,7 @@ describe("the stop-event applier", () => {
   describe("POST /v1/stops/:stopId/events", () => {
     it("reports a replayed ULID as a duplicate and does not apply it again", async () => {
       const server = await serverFor();
-      vi.mocked(prisma.stopEvent.findMany).mockResolvedValue([
-        { id: ARRIVED_ID, conflictState: "NONE" },
-      ] as never);
+      vi.mocked(prisma.stopEvent.findMany).mockResolvedValue([stored(ARRIVED_ID)] as never);
 
       const response = await server.inject(post([arrived]));
 
@@ -164,6 +174,7 @@ describe("the stop-event applier", () => {
         duplicates: 1,
         conflicts: 0,
         results: [{ id: ARRIVED_ID, status: "duplicate", conflictState: "NONE" }],
+        rejected: [],
       });
       expect(arriveAtStop).not.toHaveBeenCalled();
     });
@@ -225,6 +236,7 @@ describe("the stop-event applier", () => {
           signatureData: "data:image/png;base64,AAA",
           photoData: undefined,
           podEventId: POD_ID,
+          pages: undefined,
         },
         // The POD's clock stands for the whole completion: a delivery is one
         // act even though it produces several events.
@@ -365,6 +377,7 @@ describe("the stop-event applier", () => {
         results: [
           { id: ARRIVED_ID, status: "conflict", conflictState: "STALE_ASSIGNMENT" },
         ],
+        rejected: [],
       });
       // The driver's claim is kept — the dispatcher has to be able to see it —
       // but nothing is applied to a stop that is now somebody else's.
@@ -434,7 +447,7 @@ describe("the stop-event applier", () => {
     it("reports a replayed conflict as a conflict without counting it twice", async () => {
       const server = await serverFor();
       vi.mocked(prisma.stopEvent.findMany).mockResolvedValue([
-        { id: ARRIVED_ID, conflictState: "STALE_ASSIGNMENT" },
+        stored(ARRIVED_ID, "STALE_ASSIGNMENT"),
       ] as never);
 
       const response = await server.inject(post([arrived]));
@@ -446,6 +459,7 @@ describe("the stop-event applier", () => {
         results: [
           { id: ARRIVED_ID, status: "conflict", conflictState: "STALE_ASSIGNMENT" },
         ],
+        rejected: [],
       });
       // The device needs the reason again to settle the row terminally, but the
       // conflict itself was already counted when it was first detected.
@@ -601,7 +615,7 @@ describe("the stop-event applier", () => {
     it("reports an identical replay as all duplicates and changes nothing", async () => {
       const server = await serverFor();
       vi.mocked(prisma.stopEvent.findMany).mockResolvedValue(
-        batch.map((event) => ({ id: event.id, conflictState: "NONE" })) as never,
+        batch.map((event) => stored(event.id, "NONE", event.tripStopId)) as never,
       );
 
       const response = await server.inject(drain(batch));
@@ -632,26 +646,65 @@ describe("the stop-event applier", () => {
       );
     });
 
-    it("refuses a batch whose events do not say which stop they belong to", async () => {
+    it("rejects an event that does not say which stop it belongs to, and applies the rest", async () => {
       const server = await serverFor();
 
-      const response = await server.inject(drain([arrived]));
+      const response = await server.inject(
+        drain([arrived, { ...unloadStart, tripStopId: STOP }]),
+      );
 
-      expect(response.statusCode).toBe(422);
-      expect(response.json().error.code).toBe("MISSING_TRIP_STOP_ID");
+      // One event with no routing is that event's problem, not the batch's.
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        accepted: 1,
+        rejected: [{ id: ARRIVED_ID, code: "MISSING_TRIP_STOP_ID" }],
+        results: [{ id: UNLOAD_ID, status: "accepted" }],
+      });
       expect(arriveAtStop).not.toHaveBeenCalled();
+      expect(startUnloading).toHaveBeenCalledOnce();
     });
 
-    it("rejects the whole batch, with no partial writes, if any stop is not on the run", async () => {
+    it("reports an event for a stop the driver cannot see as rejected, without failing the batch", async () => {
+      const server = await serverFor();
+      // STP002 is somebody else's; STP001 is theirs.
+      requireDriverStopMock.mockImplementation((async (_user: SessionUser, stopId: string) => {
+        if (stopId === OTHER_STOP) throw new Error("denied");
+        return {};
+      }) as never);
+
+      const response = await server.inject(drain(batch));
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        accepted: 2,
+        duplicates: 0,
+        conflicts: 0,
+        results: [
+          { id: ARRIVED_ID, status: "accepted" },
+          { id: UNLOAD_ID, status: "accepted" },
+        ],
+        rejected: [{ id: DELIVERED_ID, code: "STOP_NOT_ON_RUN" }],
+      });
+      expect(arriveAtStop).toHaveBeenCalledOnce();
+      expect(reportProblem).not.toHaveBeenCalled();
+      // Nothing is written for the refused stop, and its existence is not
+      // distinguishable from a stop that was never there.
+      expect(prisma.stopEvent.create).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.syncLog.create).mock.calls[0]![0]).toMatchObject({
+        data: { batchSize: 3, accepted: 2 },
+      });
+    });
+
+    it("rejects every event when no stop in the batch is on the run, and still answers 200", async () => {
       const server = await serverFor();
       requireDriverStopMock.mockRejectedValue(new Error("denied"));
 
       const response = await server.inject(drain(batch));
 
-      expect(response.statusCode).toBe(403);
-      expect(response.json().error.code).toBe("STOP_NOT_ON_RUN");
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ accepted: 0, results: [] });
+      expect(response.json().rejected).toHaveLength(3);
       expect(arriveAtStop).not.toHaveBeenCalled();
-      expect(prisma.syncLog.create).not.toHaveBeenCalled();
     });
 
     it("clamps a wildly wrong device clock instead of overflowing SyncLog", async () => {
@@ -754,6 +807,8 @@ describe("the stop-event applier", () => {
           recipientName: null,
           signatureData: null,
           photoData: null,
+          tripStopId: STOP,
+          podPages: [],
         },
       ] as never);
 
@@ -765,13 +820,69 @@ describe("the stop-event applier", () => {
       expect(response.statusCode).toBe(200);
       expect(response.json()).toMatchObject({
         serverSeq: new Date("2026-04-09T04:42:09.000Z").getTime(),
-        events: [{ id: ARRIVED_ID, type: "ARRIVED", occurredAt: "2026-04-09T04:42:00.000Z" }],
+        events: [
+          {
+            id: ARRIVED_ID,
+            tripStopId: STOP,
+            type: "ARRIVED",
+            occurredAt: "2026-04-09T04:42:00.000Z",
+            pages: [],
+          },
+        ],
       });
       expect(vi.mocked(prisma.stopEvent.findMany).mock.calls[0]![0]).toMatchObject({
         where: {
           recordedAt: { gt: new Date(1_775_000_000_000) },
           tripStop: { trip: { vehicleId: "VEH043" } },
         },
+      });
+    });
+
+    it("lists a POD's pages in capture order without their image data", async () => {
+      const server = await serverFor();
+      vi.mocked(prisma.stopEvent.findMany).mockResolvedValue([
+        {
+          id: POD_ID,
+          type: "POD_CAPTURED",
+          occurredAt: new Date("2026-04-09T04:56:00.000Z"),
+          recordedAt: new Date("2026-04-09T04:56:09.000Z"),
+          orderId: null,
+          deliveredUnits: null,
+          recipientName: "K. Jayasuriya",
+          signatureData: null,
+          photoData: null,
+          tripStopId: STOP,
+          podPages: [
+            {
+              id: ulid("PG1"),
+              seq: 0,
+              kind: "RECEIPT",
+              qualityFlags: [],
+              capturedAt: new Date("2026-04-09T04:55:30.000Z"),
+              // A stray column must never reach the wire: this is a list endpoint.
+              data: "data:image/png;base64,AAAA",
+            },
+            {
+              id: ulid("PG2"),
+              seq: 1,
+              kind: "PHOTO",
+              qualityFlags: ["BLURRY"],
+              capturedAt: new Date("2026-04-09T04:55:50.000Z"),
+            },
+          ],
+        },
+      ] as never);
+
+      const response = await server.inject({ method: "GET", url: "/v1/sync/stop-events?sinceSeq=0" });
+
+      const [event] = response.json().events;
+      expect(event.pages).toEqual([
+        { id: ulid("PG1"), seq: 0, kind: "RECEIPT", qualityFlags: [], capturedAt: "2026-04-09T04:55:30.000Z" },
+        { id: ulid("PG2"), seq: 1, kind: "PHOTO", qualityFlags: ["BLURRY"], capturedAt: "2026-04-09T04:55:50.000Z" },
+      ]);
+      expect(JSON.stringify(response.json())).not.toContain("base64");
+      expect(vi.mocked(prisma.stopEvent.findMany).mock.calls[0]![0]).toMatchObject({
+        include: { podPages: { orderBy: { seq: "asc" } } },
       });
     });
 
@@ -821,6 +932,577 @@ describe("the stop-event applier", () => {
       expect(response.statusCode).toBe(403);
       expect(response.json().error.code).toBe("NO_VEHICLE_CLAIMED");
       expect(loadRun).not.toHaveBeenCalled();
+    });
+  });
+  describe("one batch, many events", () => {
+    const at = (time: string) => `2026-04-09T${time}.000Z`;
+    const batch = [
+      { ...arrived, tripStopId: STOP },
+      { ...unloadStart, tripStopId: STOP },
+      {
+        id: DELIVERED_ID,
+        type: "FAILED",
+        occurredAt: "2026-04-09T05:20:00.000Z",
+        tripStopId: OTHER_STOP,
+        reasonCode: "ROAD_BLOCKED",
+      },
+    ];
+
+    it("applies each stop's events in device-clock order, not arrival order", async () => {
+      const server = await serverFor();
+
+      // The outbox queued these in tap order but a retry can reorder rows; the
+      // device clock is the truth about what happened first.
+      await server.inject(
+        drain([
+          { ...unloadStart, tripStopId: STOP, occurredAt: at("04:45:00") },
+          { ...arrived, tripStopId: STOP, occurredAt: at("04:42:00") },
+        ]),
+      );
+
+      const arriveOrder = vi.mocked(arriveAtStop).mock.invocationCallOrder[0]!;
+      const unloadOrder = vi.mocked(startUnloading).mock.invocationCallOrder[0]!;
+      expect(arriveOrder).toBeLessThan(unloadOrder);
+    });
+
+    it("breaks a timestamp tie by the position in the batch", async () => {
+      const server = await serverFor();
+      const tied = at("04:42:00");
+
+      const response = await server.inject(
+        drain([
+          { ...arrived, tripStopId: STOP, occurredAt: tied },
+          { ...unloadStart, tripStopId: STOP, occurredAt: tied },
+        ]),
+      );
+
+      expect(response.json().results.map((r: { id: string }) => r.id)).toEqual([
+        ARRIVED_ID,
+        UNLOAD_ID,
+      ]);
+      expect(vi.mocked(arriveAtStop).mock.invocationCallOrder[0]!).toBeLessThan(
+        vi.mocked(startUnloading).mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("closes a stop once, after its arrival, however the events were listed", async () => {
+      const server = await serverFor();
+
+      await server.inject(
+        drain([
+          {
+            id: POD_ID,
+            type: "POD_CAPTURED",
+            occurredAt: at("04:56:00"),
+            tripStopId: STOP,
+            recipientName: "K. Jayasuriya",
+          },
+          {
+            id: DELIVERED_ID,
+            type: "DELIVERED",
+            occurredAt: at("04:55:00"),
+            tripStopId: STOP,
+            orderId: "ORD1",
+            deliveredUnits: 120,
+          },
+          { ...arrived, tripStopId: STOP },
+        ]),
+      );
+
+      expect(completeStop).toHaveBeenCalledOnce();
+      expect(vi.mocked(arriveAtStop).mock.invocationCallOrder[0]!).toBeLessThan(
+        vi.mocked(completeStop).mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("lets a poisoned event fail alone", async () => {
+      const server = await serverFor();
+
+      const response = await server.inject(
+        drain([
+          { ...arrived, tripStopId: STOP },
+          // Valid to the schema, wrong to the domain: a delivery with no quantity.
+          {
+            id: DELIVERED_ID,
+            type: "DELIVERED",
+            occurredAt: at("05:00:00"),
+            tripStopId: OTHER_STOP,
+            orderId: "ORD2",
+          },
+          { ...unloadStart, tripStopId: STOP },
+        ]),
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        accepted: 2,
+        rejected: [{ id: DELIVERED_ID, code: "DELIVERED_INCOMPLETE" }],
+      });
+      expect(arriveAtStop).toHaveBeenCalledOnce();
+      expect(startUnloading).toHaveBeenCalledOnce();
+    });
+
+    it("reports a transition the stop refuses as rejected, and carries on", async () => {
+      const server = await serverFor();
+      vi.mocked(startUnloading).mockRejectedValue(
+        new StopStateError("STATE_MISMATCH", "Unloading cannot start at a stop that is PENDING."),
+      );
+
+      const response = await server.inject(drain(batch));
+
+      expect(response.json()).toMatchObject({
+        accepted: 2,
+        rejected: [{ id: UNLOAD_ID, code: "STATE_MISMATCH" }],
+      });
+    });
+
+    it("leaves an event that failed unexpectedly out of every list, so the device retries it", async () => {
+      const server = await serverFor();
+      vi.mocked(reportProblem).mockRejectedValue(new Error("connection reset"));
+
+      const response = await server.inject(drain(batch));
+
+      // Not rejected (that is final), not accepted: absent, which an outbox reads
+      // as "did not land, send again". The other stop's events are unaffected.
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body).toMatchObject({ accepted: 2, rejected: [] });
+      expect(body.results.map((r: { id: string }) => r.id)).toEqual([ARRIVED_ID, UNLOAD_ID]);
+    });
+
+    it("treats a second copy of an id within one batch as a duplicate and applies it once", async () => {
+      const server = await serverFor();
+
+      const response = await server.inject(
+        drain([
+          { ...arrived, tripStopId: STOP },
+          { ...arrived, tripStopId: STOP },
+        ]),
+      );
+
+      expect(response.json()).toMatchObject({ accepted: 1, duplicates: 1 });
+      expect(arriveAtStop).toHaveBeenCalledOnce();
+    });
+
+    it("recognises a lost-response replay even though the stop has since left the run", async () => {
+      const server = await serverFor();
+      requireDriverStopMock.mockRejectedValue(new Error("denied"));
+      vi.mocked(prisma.stopEvent.findMany).mockResolvedValue([stored(ARRIVED_ID)] as never);
+
+      const response = await server.inject(drain([{ ...arrived, tripStopId: STOP }]));
+
+      // The driver's own record, replayed. Calling it forbidden would leave the
+      // device holding a row the server already has.
+      expect(response.json()).toMatchObject({
+        accepted: 0,
+        duplicates: 1,
+        rejected: [],
+        results: [{ id: ARRIVED_ID, status: "duplicate" }],
+      });
+    });
+
+    it("will not call an id reused for a different stop a duplicate", async () => {
+      const server = await serverFor();
+      vi.mocked(prisma.stopEvent.findMany).mockResolvedValue([
+        stored(ARRIVED_ID, "NONE", OTHER_STOP),
+      ] as never);
+
+      const response = await server.inject(drain([{ ...arrived, tripStopId: STOP }]));
+
+      expect(response.json()).toMatchObject({
+        duplicates: 0,
+        rejected: [{ id: ARRIVED_ID, code: "ID_REUSED" }],
+      });
+      expect(arriveAtStop).not.toHaveBeenCalled();
+    });
+
+    it("reads a unique-violation race as a duplicate, not a failure", async () => {
+      const server = await serverFor();
+      // Another request with the same id got past the dedup query first; this
+      // one's transaction rolled back whole, so nothing here ran twice.
+      vi.mocked(arriveAtStop).mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }));
+      vi.mocked(prisma.stopEvent.findMany)
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([stored(ARRIVED_ID)] as never);
+
+      const response = await server.inject(drain([{ ...arrived, tripStopId: STOP }]));
+
+      expect(response.json()).toMatchObject({ accepted: 0, duplicates: 1, rejected: [] });
+    });
+
+    it("keeps the two routes' answers identical for the same events", async () => {
+      const server = await serverFor();
+
+      const online = await server.inject(post([arrived, unloadStart]));
+      vi.mocked(arriveAtStop).mockClear();
+      const offline = await server.inject(
+        drain([
+          { ...arrived, tripStopId: STOP },
+          { ...unloadStart, tripStopId: STOP },
+        ]),
+      );
+
+      const { clockSkewMs: _skew, serverSeq: _seq, ...batch } = offline.json();
+      expect(batch).toEqual(online.json());
+    });
+
+    it("accepts a tripStopId on the per-stop route and ignores it in favour of the URL", async () => {
+      const server = await serverFor();
+
+      const response = await server.inject(post([{ ...arrived, tripStopId: OTHER_STOP }]));
+
+      expect(response.statusCode).toBe(200);
+      expect(arriveAtStop).toHaveBeenCalledWith(STOP, driver, expect.anything());
+    });
+
+    it("answers a stop-state refusal on the online route as rejected, not as an error", async () => {
+      const server = await serverFor();
+      vi.mocked(completeStop).mockRejectedValue(
+        new StopStateError("STOP_ALREADY_CLOSED", "This stop has already been completed."),
+      );
+
+      const response = await server.inject(
+        post([
+          {
+            id: DELIVERED_ID,
+            type: "DELIVERED",
+            occurredAt: at("04:55:00"),
+            orderId: "ORD1",
+            deliveredUnits: 120,
+            recipientName: "K. Jayasuriya",
+          },
+        ]),
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        accepted: 0,
+        rejected: [{ id: DELIVERED_ID, code: "STOP_ALREADY_CLOSED" }],
+      });
+    });
+
+    it("refuses a POD with no delivered lines: it has nothing to close", async () => {
+      const server = await serverFor();
+
+      const offline = await server.inject(
+        drain([
+          {
+            id: POD_ID,
+            type: "POD_CAPTURED",
+            occurredAt: at("04:56:00"),
+            tripStopId: STOP,
+            recipientName: "K. Jayasuriya",
+          },
+        ]),
+      );
+      const online = await server.inject(
+        post([
+          {
+            id: POD_ID,
+            type: "POD_CAPTURED",
+            occurredAt: at("04:56:00"),
+            recipientName: "K. Jayasuriya",
+          },
+        ]),
+      );
+
+      expect(offline.json()).toMatchObject({
+        accepted: 0,
+        rejected: [{ id: POD_ID, code: "POD_WITHOUT_DELIVERY" }],
+      });
+      expect(online.statusCode).toBe(422);
+      expect(online.json().error.code).toBe("POD_WITHOUT_DELIVERY");
+      expect(completeStop).not.toHaveBeenCalled();
+    });
+
+    it("still sends the whole batch's other stops through when one completion is rejected", async () => {
+      const server = await serverFor();
+
+      const response = await server.inject(
+        drain([
+          // No recipient anywhere: not a delivery.
+          {
+            id: DELIVERED_ID,
+            type: "DELIVERED",
+            occurredAt: at("04:55:00"),
+            tripStopId: STOP,
+            orderId: "ORD1",
+            deliveredUnits: 120,
+          },
+          { ...arrived, id: ulid("RWJ"), tripStopId: OTHER_STOP },
+        ]),
+      );
+
+      expect(response.json()).toMatchObject({
+        accepted: 1,
+        rejected: [{ id: DELIVERED_ID, code: "RECIPIENT_REQUIRED" }],
+      });
+    });
+  });
+
+  describe("multi-page proof of delivery", () => {
+    const PAGE_A = ulid("PG1");
+    const PAGE_B = ulid("PG2");
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    const jpeg = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
+    const page = (id: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      kind: "RECEIPT",
+      data: png,
+      capturedAt: "2026-04-09T04:55:30.000Z",
+      ...extra,
+    });
+    const lines = {
+      id: DELIVERED_ID,
+      type: "DELIVERED",
+      occurredAt: "2026-04-09T04:55:00.000Z",
+      orderId: "ORD1",
+      deliveredUnits: 120,
+    };
+    const pod = (pages: unknown[], extra: Record<string, unknown> = {}) => ({
+      id: POD_ID,
+      type: "POD_CAPTURED",
+      occurredAt: "2026-04-09T04:56:00.000Z",
+      recipientName: "K. Jayasuriya",
+      pages,
+      ...extra,
+    });
+
+    it("hands the pages to the completion in capture order", async () => {
+      const server = await serverFor();
+
+      const response = await server.inject(
+        post([
+          lines,
+          pod([
+            page(PAGE_A, { qualityFlags: ["BLURRY"] }),
+            page(PAGE_B, { kind: "SIGNATURE", data: jpeg }),
+          ]),
+        ]),
+      );
+
+      expect(response.statusCode).toBe(200);
+      const input = vi.mocked(completeStop).mock.calls[0]![2];
+      expect(input.pages).toEqual([
+        {
+          id: PAGE_A,
+          kind: "RECEIPT",
+          data: png,
+          qualityFlags: ["BLURRY"],
+          capturedAt: new Date("2026-04-09T04:55:30.000Z"),
+        },
+        {
+          id: PAGE_B,
+          kind: "SIGNATURE",
+          data: jpeg,
+          qualityFlags: [],
+          capturedAt: new Date("2026-04-09T04:55:30.000Z"),
+        },
+      ]);
+    });
+
+    it("lets pages win when a client sends them alongside the legacy fields", async () => {
+      const server = await serverFor();
+
+      await server.inject(
+        post([
+          lines,
+          pod([page(PAGE_A)], { signatureData: "data:image/png;base64,LEGACY" }),
+        ]),
+      );
+
+      const input = vi.mocked(completeStop).mock.calls[0]![2];
+      // The same picture is not stored twice.
+      expect(input.signatureData).toBeUndefined();
+      expect(input.photoData).toBeUndefined();
+      expect(input.pages).toHaveLength(1);
+    });
+
+    it("still takes the legacy fields when no pages are sent", async () => {
+      const server = await serverFor();
+
+      await server.inject(
+        post([
+          lines,
+          {
+            id: POD_ID,
+            type: "POD_CAPTURED",
+            occurredAt: "2026-04-09T04:56:00.000Z",
+            recipientName: "K. Jayasuriya",
+            signatureData: "data:image/png;base64,AAA",
+            photoData: "data:image/jpeg;base64,BBB",
+          },
+        ]),
+      );
+
+      expect(vi.mocked(completeStop).mock.calls[0]![2]).toMatchObject({
+        signatureData: "data:image/png;base64,AAA",
+        photoData: "data:image/jpeg;base64,BBB",
+        pages: undefined,
+      });
+    });
+
+    it("refuses a ninth page at the schema, on both routes", async () => {
+      const server = await serverFor();
+      const nine = Array.from({ length: 9 }, (_, i) => page(ulid(`P${i}A`)));
+
+      const online = await server.inject(post([lines, pod(nine)]));
+      const offline = await server.inject(
+        drain([
+          { ...lines, tripStopId: STOP },
+          { ...pod(nine), tripStopId: STOP },
+        ]),
+      );
+
+      expect(online.statusCode).toBe(422);
+      expect(offline.statusCode).toBe(422);
+      expect(completeStop).not.toHaveBeenCalled();
+    });
+
+    it("accepts exactly eight pages", async () => {
+      const server = await serverFor();
+      const eight = Array.from({ length: 8 }, (_, i) => page(ulid(`P${i}A`)));
+
+      const response = await server.inject(post([lines, pod(eight)]));
+
+      expect(response.statusCode).toBe(200);
+      expect(vi.mocked(completeStop).mock.calls[0]![2].pages).toHaveLength(8);
+    });
+
+    it.each([
+      ["a plain https URL", "https://example.com/receipt.png"],
+      ["a non-image data URL", "data:text/html;base64,PGgxPg=="],
+      ["a data URL that is not base64", "data:image/png,rawbytes"],
+      ["an empty string", ""],
+    ])("refuses page data that is %s", async (_label, data) => {
+      const server = await serverFor();
+
+      const response = await server.inject(post([lines, pod([page(PAGE_A, { data })])]));
+
+      expect(response.statusCode).toBe(422);
+      expect(completeStop).not.toHaveBeenCalled();
+    });
+
+    it("refuses a page that is over the size cap", async () => {
+      const server = await serverFor();
+      const huge = `data:image/png;base64,${"A".repeat(MAX_POD_PAGE_CHARS)}`;
+
+      const response = await server.inject(post([lines, pod([page(PAGE_A, { data: huge })])]));
+
+      expect(response.statusCode).toBe(422);
+    });
+
+    it("refuses a page whose body is not base64 even though its prefix is right", async () => {
+      const server = await serverFor();
+      const bad = page(PAGE_A, { data: "data:image/png;base64,not base64 !!" });
+
+      const online = await server.inject(post([lines, pod([bad])]));
+      const offline = await server.inject(
+        drain([
+          { ...arrived, tripStopId: OTHER_STOP },
+          { ...lines, tripStopId: STOP },
+          { ...pod([bad]), tripStopId: STOP },
+        ]),
+      );
+
+      expect(online.statusCode).toBe(422);
+      expect(online.json().error.code).toBe("PAGE_DATA_INVALID");
+      // Offline, the bad POD costs its own delivery, not the other stop's arrival.
+      expect(offline.json()).toMatchObject({
+        accepted: 1,
+        rejected: [
+          { id: DELIVERED_ID, code: "POD_REJECTED" },
+          { id: POD_ID, code: "PAGE_DATA_INVALID" },
+        ],
+      });
+    });
+
+    it("refuses an unknown page kind, a malformed id and an undeclared field", async () => {
+      const server = await serverFor();
+
+      const kind = await server.inject(post([lines, pod([page(PAGE_A, { kind: "VIDEO" })])]));
+      const id = await server.inject(post([lines, pod([page("not-a-ulid")])]));
+      const extra = await server.inject(post([lines, pod([page(PAGE_A, { caption: "x" })])]));
+
+      expect(kind.statusCode).toBe(422);
+      expect(id.statusCode).toBe(422);
+      expect(extra.statusCode).toBe(422);
+    });
+
+    it("refuses quality flags that are not short codes", async () => {
+      const server = await serverFor();
+
+      const response = await server.inject(
+        post([lines, pod([page(PAGE_A, { qualityFlags: ["the text is a bit blurry"] })])]),
+      );
+
+      expect(response.statusCode).toBe(422);
+    });
+
+    it("refuses two pages that share an id", async () => {
+      const server = await serverFor();
+
+      const response = await server.inject(post([lines, pod([page(PAGE_A), page(PAGE_A)])]));
+
+      expect(response.statusCode).toBe(422);
+      expect(response.json().error.code).toBe("DUPLICATE_PAGE_ID");
+    });
+
+    it("refuses pages on an event that is not a POD", async () => {
+      const server = await serverFor();
+
+      const response = await server.inject(post([{ ...arrived, pages: [page(PAGE_A)] }]));
+
+      expect(response.statusCode).toBe(422);
+      expect(response.json().error.code).toBe("PAGES_ON_NON_POD");
+    });
+
+    it("reports a page id already used elsewhere as a collision, not a duplicate", async () => {
+      const server = await serverFor();
+      vi.mocked(completeStop).mockRejectedValue(
+        Object.assign(new Error("unique"), { code: "P2002" }),
+      );
+
+      const response = await server.inject(
+        drain([
+          { ...lines, tripStopId: STOP },
+          { ...pod([page(PAGE_A)]), tripStopId: STOP },
+        ]),
+      );
+
+      // The event ids are NOT in the table, so the unique violation was the page's.
+      expect(response.json()).toMatchObject({
+        duplicates: 0,
+        rejected: [
+          { id: DELIVERED_ID, code: "ID_COLLISION" },
+          { id: POD_ID, code: "ID_COLLISION" },
+        ],
+      });
+    });
+
+    it("stores a conflicted POD's pages with it, nested in the same insert", async () => {
+      const server = await serverFor();
+      requireDriverStopMock.mockRejectedValue(new Error("denied"));
+      vi.mocked(prisma.stopReassignment.findFirst).mockResolvedValue({ id: "RA1" } as never);
+
+      await server.inject(
+        post([pod([page(PAGE_A), page(PAGE_B, { kind: "SIGNATURE" })], { signatureData: "LEGACY" })]),
+      );
+
+      const data = vi.mocked(prisma.stopEvent.create).mock.calls[0]![0].data as Record<string, unknown>;
+      expect(data).toMatchObject({
+        id: POD_ID,
+        conflictState: "STALE_ASSIGNMENT",
+        // Alternatives, as on an applied event.
+        signatureData: null,
+        photoData: null,
+        podPages: {
+          create: [
+            { id: PAGE_A, seq: 0, kind: "RECEIPT" },
+            { id: PAGE_B, seq: 1, kind: "SIGNATURE" },
+          ],
+        },
+      });
     });
   });
 });

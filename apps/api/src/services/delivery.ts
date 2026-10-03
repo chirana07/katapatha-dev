@@ -1,6 +1,6 @@
 
 
-import type { ProblemKind } from "@prisma/client";
+import type { ConflictState, PodPageKind, ProblemKind, StopEventType } from "@prisma/client";
 import { prisma } from "../lib/db";
 import { ulid } from "@katapatha/core/offline/ulid";
 import { recordDecision } from "../lib/audit";
@@ -41,30 +41,83 @@ export type EventMeta = {
   deviceId?: string;
 };
 
+/**
+ * A transition the stop's current state does not allow. The applier turns it
+ * into a per-event rejection: it is a fact about the stop, so retrying the same
+ * event cannot change the answer.
+ */
+export class StopStateError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** One page of proof of delivery, already validated by the applier. */
+export type PodPageInput = {
+  /** The client's ULID. Becomes PodPage.id, so a replayed page cannot be stored twice. */
+  id: string;
+  kind: PodPageKind;
+  data: string;
+  qualityFlags: string[];
+  capturedAt: Date;
+};
+
+/** `seq` is the position in the array: that is the order the driver captured them in. */
+function pageRows(pages: readonly PodPageInput[]) {
+  return pages.map((page, seq) => ({
+    id: page.id,
+    seq,
+    kind: page.kind,
+    data: page.data,
+    qualityFlags: page.qualityFlags,
+    capturedAt: page.capturedAt,
+  }));
+}
+
 function clock(at: Date): string {
   return at.toISOString().slice(11, 16);
 }
 
+/**
+ * Record that the vehicle is at the stop.
+ *
+ * The event row is written whatever the stop's state, because the driver's fact
+ * is true whether or not it still moves anything: an ARRIVED that reaches the
+ * server after UNLOAD_START (two batches, the second one first) adds nothing to
+ * the state machine but is still what happened, and storing it is what lets a
+ * replay be recognised. The transition itself only fires from PENDING. Before
+ * this the row was skipped whenever the state was ahead, so the event was
+ * reported accepted without existing and a retry was "accepted" again forever.
+ */
 export async function arriveAtStop(stopId: string, actor: SessionUser, meta: EventMeta = {}) {
   await requireDriverStop(actor, stopId);
   const stop = await prisma.tripStop.findUnique({
     where: { id: stopId },
     include: { trip: true },
   });
-  if (!stop || stop.status !== "PENDING") return;
+  if (!stop) throw new StopStateError("STOP_NOT_FOUND", "That stop no longer exists.");
 
   const at = new Date();
+  const event = prisma.stopEvent.create({
+    data: {
+      id: meta.id ?? ulid(),
+      tripStopId: stopId,
+      type: "ARRIVED",
+      occurredAt: meta.occurredAt ?? at,
+      deviceId: meta.deviceId,
+      actorUserId: actor.id,
+    },
+  });
+  if (stop.status !== "PENDING") {
+    await event;
+    return;
+  }
+
   await prisma.$transaction([
-    prisma.stopEvent.create({
-      data: {
-        id: meta.id ?? ulid(),
-        tripStopId: stopId,
-        type: "ARRIVED",
-        occurredAt: meta.occurredAt ?? at,
-        deviceId: meta.deviceId,
-        actorUserId: actor.id,
-      },
-    }),
+    event,
     prisma.tripStop.update({
       where: { id: stopId },
       data: { status: "ARRIVED", arrivedAt: at },
@@ -76,22 +129,37 @@ export async function arriveAtStop(stopId: string, actor: SessionUser, meta: Eve
   ]);
 }
 
+/** Record that unloading began. Same rule as arrival: stored always, applied from ARRIVED. */
 export async function startUnloading(stopId: string, actor: SessionUser, meta: EventMeta = {}) {
   await requireDriverStop(actor, stopId);
   const stop = await prisma.tripStop.findUnique({ where: { id: stopId } });
-  if (!stop || stop.status !== "ARRIVED") return;
+  if (!stop) throw new StopStateError("STOP_NOT_FOUND", "That stop no longer exists.");
 
+  // Unloading a stop nobody has arrived at, or one that was failed or skipped,
+  // is not a late fact but a wrong one; the device should be told, not agreed with.
+  if (stop.status === "PENDING" || stop.status === "FAILED" || stop.status === "SKIPPED") {
+    throw new StopStateError(
+      "STATE_MISMATCH",
+      `Unloading cannot start at a stop that is ${stop.status}.`,
+    );
+  }
+
+  const event = prisma.stopEvent.create({
+    data: {
+      id: meta.id ?? ulid(),
+      tripStopId: stopId,
+      type: "UNLOAD_START",
+      occurredAt: meta.occurredAt ?? new Date(),
+      deviceId: meta.deviceId,
+      actorUserId: actor.id,
+    },
+  });
+  if (stop.status !== "ARRIVED") {
+    await event;
+    return;
+  }
   await prisma.$transaction([
-    prisma.stopEvent.create({
-      data: {
-        id: meta.id ?? ulid(),
-        tripStopId: stopId,
-        type: "UNLOAD_START",
-        occurredAt: meta.occurredAt ?? new Date(),
-        deviceId: meta.deviceId,
-        actorUserId: actor.id,
-      },
-    }),
+    event,
     prisma.tripStop.update({ where: { id: stopId }, data: { status: "UNLOADING" } }),
   ]);
 }
@@ -115,6 +183,12 @@ export async function completeStop(
     photoData?: string;
     /** The client's ULID for the stop-level POD_CAPTURED event. */
     podEventId?: string;
+    /**
+     * Multi-page proof of delivery, written with the POD event in the same
+     * transaction. When present the applier has already dropped the legacy
+     * signatureData/photoData for this event, so a picture is stored once.
+     */
+    pages?: PodPageInput[];
   },
   meta: EventMeta = {},
 ) {
@@ -123,7 +197,13 @@ export async function completeStop(
     where: { id: stopId },
     include: { trip: true, outlet: true, orders: { include: { order: true } } },
   });
-  if (!stop || stop.status === "DONE") return;
+  if (!stop) throw new StopStateError("STOP_NOT_FOUND", "That stop no longer exists.");
+  // A delivery for a stop that is already closed is not applied and not
+  // swallowed: reporting it accepted would store nothing, so every retry would
+  // be accepted again and the driver would believe a second delivery happened.
+  if (stop.status === "DONE") {
+    throw new StopStateError("STOP_ALREADY_CLOSED", "This stop has already been completed.");
+  }
 
   const at = new Date();
 
@@ -160,6 +240,8 @@ export async function completeStop(
         occurredAt: meta.occurredAt ?? at,
         deviceId: meta.deviceId,
         actorUserId: actor.id,
+        // Nested, so the pages exist if and only if the event does.
+        ...(input.pages?.length ? { podPages: { create: pageRows(input.pages) } } : {}),
       },
     });
 
@@ -219,7 +301,14 @@ export async function reportProblem(
   },
   meta: EventMeta = {},
 ) {
-  if (input.tripStopId) await requireDriverStop(actor, input.tripStopId);
+  if (input.tripStopId) {
+    const stop = await requireDriverStop(actor, input.tripStopId);
+    // A completed stop cannot then fail: that would overwrite a delivery with a
+    // problem. Said out loud rather than skipped, for the same reason as above.
+    if (stop.status === "DONE") {
+      throw new StopStateError("STOP_ALREADY_CLOSED", "This stop has already been completed.");
+    }
+  }
   const at = new Date();
   const id = ulid();
   const outcome = input.outcome ?? "FAILED";
@@ -276,6 +365,58 @@ export async function reportProblem(
   });
 
   return id;
+}
+
+/**
+ * Store a conflicted event without applying it, pages included.
+ *
+ * services/conflicts.ts has the same function without pages. This one exists
+ * because a conflicted POD must keep its pages, for the reason it keeps its
+ * signature: the device drops its copy the moment the server calls the event a
+ * conflict, and the dispatcher unpicking "who actually delivered?" needs what
+ * the other driver claims. Pages are nested in the event's own insert so they
+ * cannot be lost between two writes.
+ */
+export async function recordConflictedFact(input: {
+  stopId: string;
+  conflictState: Exclude<ConflictState, "NONE">;
+  fact: {
+    id: string;
+    type: StopEventType;
+    occurredAt: Date;
+    orderId?: string | null;
+    deliveredUnits?: number | null;
+    recipientName?: string | null;
+    signatureData?: string | null;
+    photoData?: string | null;
+    reasonCode?: string | null;
+    pages: PodPageInput[];
+  };
+  /** True when `fact.orderId` names an order on this stop. */
+  orderOnStop: boolean;
+  actor: { userId: string; deviceId: string };
+}): Promise<void> {
+  const { fact } = input;
+  const hasPages = fact.pages.length > 0;
+  await prisma.stopEvent.create({
+    data: {
+      id: fact.id,
+      tripStopId: input.stopId,
+      orderId: input.orderOnStop ? fact.orderId : null,
+      type: fact.type,
+      payload: fact.reasonCode ? { reasonCode: fact.reasonCode } : undefined,
+      deliveredUnits: fact.deliveredUnits ?? null,
+      recipientName: fact.recipientName ?? null,
+      // Pages and the legacy columns are alternatives, as on an applied event.
+      signatureData: hasPages ? null : (fact.signatureData ?? null),
+      photoData: hasPages ? null : (fact.photoData ?? null),
+      occurredAt: fact.occurredAt,
+      deviceId: input.actor.deviceId,
+      actorUserId: input.actor.userId,
+      conflictState: input.conflictState,
+      ...(hasPages ? { podPages: { create: pageRows(fact.pages) } } : {}),
+    },
+  });
 }
 
 /** The driver's run for a day: their vehicle's published trips, in order. */

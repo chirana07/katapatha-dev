@@ -54,9 +54,48 @@ asserted separately, against a stubbed `fetch`, in `src/outbox/transport.test.ts
 
 `src/outbox/claims.ts` therefore has `OFFLINE_DURABILITY_VERIFIED = true`.
 
-**Still outstanding, and the UI copy is written not to depend on it:**
-`apps/api/src/services/delivery.ts` mints its own ULID server-side and guards on
-stop status rather than keying on the client's id, and `routes/sync.ts` is a 501
-stub. Server-side idempotency — what makes a replay safe rather than a
-double-write — is not implemented yet. Re-run these assertions by hand against
-the real endpoint the day BE3 lands it.
+## Server side — implemented 2026-10-03
+
+The gap recorded above is closed. It was already half closed when this was
+written (`routes/sync.ts` was no longer a 501 stub and `services/delivery.ts`
+already stored the client's ULID); what remained is now done:
+
+- **The client's ULID is the `StopEvent` primary key**, on `POST /sync/stop-events`
+  and on `POST /stops/{stopId}/events`. An id the server already holds is a
+  `duplicate`: no second row, and none of the side effects (order and stop status,
+  the store's notification, the decision log) run again. Two requests racing with
+  the same id are also safe: the loser's transaction rolls back whole and is
+  reported as a duplicate. Both routes run one applier, `services/stopEvents.ts`.
+- **Each event is judged on its own.** A batch is no longer all-or-nothing:
+  a stop the driver cannot see, an invalid payload, or a transition the stop
+  refuses puts that one event in a new `rejected: [{ id, code, message }]` list
+  and the others still apply. Events are applied per stop in `occurredAt` order
+  (a tie keeps batch order), so a re-ordered retry cannot unload before it arrives.
+- **Multi-page proof of delivery.** `POD_CAPTURED` may carry `pages`
+  (`[{ id, kind, data, qualityFlags?, capturedAt }]`, at most 8, each a base64
+  image data URL of at most 1,048,576 characters). Pages are written with the POD
+  event in one transaction. `signatureData` / `photoData` still work; if both are
+  sent, pages win and the legacy fields on that event are ignored.
+- The request body limit on both routes is 12 MiB (Fastify's default is 1 MiB,
+  which was below this outbox's own 1.5 MB `MAX_BATCH_BYTES`).
+
+Regression coverage is in `apps/api/src/test/stopEventReplay.test.ts` (replays
+counted against rows and side effects, not mocks) and `stopsAndSync.test.ts`.
+It still has not been run against a real device or the real endpoint from this
+app, so re-run the acceptance assertions by hand the day the app is pointed at it.
+
+**What this app must still do about it** (the server cannot do it from its side):
+
+1. `OutboxEventInput` / `toBody` send `signatureData` and `photoData` only. To
+   send a multi-page receipt they must send `pages` instead (see above) and not
+   the legacy fields for the same picture.
+2. `transport.ts` reads only `results`. An event the server `rejected` is absent
+   from `results`, which `settleResults` treats as "not reported" and requeues
+   with backoff forever. `readBatchResult` needs to read `rejected` and settle
+   those rows terminally (the same state `rejectBatch` uses), showing `message`.
+3. A single bad event used to come back as a 403/422 for the whole batch and
+   `drain.ts` held or rejected every row in it. That no longer happens for the
+   per-event causes above; a 403/422 now means the whole request was refused.
+4. `transport.ts` still carries a 501 fallback to `/stops/{stopId}/events`
+   ("routes/sync.ts returns 501"). That is now dead, though harmless: the
+   per-stop route accepts the `tripStopId` the body already carries.
