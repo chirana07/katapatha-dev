@@ -1,12 +1,19 @@
 import type { FastifyInstance } from "fastify";
-import type { ProblemKind } from "@prisma/client";
+import type { ConflictState, ProblemKind } from "@prisma/client";
 import {
   DEFERRAL_REASONS,
   PROBLEM_REASONS,
   SHORTFALL_REASONS,
 } from "@katapatha/core/domain/reasons";
 import { prisma } from "../lib/db.js";
-import { requireDriverStop } from "../lib/authorization.js";
+import {
+  detectConflict,
+  loadConflictContexts,
+  recordConflictedEvent,
+  resolveStopAccess,
+  type StopAccess,
+  type StopConflictContext,
+} from "../services/conflicts.js";
 import { accessNoteFor } from "../services/store.js";
 import {
   arriveAtStop,
@@ -36,28 +43,30 @@ function toProblemKind(code: string | null | undefined): ProblemKind {
 /**
  * Owner: BE3
  *
- * Two of three sync endpoints are live:
+ * All three sync endpoints are live:
  *
- * - GET /sync/bootstrap?date=YYYY-MM-DD → the fresh-install payload: today's
- *   run for the driver's claimed vehicle plus the server-owned reason
- *   vocabularies and a serverSeq cursor to anchor subsequent pulls.
+ * - POST /sync/stop-events → the batched outbox drain, and the request the
+ *   mobile outbox tries first. One batch may span several stops, so every
+ *   event carries `tripStopId` (an additive contract field) and the server
+ *   routes each one. It runs the same applier as POST /stops/{stopId}/events
+ *   so the online and offline paths cannot diverge; on top of that it measures
+ *   device clock skew and writes a SyncLog row. Replaying an identical batch
+ *   reports every event as a duplicate and changes nothing.
  * - GET /sync/stop-events?sinceSeq=N → the server-tail pull a reconnecting
  *   device uses to learn about events it missed (a stop reassigned to another
  *   vehicle while the phone was offline).
+ * - GET /sync/bootstrap?date=YYYY-MM-DD → the fresh-install payload: that
+ *   day's run for the driver's claimed vehicle plus the server-owned reason
+ *   vocabularies and a serverSeq cursor to anchor subsequent pulls.
  *
- * POST /sync/stop-events (the batched outbox drain) stays 501 on this slice:
- * the contract's StopEvent schema has no tripStopId field, so a flat batch
- * spanning several stops cannot route individual events to the right stop
- * server-side. The mobile transport already handles this cleanly by falling
- * back to one POST /stops/{stopId}/events request per stop — the applier is
- * the same, the batching is just regrouped. Wiring the batched endpoint
- * properly needs a contract change (per-event stopId, or a stops-grouped
- * array shape), owned by LEAD.
- *
- * The sequence number here is `StopEvent.recordedAt.getTime()` — server
- * receipt time in epoch ms. The schema has no auto-incrementing sequence
- * column; this gives millisecond ordering which is more than enough for the
- * cross-device catchup use case the pull endpoint serves.
+ * The sequence number the two cursors share is `StopEvent.recordedAt.getTime()`
+ * — server receipt time in epoch ms — rather than the `StopEvent.serverSeq`
+ * column. That column is a BIGSERIAL and arrives as a JS BigInt, which the
+ * contract's `integer` response field cannot serialise without a cast at every
+ * boundary; receipt time needs no cast and millisecond ordering is more than
+ * enough for the cross-device catchup these endpoints serve. Swapping to the
+ * real sequence would be a behaviour change to all three, so it is a decision
+ * of its own, not a detail of this one.
  */
 
 const ERROR_RESPONSE = {
@@ -304,12 +313,15 @@ export default async function (fastify: FastifyInstance) {
 
       // Scope-check each distinct stop. The driver can only drain events for
       // stops on their claimed vehicle's run — a batch that touches someone
-      // else's stop fails fast with no partial writes.
+      // else's stop fails fast with no partial writes. A stop that has since
+      // been reassigned away from them is the exception: it was theirs when the
+      // device recorded these events, so those events are stale rather than
+      // unauthorised and the loop below records them as conflicts.
       const stopIds = Array.from(new Set(body.events.map((event) => event.tripStopId!)));
+      const accessByStop = new Map<string, StopAccess>();
       for (const stopId of stopIds) {
-        try {
-          await requireDriverStop(user, stopId);
-        } catch {
+        const access = await resolveStopAccess(user, stopId);
+        if (access === "DENIED") {
           return reply.status(403).send({
             error: {
               code: "STOP_NOT_ON_RUN",
@@ -317,16 +329,29 @@ export default async function (fastify: FastifyInstance) {
             },
           });
         }
+        accessByStop.set(stopId, access);
       }
+
+      const actor = { userId: user.id, vehicleId: user.defaultVehicleId, deviceId: body.deviceId };
 
       // Dedup by StopEvent.id in one query — a replay from a flaky phone sees
       // every id again and the server reports duplicate without re-applying.
+      // The stored conflictState rides along so a replayed conflict is reported
+      // as the conflict it was rather than as a plain duplicate.
       const incomingIds = body.events.map((event) => event.id);
       const existing = await prisma.stopEvent.findMany({
         where: { id: { in: incomingIds } },
-        select: { id: true },
+        select: { id: true, conflictState: true },
       });
-      const duplicateIds = new Set(existing.map((row) => row.id));
+      const recordedState = new Map(existing.map((row) => [row.id, row.conflictState]));
+
+      // Ownership history, but only when something in the batch would be
+      // applied. A batch that is entirely duplicates is the common case on an
+      // endpoint the outbox retries every few seconds, and it decides nothing.
+      const hasNewWork = body.events.some((event) => !recordedState.has(event.id));
+      const conflictContexts: Map<string, StopConflictContext> = hasNewWork
+        ? await loadConflictContexts(stopIds)
+        : new Map();
 
       // Pre-load expected units per stop for the completion grouping.
       const stopOrders = await prisma.tripStopOrder.findMany({
@@ -343,11 +368,12 @@ export default async function (fastify: FastifyInstance) {
       type ResultRow = {
         id: string;
         status: "accepted" | "duplicate" | "conflict";
-        conflictState: "NONE" | null;
+        conflictState: ConflictState | null;
       };
       const results: ResultRow[] = [];
       let accepted = 0;
       let duplicates = 0;
+      let conflicts = 0;
 
       type CompletionPlan = {
         recipient: string | null;
@@ -362,13 +388,49 @@ export default async function (fastify: FastifyInstance) {
       const completionsByStop = new Map<string, CompletionPlan>();
 
       for (const event of body.events) {
-        if (duplicateIds.has(event.id)) {
+        const alreadyRecorded = recordedState.get(event.id);
+        if (alreadyRecorded !== undefined) {
+          // A duplicate either way — the row exists and nothing is re-applied.
+          // A replay of a conflicted event is still reported as a conflict, so
+          // the device settles the row terminally rather than retrying it
+          // forever, but it counts under `duplicates`: the conflict was counted
+          // when it was first detected, and counting it again on every replay
+          // would be a lie about how many conflicts happened, in the response
+          // and in SyncLog alike.
           duplicates += 1;
-          results.push({ id: event.id, status: "duplicate", conflictState: "NONE" });
+          results.push(
+            alreadyRecorded === "NONE"
+              ? { id: event.id, status: "duplicate", conflictState: "NONE" }
+              : { id: event.id, status: "conflict", conflictState: alreadyRecorded },
+          );
           continue;
         }
 
         const stopId = event.tripStopId!;
+        const occurredAt = new Date(event.occurredAt);
+        // Access granted only on the strength of a reassignment means the stop
+        // is someone else's now, so the event cannot apply to it whatever its
+        // timing: their assignment is stale by definition.
+        const conflictState: ConflictState =
+          accessByStop.get(stopId) === "REASSIGNED_AWAY"
+            ? "STALE_ASSIGNMENT"
+            : detectConflict(conflictContexts.get(stopId), { occurredAt }, actor);
+
+        if (conflictState !== "NONE") {
+          await recordConflictedEvent({
+            stopId,
+            conflictState,
+            fact: { ...event, occurredAt },
+            orderOnStop:
+              event.orderId != null &&
+              expectedByStopAndOrder.get(stopId)?.has(event.orderId) === true,
+            actor,
+          });
+          conflicts += 1;
+          results.push({ id: event.id, status: "conflict", conflictState });
+          continue;
+        }
+
         // The client's identity and timing for this fact, exactly as the per-stop
         // route passes them. Without this the services mint their own ULID, so
         // the dedup query above would look for ids that are never stored and
@@ -376,11 +438,7 @@ export default async function (fastify: FastifyInstance) {
         // would be the drain time rather than the moment the driver was at the
         // outlet. This endpoint is the one the outbox tries FIRST, so the
         // guarantee has to hold here, not only on the fallback.
-        const meta = {
-          id: event.id,
-          occurredAt: new Date(event.occurredAt),
-          deviceId: body.deviceId,
-        };
+        const meta = { id: event.id, occurredAt, deviceId: body.deviceId };
 
         try {
           if (event.type === "ARRIVED") {
@@ -505,7 +563,7 @@ export default async function (fastify: FastifyInstance) {
           batchSize: body.events.length,
           accepted,
           duplicates,
-          conflicts: 0,
+          conflicts,
           clockSkewMs,
         },
       });
@@ -513,7 +571,7 @@ export default async function (fastify: FastifyInstance) {
       return reply.status(200).send({
         accepted,
         duplicates,
-        conflicts: 0,
+        conflicts,
         clockSkewMs,
         serverSeq,
         results,
@@ -685,10 +743,15 @@ export default async function (fastify: FastifyInstance) {
             })),
           })),
         },
+        // Codes, not {code,label} objects: the contract's Vocabularies schema
+        // is a list of strings and the serialiser was quietly stringifying each
+        // object, so a fresh install cached "[object Object]" as every reason
+        // and the driver's problem picker was unusable offline. Same mapping
+        // BE1 does at /reference/vocabularies; the labels are the client's.
         vocabularies: {
-          deferralReasons: [...DEFERRAL_REASONS],
-          shortfallReasons: [...SHORTFALL_REASONS],
-          problemReasons: [...PROBLEM_REASONS],
+          deferralReasons: DEFERRAL_REASONS.map(({ code }) => code),
+          shortfallReasons: SHORTFALL_REASONS.map(({ code }) => code),
+          problemReasons: PROBLEM_REASONS.map(({ code }) => code),
         },
       };
     },
