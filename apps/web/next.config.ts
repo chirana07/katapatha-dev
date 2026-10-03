@@ -22,7 +22,10 @@ const nextConfig: NextConfig = {
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "X-Frame-Options", value: "DENY" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+          // geolocation is allowed for this origin only: the driver page has an
+          // opt-in "Share my position" control, and the browser still asks. With
+          // `geolocation=()` the control could never work.
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(self)" },
           {
             key: "Content-Security-Policy",
             value:
