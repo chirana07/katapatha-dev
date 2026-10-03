@@ -166,6 +166,8 @@ model Assignment {
   tripStop    TripStop? @relation(fields: [tripStopId], references: [id])
   decision    Decision
   reasonCode  String?
+  /// The dispatcher's own note on a deferral, copied to Deferral.note at publish.
+  note        String?
   /// The allocator's machine-derived cause: binding constraint, near miss,
   /// and what would have made the order fit.
   explanation Json?

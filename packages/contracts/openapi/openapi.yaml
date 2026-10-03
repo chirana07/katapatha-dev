@@ -98,6 +98,7 @@ paths:
   /plans/{planId}:                            { $ref: "./paths/planning.yaml#/planItem" }
   /plans/{planId}/validation:                 { $ref: "./paths/planning.yaml#/planValidation" }
   /plans/{planId}/deferrals:                  { $ref: "./paths/planning.yaml#/planDeferrals" }
+  /plans/{planId}/deferrals/{assignmentId}/alternatives: { $ref: "./paths/planning.yaml#/planDeferralAlternatives" }
   /plans/{planId}/publication:                { $ref: "./paths/planning.yaml#/planPublication" }
 
   # ---- loading / driver / sync (owner BE3) ----
