@@ -1,15 +1,3 @@
-export function colomboToday(): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Colombo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const map: Record<string, string> = {};
-  for (const part of parts) if (part.type !== "literal") map[part.type] = part.value;
-  return `${map.year}-${map.month}-${map.day}`;
-}
-
 export function isIsoDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
@@ -73,4 +61,18 @@ export function deviceId(): string {
  */
 export function stopNumber(seq: number): number {
   return seq + 1;
+}
+
+/**
+ * A driver link that keeps a `?date=` override alive. Only an explicit override
+ * is carried: with none, the page means "today" and the link says nothing, so a
+ * driver who leaves the app open past midnight does not stay pinned to
+ * yesterday.
+ */
+export function driverHref(path: string, params: { date?: string | null; trip?: number | null } = {}): string {
+  const query = new URLSearchParams();
+  if (params.date) query.set("date", params.date);
+  if (params.trip != null) query.set("trip", String(params.trip));
+  const text = query.toString();
+  return text ? `${path}?${text}` : path;
 }

@@ -1,26 +1,29 @@
-import Link from "next/link";
-import { Connectivity } from "./connectivity";
+import { requireRole } from "@/lib/auth";
+import { ConnectivityProvider } from "./connectivity";
+import { PositionShareProvider } from "./position-control";
 
 export const metadata = {
   title: "Driver · Katapatha",
   description: "Driver run and delivery recording for Waypoint Group.",
 };
 
-export default function DriverLayout({ children }: { children: React.ReactNode }) {
+/**
+ * The web driver is a fallback for the native app, so it is held to the same
+ * bar: a phone-width column, a night rendering, and honest connectivity.
+ *
+ * `data-night="auto"` is what opts this subtree into the night palette (see
+ * docs/DESIGN.md); the rest of the product never carries it. A layout cannot
+ * guard a server action, so each action re-checks the session itself; this
+ * guard is for the pages.
+ */
+export default async function DriverLayout({ children }: { children: React.ReactNode }) {
+  await requireRole("DRIVER", "/driver");
+
   return (
-    <div className="min-h-screen bg-canvas text-ink">
-      <header className="sticky top-0 z-10 border-b border-line bg-[color:var(--c-navy)] text-white">
-        <div className="mx-auto flex w-full max-w-xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <div className="flex min-w-0 flex-col">
-            <Link href="/driver" className="truncate text-base font-semibold tracking-tight">
-              Katapatha · Driver
-            </Link>
-            <span className="truncate text-xs text-white/70">On the road · Peliyagoda</span>
-          </div>
-          <Connectivity />
-        </div>
-      </header>
-      {children}
+    <div data-night="auto" className="min-h-screen bg-canvas text-ink">
+      <ConnectivityProvider>
+        <PositionShareProvider>{children}</PositionShareProvider>
+      </ConnectivityProvider>
     </div>
   );
 }

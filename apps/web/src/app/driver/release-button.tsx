@@ -2,35 +2,35 @@
 
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
+import { Button } from "@/components/ui/button";
+import { useConnectivity } from "./connectivity";
+import { canSubmit } from "./connectivity-state";
 import { releaseVehicle, type ReleaseState } from "./vehicle-actions";
 
-export function ReleaseButton() {
+/**
+ * "Change vehicle": releases today's claim so the claim form comes back. It is
+ * the quieter of the two actions on the run's thumb bar.
+ */
+export function ReleaseButton({ className = "", prominent = false }: { className?: string; prominent?: boolean }) {
   const [state, formAction] = useActionState<ReleaseState, FormData>(releaseVehicle, {});
   return (
-    <form action={formAction}>
-      <ReleaseInner />
-      {state.error && (
-        <p
-          role="alert"
-          className="mt-2 rounded-[var(--radius-control)] border border-red-200 bg-red-50 p-2 text-sm text-critical"
-        >
+    <form action={formAction} className={className}>
+      <ReleaseInner prominent={prominent} />
+      {state.error ? (
+        <p role="alert" className="mt-2 rounded-control border border-bad/25 bg-bad-surface p-2 text-sm text-bad-ink">
           {state.error}
         </p>
-      )}
+      ) : null}
     </form>
   );
 }
 
-function ReleaseInner() {
+function ReleaseInner({ prominent }: { prominent: boolean }) {
   const { pending } = useFormStatus();
+  const { status } = useConnectivity();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      aria-disabled={pending}
-      className="min-h-11 rounded-[var(--radius-control)] border border-line bg-surface px-3 text-sm font-semibold text-ink hover:bg-raised disabled:cursor-not-allowed disabled:text-muted"
-    >
-      {pending ? "Releasing…" : "Release vehicle"}
-    </button>
+    <Button type="submit" variant={prominent ? "primary" : "secondary"} disabled={pending || !canSubmit(status)} className="w-full">
+      {pending ? "Releasing…" : "Change vehicle"}
+    </Button>
   );
 }

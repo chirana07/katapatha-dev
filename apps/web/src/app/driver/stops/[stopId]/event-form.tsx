@@ -2,7 +2,11 @@
 
 import { useActionState, useState, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
+import { Button } from "@/components/ui/button";
+import { useConnectivity } from "../../connectivity";
+import { OFFLINE_SUBMIT_REASON, canSubmit } from "../../connectivity-state";
 import { deviceId, generateUlid } from "../../format";
+import { ThumbBar } from "../../thumb-bar";
 import type { EventState } from "./actions";
 
 type ActionFn = (previous: EventState, formData: FormData) => Promise<EventState>;
@@ -12,12 +16,21 @@ type Props = {
   action: ActionFn;
   buttonLabel: string;
   pendingLabel: string;
-  variant?: "primary" | "secondary" | "critical";
+  variant?: "primary" | "critical";
   disabled?: boolean;
-  savedCopy?: (state: EventState) => string;
+  /** The quieter action beside the dominant one (a "Report issue" link, a "Back"). */
+  secondary?: ReactNode;
   children?: ReactNode;
 };
 
+/**
+ * One driver intent as a form: fields in the page, the dominant action on the
+ * pinned thumb bar.
+ *
+ * The event id is minted once per intent and changes only after the server has
+ * confirmed a save, so pressing again after an unanswered request replays the
+ * same ULID and the API answers `duplicate` instead of recording it twice.
+ */
 export function EventForm({
   stopId,
   action,
@@ -25,17 +38,15 @@ export function EventForm({
   pendingLabel,
   variant = "primary",
   disabled = false,
-  savedCopy,
+  secondary,
   children,
 }: Props) {
   const [state, formAction] = useActionState<EventState, FormData>(action, { stopId });
-  const [tracker, setTracker] = useState<{ savedAt: string | undefined; eventId: string; device: string }>(
-    () => ({
-      savedAt: state.savedAt,
-      eventId: generateUlid(),
-      device: typeof window === "undefined" ? "" : deviceId(),
-    }),
-  );
+  const [tracker, setTracker] = useState<{ savedAt: string | undefined; eventId: string; device: string }>(() => ({
+    savedAt: state.savedAt,
+    eventId: generateUlid(),
+    device: typeof window === "undefined" ? "" : deviceId(),
+  }));
 
   if (tracker.savedAt !== state.savedAt) {
     setTracker({
@@ -47,41 +58,41 @@ export function EventForm({
   const occurredAt = new Date().toISOString();
 
   return (
-    <form action={formAction} className="flex flex-col gap-3">
+    <form action={formAction} className="contents">
       <input type="hidden" name="stopId" value={stopId} />
       <input type="hidden" name="eventId" value={tracker.eventId} />
       <input type="hidden" name="deviceId" value={tracker.device || "device-ephemeral"} />
       <input type="hidden" name="occurredAt" value={occurredAt} />
       {children}
-      <SubmitButton variant={variant} disabled={disabled} label={buttonLabel} pendingLabel={pendingLabel} />
-      {state.error && (
-        <p
-          role="alert"
-          className="rounded-[var(--radius-control)] border border-red-200 bg-red-50 p-3 text-sm text-critical"
-        >
-          {state.error}
-        </p>
-      )}
-      {state.savedAt && !state.error && (
-        <p
-          role="status"
-          className="rounded-[var(--radius-control)] border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"
-        >
-          {savedCopy ? savedCopy(state) : "Saved."}
-          {state.savedStatus === "duplicate" && " The server already had this event, which is a correct replay."}
-          {state.savedConflictState === "STALE_ASSIGNMENT" &&
-            " Note: the server flagged a stale assignment — reload the run before the next action."}
-        </p>
-      )}
+      <ThumbBar notice={<Notices state={state} />}>
+        {secondary}
+        <SubmitButton variant={variant} disabled={disabled} label={buttonLabel} pendingLabel={pendingLabel} />
+      </ThumbBar>
     </form>
   );
 }
 
-const VARIANT: Record<NonNullable<Props["variant"]>, string> = {
-  primary: "bg-action text-ink hover:brightness-95",
-  secondary: "border border-line bg-surface text-ink hover:bg-raised",
-  critical: "border border-red-300 bg-red-50 text-critical hover:bg-red-100",
-};
+function Notices({ state }: { state: EventState }) {
+  const { status } = useConnectivity();
+  if (!canSubmit(status)) return <p role="status" className="text-sm text-warn-ink">{OFFLINE_SUBMIT_REASON}</p>;
+  if (state.error) {
+    return (
+      <p role="alert" className="rounded-control border border-bad/25 bg-bad-surface p-3 text-sm text-ink">
+        {state.error}
+      </p>
+    );
+  }
+  if (state.savedAt) {
+    return (
+      <p role="status" className="text-sm text-good-ink">
+        Recorded.
+        {state.savedDuplicate ? " Katapatha already had this record, which is a correct repeat." : ""}
+        {state.staleAssignment ? " The server flagged a stale assignment. Reload the run before the next action." : ""}
+      </p>
+    );
+  }
+  return null;
+}
 
 function SubmitButton({
   variant,
@@ -89,21 +100,21 @@ function SubmitButton({
   label,
   pendingLabel,
 }: {
-  variant: NonNullable<Props["variant"]>;
+  variant: "primary" | "critical";
   disabled: boolean;
   label: string;
   pendingLabel: string;
 }) {
   const { pending } = useFormStatus();
-  const isDisabled = disabled || pending;
+  const { status } = useConnectivity();
   return (
-    <button
+    <Button
       type="submit"
-      disabled={isDisabled}
-      aria-disabled={isDisabled}
-      className={`min-h-12 w-full rounded-[var(--radius-control)] px-4 text-base font-semibold transition-[filter] disabled:cursor-not-allowed disabled:bg-raised disabled:text-muted ${VARIANT[variant]}`}
+      variant={variant}
+      disabled={disabled || pending || !canSubmit(status)}
+      className="min-h-12 min-w-0 flex-1 text-base"
     >
       {pending ? pendingLabel : label}
-    </button>
+    </Button>
   );
 }

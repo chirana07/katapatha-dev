@@ -1,3 +1,4 @@
+import path from "node:path";
 import { defineConfig } from "vitest/config";
 
 /**
@@ -13,5 +14,8 @@ import { defineConfig } from "vitest/config";
  * the coverage would justify today.
  */
 export default defineConfig({
+  // The same `@/` alias tsconfig and Next use, so a tested module can import
+  // from `@/lib/...` like the rest of the app instead of counting `../`.
+  resolve: { alias: { "@": path.resolve(import.meta.dirname, "src") } },
   test: { include: ["src/**/*.test.ts"], environment: "node" },
 });

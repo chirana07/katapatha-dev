@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { RoleGlyph, type RoleGlyphKind } from "@/components/ui/role-glyph";
 
 export const metadata = {
   title: "Katapatha — one shared truth for every delivery",
@@ -7,44 +8,47 @@ export const metadata = {
     "One operational record moves with every delivery, from the dispatcher's desk to the loading dock, to the driver's phone, and into the store manager's receipt.",
 };
 
-const ROLES = [
+const ROLES: {
+  number: string;
+  title: string;
+  scope: string;
+  does: string;
+  slug: "dispatcher" | "loader" | "driver" | "store";
+  icon: RoleGlyphKind;
+}[] = [
   {
     number: "01",
     title: "Dispatcher",
-    scope: "Peliyagoda planning office",
-    does:
-      "Turn confirmed orders into a plan the whole team can trust. Every allocation carries its reason.",
-    home: "/dispatcher",
-    icon: "dispatcher" as const,
+    scope: "Peliyagoda planning office · desktop",
+    does: "Turn confirmed orders into a plan the whole team can trust. Every allocation carries its reason.",
+    slug: "dispatcher",
+    icon: "dispatcher",
   },
   {
     number: "02",
     title: "Loader",
     scope: "Peliyagoda dock · shared tablet",
-    does:
-      "Load each stop in the right order and flag shortages before departure.",
-    home: "/loader",
-    icon: "loader" as const,
+    does: "Load each stop in the right order and flag shortages before departure.",
+    slug: "loader",
+    icon: "loader",
   },
   {
     number: "03",
     title: "Driver",
     scope: "On the road · phone · night conditions",
-    does:
-      "See the next stop and record what happened, even through a signal gap.",
-    home: "/driver",
-    icon: "driver" as const,
+    does: "See the next stop and record what happened at the door.",
+    slug: "driver",
+    icon: "driver",
   },
   {
     number: "04",
     title: "Store manager",
-    scope: "OUT074, Pettawa · phone or counter PC",
-    does:
-      "Know when stock is coming, place tomorrow's order, and confirm receipt.",
-    home: "/store",
-    icon: "store" as const,
+    scope: "Outlet · phone or counter PC",
+    does: "Know when stock is coming, place tomorrow's order, and confirm receipt.",
+    slug: "store",
+    icon: "store",
   },
-] as const;
+];
 
 const TIMELINE = [
   { stage: "Plan", time: "16:30", note: "Every allocation carries its reason." },
@@ -54,37 +58,10 @@ const TIMELINE = [
 ] as const;
 
 const LAMP_MODE = [
-  { number: "01", role: "Driver", text: "Records work on the phone while offline." },
-  { number: "02", role: "Dispatcher", text: "Sees the age of the last reliable update." },
-  { number: "03", role: "Store", text: "Plans staff around an honest ETA range." },
+  { number: "01", role: "Driver", text: "The driver app records work on the phone while offline." },
+  { number: "02", role: "Dispatcher", text: "Sees the last reported position, with its age." },
+  { number: "03", role: "Store", text: "Plans staff around an honest arrival range." },
 ] as const;
-
-function RoleIcon({ kind }: { kind: "dispatcher" | "loader" | "driver" | "store" }) {
-  const common = "h-5 w-5";
-  if (kind === "dispatcher")
-    return (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={common} aria-hidden="true">
-        <rect x="3" y="4" width="18" height="12" rx="1.5" /><path d="M8 20h8M12 16v4" />
-      </svg>
-    );
-  if (kind === "loader")
-    return (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={common} aria-hidden="true">
-        <path d="M4 7h11v9H4z" /><path d="M15 10h4l2 3v3h-6" /><circle cx="7.5" cy="18.5" r="1.5" /><circle cx="17" cy="18.5" r="1.5" />
-      </svg>
-    );
-  if (kind === "driver")
-    return (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={common} aria-hidden="true">
-        <rect x="7" y="3" width="10" height="18" rx="2" /><path d="M11 18h2" />
-      </svg>
-    );
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={common} aria-hidden="true">
-      <path d="M3 9l1.5-4h15L21 9" /><path d="M3 9h18v11H3z" /><path d="M9 20v-5h6v5" />
-    </svg>
-  );
-}
 
 export default function Home() {
   const showAccess =
@@ -97,10 +74,10 @@ export default function Home() {
       <header className="border-b border-line bg-surface">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-4 px-5 py-4 sm:px-8">
           <Image
-            src="/logo/katapatha-lockup-dark.png"
+            src="/logo/katapatha-lockup-light.png"
             alt="Katapatha"
             width={1600}
-            height={409}
+            height={417}
             priority
             className="h-auto w-36"
           />
@@ -123,7 +100,8 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="relative overflow-hidden bg-[color:var(--c-navy)] text-white">
+      <section className="mx-3 mt-3 sm:mx-5">
+        <div className="relative overflow-hidden rounded-3xl bg-navy text-white">
         <Image
           src="/landing-hero.png"
           alt=""
@@ -137,7 +115,7 @@ export default function Home() {
           className="absolute inset-0"
           style={{
             background:
-              "linear-gradient(100deg, rgba(32,54,78,0.95) 0%, rgba(32,54,78,0.78) 42%, rgba(32,54,78,0.35) 100%)",
+              "linear-gradient(100deg, color-mix(in srgb, var(--c-navy) 95%, transparent) 0%, color-mix(in srgb, var(--c-navy) 78%, transparent) 42%, color-mix(in srgb, var(--c-navy) 35%, transparent) 100%)",
           }}
         />
         <div className="relative mx-auto grid w-full max-w-6xl gap-12 px-5 py-16 sm:px-8 lg:grid-cols-[1.1fr_1fr] lg:py-24">
@@ -172,42 +150,34 @@ export default function Home() {
           </div>
 
           <div className="relative hidden lg:block">
-            <div className="rounded-[var(--radius-card)] border border-white/10 bg-white/5 p-6 backdrop-blur">
-              <p className="text-xs font-semibold uppercase tracking-wide text-white/60">
-                Live plan · Peliyagoda
+            <figure className="rounded-card border border-white/10 bg-white/5 p-6 backdrop-blur">
+              <figcaption className="text-xs font-semibold uppercase tracking-wide text-white/60">
+                Illustration · a vehicle after a signal gap
+              </figcaption>
+              <div className="mt-4 rounded-control bg-white/10 p-4">
+                <p className="text-sm font-semibold">Vehicle on its second trip</p>
+                <p className="tabular mt-2 text-2xl font-semibold">Last reported 06:41</p>
+                <p className="tabular text-sm text-white/70">22 min ago</p>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                <div className="rounded-control bg-white/10 p-3">
+                  <p className="text-xs text-white/60">Arrival at the store</p>
+                  <p className="tabular mt-1 text-lg font-semibold">07:10 to 07:40</p>
+                  <p className="mt-1 text-xs text-white/60">A range, because the last report is old</p>
+                </div>
+                <div className="rounded-control bg-white/10 p-3">
+                  <p className="text-xs text-white/60">Stops before the store</p>
+                  <p className="tabular mt-1 text-lg font-semibold">2</p>
+                  <p className="mt-1 text-xs text-white/60">Always known from the plan</p>
+                </div>
+              </div>
+              <p className="mt-4 rounded-control bg-navy p-3 text-xs text-white/70">
+                <span className="font-semibold text-action">Work continues through a signal gap. </span>
+                Every figure here carries its age or says it is an estimate.
               </p>
-              <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
-                <div className="rounded-md bg-white/10 p-3">
-                  <p className="text-xs text-white/60">Orders</p>
-                  <p className="tabular mt-1 text-2xl font-semibold">120</p>
-                  <p className="mt-1 text-xs text-white/60">96 allocated · 18 deferred</p>
-                </div>
-                <div className="rounded-md bg-white/10 p-3">
-                  <p className="text-xs text-white/60">Vehicles</p>
-                  <p className="tabular mt-1 text-2xl font-semibold">60</p>
-                  <p className="mt-1 text-xs text-white/60">16 reefers · 44 ambient</p>
-                </div>
-                <div className="rounded-md bg-white/10 p-3">
-                  <p className="text-xs text-white/60">Routes</p>
-                  <p className="tabular mt-1 text-2xl font-semibold">10</p>
-                  <p className="mt-1 text-xs text-white/60">484 km today</p>
-                </div>
-              </div>
-              <div className="mt-5 rounded-md bg-[color:var(--c-navy)] p-4 text-xs">
-                <p className="font-semibold text-action">Work continues through a signal gap</p>
-                <p className="mt-1 text-white/70">
-                  Driver VEH014 recorded three stops offline. Reconciles automatically on reconnect.
-                </p>
-              </div>
-              <div className="mt-4 flex items-center justify-between text-xs text-white/60">
-                <span>12 stops</span>
-                <div className="mx-3 h-1 flex-1 rounded-full bg-white/10">
-                  <div className="h-full w-[75%] rounded-full bg-action" />
-                </div>
-                <span>75%</span>
-              </div>
-            </div>
+            </figure>
           </div>
+        </div>
         </div>
       </section>
 
@@ -223,7 +193,7 @@ export default function Home() {
             </h2>
             <p className="mt-6 max-w-md text-base text-muted">
               <strong className="text-ink">Katapatha</strong> brings together two ideas:
-              the <em>mirror</em>, reflecting every delivery in real time, and{" "}
+              the <em>mirror</em>, reflecting every delivery as it is recorded, and{" "}
               <em>patha</em>, representing the traditional paper trail. It transforms that
               paper trail into a living digital record, connecting every update and
               handoff. Its four overlapping forms represent the Dispatcher, Loader,
@@ -272,9 +242,10 @@ export default function Home() {
             </div>
           ))}
         </div>
+        <p className="mt-3 text-xs text-muted">Example times for one day, for illustration.</p>
       </section>
 
-      <section className="mx-auto w-full max-w-6xl px-5 pb-20 sm:px-8">
+      <section id="roles" className="mx-auto w-full max-w-6xl scroll-mt-6 px-5 pb-20 sm:px-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--c-ruby)]">
@@ -285,19 +256,19 @@ export default function Home() {
             </h3>
           </div>
           <Link href="/sign-in" className="text-sm font-semibold text-link hover:underline">
-            Choose a workspace →
+            Sign in →
           </Link>
         </div>
         <ul className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {ROLES.map((role) => (
             <li key={role.title}>
               <Link
-                href={role.home}
+                href={`/sign-in?role=${role.slug}`}
                 className="group flex h-full flex-col gap-3 rounded-[var(--radius-card)] border border-line bg-surface p-5 transition-colors hover:border-[color:var(--c-navy)]"
               >
                 <div className="flex items-start justify-between">
                   <span className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-action/15 text-[color:var(--c-navy)]">
-                    <RoleIcon kind={role.icon} />
+                    <RoleGlyph kind={role.icon} />
                   </span>
                   <span className="text-xs font-semibold text-muted">{role.number}</span>
                 </div>
@@ -324,14 +295,14 @@ export default function Home() {
               <br />the handoff stays.
             </h3>
             <p className="mt-4 max-w-md text-sm text-muted">
-              Lamp Mode preserves the driver&apos;s local record, shows dispatch the last
-              reliable update, and gives the store an honest arrival range.
+              In Lamp Mode the driver app keeps its record on the phone, dispatch sees the
+              age of the last reported position, and the store gets an honest arrival range.
             </p>
             <Link
-              href="/driver"
+              href="/sign-in?role=driver"
               className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-[var(--radius-control)] bg-[color:var(--c-navy)] px-4 text-sm font-semibold text-white hover:brightness-110"
             >
-              Open driver workspace <span aria-hidden="true">→</span>
+              Sign in as a driver <span aria-hidden="true">→</span>
             </Link>
           </div>
           <div className="grid gap-3 rounded-[var(--radius-card)] bg-[color:var(--c-navy)] p-6 text-white sm:grid-cols-3">
@@ -368,7 +339,7 @@ export default function Home() {
       <footer className="border-t border-line bg-[color:var(--c-navy)] text-white/80">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-5 py-6 text-sm sm:px-8">
           <Image
-            src="/logo/katapatha-lockup-light.png"
+            src="/logo/katapatha-lockup-dark.png"
             alt="Katapatha"
             width={1600}
             height={409}

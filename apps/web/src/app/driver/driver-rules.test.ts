@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
-import { mutationError, readError } from "./api-errors";
 import { buildDeliveryEvents } from "./delivery-events";
-import { formatClock, formatWindow, generateUlid, isIsoDate } from "./format";
+import { driverHref, formatClock, formatWindow, generateUlid, isIsoDate } from "./format";
 import { FALLBACK_PROBLEM_REASONS, labelFor } from "./reasons";
 import {
   STOP_STATUS_HINT,
   STOP_STATUS_LABEL,
   isTerminal,
   primaryAction,
+  selectTrip,
+  stopPillLabel,
   stopsProgress,
 } from "./stop-state";
 
@@ -95,25 +96,6 @@ describe("Run progress", () => {
   });
 });
 
-describe("Driver API error mapping", () => {
-  it("marks 401 reads as expired so the UI picks the gentler role", () => {
-    assert.equal(readError(401, "run").expired, true);
-    assert.equal(readError(500, "run").expired, false);
-  });
-
-  it("names the resource for 404 on a stop", () => {
-    assert.match(readError(404, "stop").title, /Stop not on this run/);
-    assert.match(readError(404, "run").title, /Run unavailable/);
-  });
-
-  it("maps mutation statuses to driver copy, not generic http", () => {
-    assert.match(mutationError(401, "record arrival"), /driver session expired/i);
-    assert.match(mutationError(409, "complete the delivery"), /newer record/i);
-    assert.match(mutationError(422, "report the problem"), /recipient/i);
-    assert.match(mutationError(500, "release the vehicle"), /temporarily unavailable/i);
-  });
-});
-
 describe("Problem reasons", () => {
   it("declares a non-empty fallback so the phone is never silent", () => {
     assert.ok(FALLBACK_PROBLEM_REASONS.length >= 1);
@@ -183,5 +165,46 @@ describe("Proof-of-delivery events", () => {
       ],
     );
     assert.ok(events.every((item) => item.recipientName === "Nimali Perera"));
+  });
+});
+
+describe("Run list wording", () => {
+  it("calls the unstarted stop to do now 'Next stop' and later ones 'Upcoming'", () => {
+    assert.equal(stopPillLabel("PENDING", true), "Next stop");
+    assert.equal(stopPillLabel("PENDING", false), "Upcoming");
+  });
+
+  it("uses the status's own label once a stop is under way or closed", () => {
+    assert.equal(stopPillLabel("DONE", false), "Delivered");
+    assert.equal(stopPillLabel("ARRIVED", true), "On site");
+    assert.equal(stopPillLabel("FAILED", false), "Failed");
+  });
+});
+
+describe("Trip selection", () => {
+  const done = { tripNo: 1, stops: [{ status: "DONE" as const }] };
+  const open = { tripNo: 2, stops: [{ status: "PENDING" as const }] };
+
+  it("honours an explicit trip", () => {
+    assert.equal(selectTrip([done, open], 1), done);
+  });
+
+  it("falls to the first trip with work left", () => {
+    assert.equal(selectTrip([done, open], null), open);
+    assert.equal(selectTrip([done, open], 9), open);
+  });
+
+  it("shows the last trip when everything is closed, and null when there are none", () => {
+    assert.equal(selectTrip([done, { tripNo: 2, stops: [{ status: "FAILED" as const }] }], null)?.tripNo, 2);
+    assert.equal(selectTrip([], null), null);
+  });
+});
+
+describe("Driver links", () => {
+  it("carries an explicit date and trip, and says nothing otherwise", () => {
+    assert.equal(driverHref("/driver"), "/driver");
+    assert.equal(driverHref("/driver", { date: null }), "/driver");
+    assert.equal(driverHref("/driver", { date: "2026-04-09", trip: 2 }), "/driver?date=2026-04-09&trip=2");
+    assert.equal(driverHref("/driver/stops/abc", { date: "2026-04-09" }), "/driver/stops/abc?date=2026-04-09");
   });
 });

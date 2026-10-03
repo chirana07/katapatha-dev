@@ -10,6 +10,10 @@ import Link from "next/link";
  * button the designs use where flame would compete with a flame primary
  * already on screen (the driver's Navigate, the store's Download receipt).
  *
+ * `primary` writes navy, not ink, on the flame: ink is re-mapped to near-white
+ * in the driver's night rendering, and white on flame is unreadable. Navy is a
+ * brand hue that never changes, and is as dark as ink in the light theme.
+ *
  * Every variant is at least 44px tall. DESIGN.md requires that on tablet and
  * phone; applying it everywhere costs nothing on desktop and removes a whole
  * class of mistake.
@@ -17,7 +21,7 @@ import Link from "next/link";
 export type Variant = "primary" | "secondary" | "critical" | "dark" | "ghost";
 
 export const VARIANT_CLASS: Record<Variant, string> = {
-  primary: "bg-action text-ink font-bold hover:brightness-95",
+  primary: "bg-action text-navy font-bold hover:brightness-95",
   secondary: "border border-line bg-surface text-ink font-semibold hover:bg-raised",
   critical: "bg-critical text-white font-bold hover:brightness-110",
   dark: "bg-rail text-white font-semibold hover:brightness-125",

@@ -10,8 +10,8 @@ The product should feel like a calm control surface used during a real delivery 
 
 ## Brand Assets
 
-- Use the supplied Katapatha lockups and marks from `apps/web/public/logo/` (`katapatha-lockup-light.png` on dark surfaces, `katapatha-lockup-dark.png` on light).
-- Use the light lockup on the dark navigation rail and dark lockup on light surfaces.
+- Use the supplied Katapatha lockups and marks from `apps/web/public/logo/` (named for the surface the *file* suits, not the one it is placed on: `katapatha-lockup-light.png` has a navy wordmark and goes on light surfaces; `katapatha-lockup-dark.png` has a white wordmark and goes on dark ones — the navy rail, the night theme).
+- On the navy navigation rail use `katapatha-lockup-dark.png`; on light surfaces use `katapatha-lockup-light.png`. The two names read backwards and have been wrong twice.
 - Preserve the logo aspect ratio and clear space. Do not redraw, recolour, or place it inside a decorative tile.
 - The public landing page may use restrained route-line and mirror motifs derived from the visual identity. Avoid generic logistics stock imagery.
 

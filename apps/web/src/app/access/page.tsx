@@ -86,10 +86,10 @@ export default function AccessPage() {
             ← Back to the landing page
           </Link>
           <Image
-            src="/logo/katapatha-lockup-dark.png"
+            src="/logo/katapatha-lockup-light.png"
             alt="Katapatha"
             width={1600}
-            height={409}
+            height={417}
             className="h-auto w-28"
           />
         </nav>

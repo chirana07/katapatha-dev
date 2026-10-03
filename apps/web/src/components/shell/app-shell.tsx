@@ -57,7 +57,7 @@ export function AppShell({
         <div className="flex flex-col gap-5">
           <Link href={nav.home} className="flex items-center">
             <Image
-              src="/logo/katapatha-lockup-light.png"
+              src="/logo/katapatha-lockup-dark.png"
               alt="Katapatha"
               width={1600}
               height={409}
@@ -95,7 +95,7 @@ export function AppShell({
           <div className="flex min-h-16 items-center justify-between gap-3 px-4">
             <Link href={nav.home} className="flex items-center">
               <Image
-                src="/logo/katapatha-lockup-light.png"
+                src="/logo/katapatha-lockup-dark.png"
                 alt="Katapatha"
                 width={1600}
                 height={409}

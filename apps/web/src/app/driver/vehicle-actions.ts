@@ -1,13 +1,16 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { requireRole } from "@/lib/auth";
 import { api } from "@/lib/api";
-import { mutationError } from "./api-errors";
+import { writeFailure } from "@/lib/failures";
 
 export type ClaimState = { error?: string; claimedVehicleId?: string };
 export type ReleaseState = { error?: string; released?: boolean };
 
 export async function claimVehicle(_previous: ClaimState, formData: FormData): Promise<ClaimState> {
+  await requireRole("DRIVER", "/driver");
+
   const raw = formData.get("vehicleId");
   if (typeof raw !== "string" || raw.trim() === "") {
     return { error: "Enter the vehicle id from the dock card before claiming." };
@@ -21,9 +24,14 @@ export async function claimVehicle(_previous: ClaimState, formData: FormData): P
   }
 
   const client = await api();
-  const result = await client.PUT("/drivers/me/vehicle", { body: { vehicleId } });
+  const result = await client.PUT("/drivers/me/vehicle", { body: { vehicleId } }).catch(() => null);
+  if (!result) {
+    const failure = writeFailure(0, "claim the vehicle");
+    return { error: `${failure.title}. ${failure.detail}` };
+  }
   if (result.error || !result.data) {
-    return { error: mutationError(result.response.status, "claim this vehicle") };
+    const failure = writeFailure(result.response.status, "claim the vehicle");
+    return { error: `${failure.title}. ${failure.detail}` };
   }
   revalidatePath("/driver");
   return { claimedVehicleId: result.data.vehicleId };
@@ -32,10 +40,17 @@ export async function claimVehicle(_previous: ClaimState, formData: FormData): P
 export async function releaseVehicle(previous: ReleaseState, formData: FormData): Promise<ReleaseState> {
   void previous;
   void formData;
+  await requireRole("DRIVER", "/driver");
+
   const client = await api();
-  const result = await client.DELETE("/drivers/me/vehicle", {});
+  const result = await client.DELETE("/drivers/me/vehicle", {}).catch(() => null);
+  if (!result) {
+    const failure = writeFailure(0, "change the vehicle");
+    return { error: `${failure.title}. ${failure.detail}` };
+  }
   if (result.response.status >= 400) {
-    return { error: mutationError(result.response.status, "release the vehicle") };
+    const failure = writeFailure(result.response.status, "change the vehicle");
+    return { error: `${failure.title}. ${failure.detail}` };
   }
   revalidatePath("/driver");
   return { released: true };

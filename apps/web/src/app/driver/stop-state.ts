@@ -1,4 +1,5 @@
 import type { components } from "@katapatha/contracts/types";
+import type { Tone } from "@/components/ui/status-pill";
 
 export type StopStatus = components["schemas"]["StopStatus"];
 
@@ -20,14 +21,25 @@ export const STOP_STATUS_HINT: Record<StopStatus, string> = {
   FAILED: "Problem reported. Reason attached to the event.",
 };
 
-export const STOP_STATUS_STYLE: Record<StopStatus, { pill: string; dot: string }> = {
-  PENDING: { pill: "border border-line bg-raised text-ink", dot: "bg-muted" },
-  ARRIVED: { pill: "border border-amber-300 bg-amber-50 text-amber-900", dot: "bg-action" },
-  UNLOADING: { pill: "border border-amber-300 bg-amber-50 text-amber-900", dot: "bg-action" },
-  DONE: { pill: "border border-emerald-200 bg-emerald-50 text-emerald-800", dot: "bg-emerald-600" },
-  SKIPPED: { pill: "border border-line bg-raised text-muted", dot: "bg-muted" },
-  FAILED: { pill: "border border-red-300 bg-red-50 text-critical", dot: "bg-critical" },
+/** Tone for the shared StatusPill. Colour never carries the meaning alone: the label is always shown. */
+export const STOP_STATUS_TONE: Record<StopStatus, Tone> = {
+  PENDING: "neutral",
+  ARRIVED: "warn",
+  UNLOADING: "warn",
+  DONE: "good",
+  SKIPPED: "neutral",
+  FAILED: "bad",
 };
+
+/**
+ * The words on a stop's pill in the run list. An unstarted stop is "Next stop"
+ * when it is the one the driver should do now and "Upcoming" otherwise; every
+ * other status uses its own label.
+ */
+export function stopPillLabel(status: StopStatus, isNext: boolean): string {
+  if (status === "PENDING") return isNext ? "Next stop" : "Upcoming";
+  return STOP_STATUS_LABEL[status];
+}
 
 export type NextAction =
   | { kind: "arrive"; label: string }
@@ -71,4 +83,19 @@ export function stopsProgress(stops: { status: StopStatus }[]): {
     remaining: total - done,
     nextIndex: nextIndex === -1 ? null : nextIndex,
   };
+}
+
+/**
+ * Which trip the run page shows: the one asked for (`?trip=2`), else the first
+ * trip that still has an open stop, else the last. A driver opening the page
+ * between trips lands on the work in front of them, not on a finished trip.
+ */
+export function selectTrip<T extends { tripNo: number; stops: { status: StopStatus }[] }>(
+  trips: T[],
+  requested: number | null,
+): T | null {
+  if (trips.length === 0) return null;
+  const asked = requested === null ? undefined : trips.find((trip) => trip.tripNo === requested);
+  if (asked) return asked;
+  return trips.find((trip) => trip.stops.some((stop) => !isTerminal(stop.status))) ?? trips[trips.length - 1]!;
 }
