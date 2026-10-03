@@ -140,6 +140,10 @@ function findNearMiss(rejections: readonly Rejection[]): NearMiss | undefined {
   };
 }
 
+function fmt(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
 function suggest(
   code: RejectionCode,
   order: OrderRef,
@@ -152,8 +156,18 @@ function suggest(
   ].filter(Boolean) as string[];
 
   switch (code) {
-    case "ORDER_EXCEEDS_FLEET_CAPACITY":
-      return `No vehicle is large enough for ${order.volumeM3} m3. Rule 5 forbids splitting an order, so this needs the brand to raise it as two orders.`;
+    case "ORDER_EXCEEDS_FLEET_CAPACITY": {
+      // Plain words for the dispatcher: what doesn't fit, by how much, and
+      // who can fix it. Rule 5 (an order travels whole) is why dispatch can't
+      // split it themselves.
+      const metric = rejections.find((r) => r.code === code)?.metric;
+      if (metric?.name === "weight") {
+        return `No vehicle can carry ${fmt(metric.have)} kg in one trip — the largest that can take it holds ${fmt(metric.limit)} kg. An order travels whole on one vehicle, so the store needs to place it as smaller orders.`;
+      }
+      const have = metric?.have ?? order.volumeM3;
+      const largest = metric ? ` — the largest that can take it holds ${fmt(metric.limit)} m³` : "";
+      return `No vehicle can carry ${fmt(have)} m³ in one trip${largest}. An order travels whole on one vehicle, so the store needs to place it as smaller orders.`;
+    }
     case "NO_REEFER_IN_FLEET":
       return "This depot has no refrigerated vehicle at all. The order has to move to a depot that does.";
     case "NO_VAN_IN_FLEET":
