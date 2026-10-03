@@ -75,7 +75,10 @@ export const NAV: Record<Role, RoleNav> = {
     home: "/store",
     fallbackInitials: "SM",
     items: [
-      { label: "My orders", href: "/store", icon: "orders", match: /^\/store(\/orders\/[^/]+)?$/ },
+      // Today (S-02) and My orders (S-05) are separate screens in the design, so
+      // /store is Today and the order list lives at /store/orders.
+      { label: "Today", href: "/store", icon: "dashboard", match: /^\/store$/ },
+      { label: "My orders", href: "/store/orders", icon: "orders", match: /^\/store\/orders/ },
       { label: "Place an order", href: "/store/new", icon: "place", match: /^\/store\/new/ },
       { label: "Delivery history", href: "/store/history", icon: "history", match: /^\/store\/history/ },
       { label: "Report an issue", href: "/store/issues", icon: "issue", match: /^\/store\/issues/ },

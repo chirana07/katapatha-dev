@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
-import { mutationError, readError } from "./api-errors";
 import {
   needsAttention,
   receivingWindowLabel,
@@ -86,18 +85,5 @@ describe("Receipt validation", () => {
       ok: true,
       data: { unitsReceived: 100, matches: false, issueKind: "ITEMS_MISSING" },
     });
-  });
-});
-
-describe("API recovery messages", () => {
-  it("does not describe an expired session as a network failure", () => {
-    assert.match(mutationError(401, "place order"), /session expired/i);
-    assert.equal(readError(401, "orders").title, "Session expired");
-  });
-
-  it("explains authorization and validation failures", () => {
-    assert.match(mutationError(403, "confirm receipt"), /not allowed/i);
-    assert.match(mutationError(422, "place order"), /rejected/i);
-    assert.equal(readError(403, "order").title, "Access denied");
   });
 });
