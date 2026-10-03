@@ -1,6 +1,10 @@
 import { prisma } from "../lib/db";
 import { explainPriority, priorityScore, type PriorityContext } from "@katapatha/allocator/prioritise";
-import { nextOperatingDate, suggestDeferralReason } from "@katapatha/core/domain/deferral";
+import {
+  nextOperatingDate as nextOperatingDay,
+  suggestDeferralReason,
+} from "@katapatha/core/domain/deferral";
+import { nextOperatingDate } from "./store";
 import type { Brand, DepotCode, OrderRef, OutletRef } from "@katapatha/core/domain/types";
 import { isoDate, type loadPlan } from "./plans";
 
@@ -23,16 +27,14 @@ interface StoredCause {
   suggestion?: string | null;
 }
 
-/** The first operating day after `date`, from the reference calendar. */
+/**
+ * The first operating day after `date`. Uses the same calendar lookup as order
+ * placement; past the end of the reference calendar it falls back to the
+ * shared rule (skip Sundays) rather than returning nothing.
+ */
 export async function nextRunDate(date: Date): Promise<string> {
-  const horizon = new Date(date);
-  horizon.setUTCDate(horizon.getUTCDate() + 14);
-  const days = await prisma.calendarDay.findMany({
-    where: { date: { gt: date, lte: horizon } },
-    select: { date: true, isOperating: true },
-  });
-  const operating = new Map(days.map((d) => [isoDate(d.date), d.isOperating]));
-  return nextOperatingDate(isoDate(date), (d) => operating.get(d));
+  const next = await nextOperatingDate(date);
+  return next ? isoDate(next) : nextOperatingDay(isoDate(date), () => undefined);
 }
 
 function causeOf(assignment: LoadedAssignment) {
@@ -144,7 +146,7 @@ function outletRefOf(a: LoadedAssignment): OutletRef {
   };
 }
 
-export type Impact = "lowest" | "protected" | "high";
+export type Impact = "lowest" | "protected" | "skipped_twice" | "high";
 
 /** How many other orders in the lane the drawer compares against. */
 const MAX_OTHERS = 4;
@@ -182,7 +184,11 @@ export async function laneAlternatives(plan: LoadedPlan, assignmentId: string) {
 
   const lowestScore = scored.length > 0 ? scored[scored.length - 1]!.score : 0;
   const impactOf = (entry: (typeof scored)[number]): Impact => {
-    if (entry.a.order.deferredYesterday) return "protected";
+    // Deferred yesterday: protected when served, a second skip when not —
+    // calling a twice-deferred order "protected" would contradict itself.
+    if (entry.a.order.deferredYesterday) {
+      return entry.a.decision === "DEFERRED" ? "skipped_twice" : "protected";
+    }
     if (entry.score === lowestScore) return "lowest";
     return "high";
   };

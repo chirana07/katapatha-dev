@@ -240,7 +240,7 @@ const LANE_ALTERNATIVES = {
           isThisOrder: { type: "boolean" },
           decision: { type: "string", enum: ["SERVED", "DEFERRED"] },
           rank: { type: "integer" },
-          impact: { type: "string", enum: ["lowest", "protected", "high"] },
+          impact: { type: "string", enum: ["lowest", "protected", "skipped_twice", "high"] },
           why: { type: "string" },
         },
       },

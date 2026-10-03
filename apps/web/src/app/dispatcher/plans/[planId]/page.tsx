@@ -92,14 +92,16 @@ export default async function PlanPage({
   // ?defer=<assignmentId> opens the D-05 drawer for that deferral.
   const openDeferral = query.defer ? deferrals.find((d) => d.assignmentId === query.defer) : undefined;
   let alternatives = null;
+  let alternativesFailed = false;
   if (openDeferral && !openDeferral.cause?.permanent) {
     try {
       const alt = await client.GET("/plans/{planId}/deferrals/{assignmentId}/alternatives", {
         params: { path: { planId, assignmentId: openDeferral.assignmentId } },
       });
       alternatives = alt.data ?? null;
+      alternativesFailed = !alt.data;
     } catch {
-      alternatives = null;
+      alternativesFailed = true;
     }
   }
 
@@ -271,6 +273,8 @@ export default async function PlanPage({
           planId={plan.data.planId}
           deferral={openDeferral}
           alternatives={alternatives}
+          alternativesFailed={alternativesFailed}
+          error={query.error ? (ERRORS[query.error] ?? "The request could not be completed. Reload and try again.") : null}
           allReasons={deferralReasons}
           closeHref={home}
           readOnly={plan.data.status !== "DRAFT"}
