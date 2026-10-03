@@ -21,6 +21,7 @@
     "db:studio": "pnpm --filter @katapatha/api db:studio",
     "demo:reset": "node scripts/demo-reset.mjs",
     "demo:smoke": "node scripts/demo-smoke.mjs",
+    "demo:morning": "node scripts/demo-morning.mjs",
     "demo:scenario": "pnpm --filter @katapatha/api exec tsx prisma/seed/scenario.ts"
   },
   "devDependencies": {
