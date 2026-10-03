@@ -959,6 +959,14 @@
                     "planId": {
                       "type": "string"
                     },
+                    "date": {
+                      "description": "The planning day this plan belongs to. Additive.",
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/DateOnly"
+                        }
+                      ]
+                    },
                     "status": {
                       "type": "string",
                       "enum": [
@@ -987,6 +995,7 @@
                 },
                 "example": {
                   "planId": "clx0pln1a2b3c4d5e6f7g8h",
+                  "date": "2026-04-09",
                   "status": "DRAFT",
                   "stats": {
                     "orders": 85,

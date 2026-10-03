@@ -2129,6 +2129,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "planId": "clx0pln1a2b3c4d5e6f7g8h",
+                     *       "date": "2026-04-09",
                      *       "status": "DRAFT",
                      *       "stats": {
                      *         "orders": 85,
@@ -2201,6 +2202,8 @@ export interface operations {
                      */
                     "application/json": {
                         planId: string;
+                        /** @description The planning day this plan belongs to. Additive. */
+                        date?: components["schemas"]["DateOnly"];
                         /** @enum {string} */
                         status: "DRAFT" | "PUBLISHED" | "SUPERSEDED";
                         stats: components["schemas"]["PlanStats"];

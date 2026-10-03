@@ -130,6 +130,22 @@ export default async function DispatcherPage({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          <form method="get" className="flex items-center gap-2">
+            <label htmlFor="desk-date" className="sr-only">Planning date</label>
+            <input
+              id="desk-date"
+              name="date"
+              type="date"
+              defaultValue={date}
+              className="min-h-11 rounded-[var(--radius-control)] border border-line bg-surface px-3 text-sm text-ink"
+            />
+            <button
+              type="submit"
+              className="min-h-11 rounded-[var(--radius-control)] bg-[color:var(--c-navy)] px-3 text-sm font-semibold text-white hover:brightness-110"
+            >
+              Go
+            </button>
+          </form>
           {day ? <StatusPill status={day.status} /> : null}
           {day?.status === "CLOSED" ? (
             <form action={createPlan}>
