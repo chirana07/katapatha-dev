@@ -237,6 +237,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/fleet/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Which of the depot's vehicles can run on a day */
+        get: operations["getFleetStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/fleet/status/{vehicleId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vehicleId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Mark a vehicle in the workshop, or back in service, for a day
+         * @description Dispatcher only, own depot, and only until the day's plan is published. An existing draft is left alone — re-run auto-plan; the publish validator rejects a draft that still uses a vehicle now in the workshop. Every change is written to the decision log.
+         */
+        put: operations["setVehicleStatus"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plans": {
         parameters: {
             query?: never;
@@ -785,6 +824,57 @@ export interface components {
             /** @enum {string} */
             status: "OPEN" | "CLOSED" | "PLANNING" | "PUBLISHED";
             cutoffAt: components["schemas"]["ClockTime"];
+        };
+        VehicleDay: {
+            /** @example VEH101 */
+            vehicleId: string;
+            /** @enum {string} */
+            type: "truck" | "van";
+            /** @enum {string} */
+            temp: "reefer" | "ambient";
+            /** @example 30 */
+            volumeCapM3: number;
+            /** @example 5000 */
+            weightCapKg: number;
+            /**
+             * @description No recorded status means AVAILABLE — the same default the allocator uses.
+             * @enum {string}
+             */
+            status: "AVAILABLE" | "IN_WORKSHOP";
+            /** @example Compressor fault */
+            note?: string | null;
+            /**
+             * Format: date-time
+             * @example null
+             */
+            setAt?: string | null;
+            /** @example Nimal Perera */
+            setBy?: string | null;
+        };
+        FleetDay: {
+            date: components["schemas"]["DateOnly"];
+            /** @example Peliyagoda */
+            depotCode: string;
+            /**
+             * @description False once the day's plan is published.
+             * @example true
+             */
+            editable: boolean;
+            /** @example null */
+            lockedReason?: string | null;
+            /**
+             * @description A draft plan exists; re-run auto-plan for a status change to take effect.
+             * @example false
+             */
+            hasDraft?: boolean;
+            vehicles: components["schemas"]["VehicleDay"][];
+        };
+        SetVehicleStatusRequest: {
+            date: components["schemas"]["DateOnly"];
+            /** @enum {string} */
+            status: "AVAILABLE" | "IN_WORKSHOP";
+            /** @example Compressor fault */
+            note?: string | null;
         };
         PlanStats: {
             /** @example 85 */
@@ -1848,6 +1938,91 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getFleetStatus: {
+        parameters: {
+            query: {
+                date: components["schemas"]["DateOnly"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The depot's fleet for the day. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "date": "2026-04-09",
+                     *       "depotCode": "Peliyagoda",
+                     *       "editable": true,
+                     *       "lockedReason": null,
+                     *       "hasDraft": false,
+                     *       "vehicles": [
+                     *         {
+                     *           "vehicleId": "VEH101",
+                     *           "type": "truck",
+                     *           "temp": "reefer",
+                     *           "volumeCapM3": 30,
+                     *           "weightCapKg": 5000,
+                     *           "status": "AVAILABLE",
+                     *           "note": null,
+                     *           "setAt": null,
+                     *           "setBy": null
+                     *         },
+                     *         {
+                     *           "vehicleId": "VEH104",
+                     *           "type": "van",
+                     *           "temp": "ambient",
+                     *           "volumeCapM3": 12,
+                     *           "weightCapKg": 1400,
+                     *           "status": "IN_WORKSHOP",
+                     *           "note": "In the workshop on the scenario day",
+                     *           "setAt": null,
+                     *           "setBy": null
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["FleetDay"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    setVehicleStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vehicleId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetVehicleStatusRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated fleet for the day. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetDay"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     listPlans: {

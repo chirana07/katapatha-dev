@@ -56,6 +56,10 @@
     {
       "name": "sync",
       "description": "Offline outbox drain and pull."
+    },
+    {
+      "name": "fleet",
+      "description": "Which vehicles can run on a day."
     }
   ],
   "paths": {
@@ -697,6 +701,122 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/fleet/status": {
+      "get": {
+        "operationId": "getFleetStatus",
+        "summary": "Which of the depot's vehicles can run on a day",
+        "tags": [
+          "fleet"
+        ],
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DateOnly"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The depot's fleet for the day.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetDay"
+                },
+                "example": {
+                  "date": "2026-04-09",
+                  "depotCode": "Peliyagoda",
+                  "editable": true,
+                  "lockedReason": null,
+                  "hasDraft": false,
+                  "vehicles": [
+                    {
+                      "vehicleId": "VEH101",
+                      "type": "truck",
+                      "temp": "reefer",
+                      "volumeCapM3": 30,
+                      "weightCapKg": 5000,
+                      "status": "AVAILABLE",
+                      "note": null,
+                      "setAt": null,
+                      "setBy": null
+                    },
+                    {
+                      "vehicleId": "VEH104",
+                      "type": "van",
+                      "temp": "ambient",
+                      "volumeCapM3": 12,
+                      "weightCapKg": 1400,
+                      "status": "IN_WORKSHOP",
+                      "note": "In the workshop on the scenario day",
+                      "setAt": null,
+                      "setBy": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/fleet/status/{vehicleId}": {
+      "parameters": [
+        {
+          "name": "vehicleId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "put": {
+        "operationId": "setVehicleStatus",
+        "summary": "Mark a vehicle in the workshop, or back in service, for a day",
+        "description": "Dispatcher only, own depot, and only until the day's plan is published. An existing draft is left alone — re-run auto-plan; the publish validator rejects a draft that still uses a vehicle now in the workshop. Every change is written to the decision log.\n",
+        "tags": [
+          "fleet"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetVehicleStatusRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated fleet for the day.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetDay"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           }
         }
       }
@@ -2533,6 +2653,166 @@
           },
           "cutoffAt": {
             "$ref": "#/components/schemas/ClockTime"
+          }
+        }
+      },
+      "VehicleDay": {
+        "type": "object",
+        "required": [
+          "vehicleId",
+          "type",
+          "temp",
+          "volumeCapM3",
+          "weightCapKg",
+          "status"
+        ],
+        "properties": {
+          "vehicleId": {
+            "type": "string",
+            "examples": [
+              "VEH101"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "truck",
+              "van"
+            ]
+          },
+          "temp": {
+            "type": "string",
+            "enum": [
+              "reefer",
+              "ambient"
+            ]
+          },
+          "volumeCapM3": {
+            "type": "number",
+            "examples": [
+              30
+            ]
+          },
+          "weightCapKg": {
+            "type": "number",
+            "examples": [
+              5000
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "AVAILABLE",
+              "IN_WORKSHOP"
+            ],
+            "description": "No recorded status means AVAILABLE — the same default the allocator uses."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "Compressor fault"
+            ]
+          },
+          "setAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "examples": [
+              null
+            ]
+          },
+          "setBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "Nimal Perera"
+            ]
+          }
+        }
+      },
+      "FleetDay": {
+        "type": "object",
+        "required": [
+          "date",
+          "depotCode",
+          "editable",
+          "vehicles"
+        ],
+        "properties": {
+          "date": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "depotCode": {
+            "type": "string",
+            "examples": [
+              "Peliyagoda"
+            ]
+          },
+          "editable": {
+            "type": "boolean",
+            "description": "False once the day's plan is published.",
+            "examples": [
+              true
+            ]
+          },
+          "lockedReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              null
+            ]
+          },
+          "hasDraft": {
+            "type": "boolean",
+            "description": "A draft plan exists; re-run auto-plan for a status change to take effect.",
+            "examples": [
+              false
+            ]
+          },
+          "vehicles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VehicleDay"
+            }
+          }
+        }
+      },
+      "SetVehicleStatusRequest": {
+        "type": "object",
+        "required": [
+          "date",
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "AVAILABLE",
+              "IN_WORKSHOP"
+            ]
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "examples": [
+              "Compressor fault"
+            ]
           }
         }
       },

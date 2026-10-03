@@ -1,0 +1,57 @@
+# Owner: BE2
+fleetStatus:
+  get:
+    operationId: getFleetStatus
+    summary: Which of the depot's vehicles can run on a day
+    tags: [fleet]
+    parameters:
+      - name: date
+        in: query
+        required: true
+        schema: { $ref: "../components/schemas/common.yaml#/DateOnly" }
+    responses:
+      "200":
+        description: The depot's fleet for the day.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/fleet.yaml#/FleetDay" }
+            example:
+              date: "2026-04-09"
+              depotCode: Peliyagoda
+              editable: true
+              lockedReason: null
+              hasDraft: false
+              vehicles:
+                - { vehicleId: VEH101, type: truck, temp: reefer, volumeCapM3: 30, weightCapKg: 5000, status: AVAILABLE, note: null, setAt: null, setBy: null }
+                - { vehicleId: VEH104, type: van, temp: ambient, volumeCapM3: 12, weightCapKg: 1400, status: IN_WORKSHOP, note: "In the workshop on the scenario day", setAt: null, setBy: null }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+
+vehicleStatus:
+  parameters:
+    - name: vehicleId
+      in: path
+      required: true
+      schema: { type: string }
+  put:
+    operationId: setVehicleStatus
+    summary: Mark a vehicle in the workshop, or back in service, for a day
+    description: >
+      Dispatcher only, own depot, and only until the day's plan is published.
+      An existing draft is left alone — re-run auto-plan; the publish
+      validator rejects a draft that still uses a vehicle now in the workshop.
+      Every change is written to the decision log.
+    tags: [fleet]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/fleet.yaml#/SetVehicleStatusRequest" }
+    responses:
+      "200":
+        description: The updated fleet for the day.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/fleet.yaml#/FleetDay" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+      "409": { $ref: "../components/responses/common.yaml#/Conflict" }
