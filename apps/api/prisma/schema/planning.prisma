@@ -111,6 +111,8 @@ model Trip {
   fromReassignments StopReassignment[] @relation("ReassignFrom")
   toReassignments   StopReassignment[] @relation("ReassignTo")
   fuelEntries       FuelLedgerEntry[]
+  pings             VehiclePing[]
+  chillerReadings   ChillerReading[]
 
   /// Enforces rule 7 (at most two trips a day) in the database, not just in code.
   @@unique([planId, vehicleId, tripNo])
@@ -130,6 +132,7 @@ model TripStop {
   etaAt            String?
   arrivedAt        DateTime?
   leftAt           DateTime?
+  chillerReadings ChillerReading[]
 
   orders        TripStopOrder[]
   assignments   Assignment[]

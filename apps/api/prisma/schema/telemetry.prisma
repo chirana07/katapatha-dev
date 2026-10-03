@@ -1,0 +1,89 @@
+// What the field reports back: where a phone says the vehicle is, what a person
+// read off a chiller gauge, and the pages of a proof of delivery.
+//
+// None of this is a sensor stream. A ping is whatever the driver's phone last
+// managed to send, and a chiller reading is a human looking at a gauge. The
+// product may claim exactly that, with its age, and nothing continuous — see
+// DOMAIN.md, "What the product may claim, and how".
+
+enum ChillerSource {
+  LOADER_AT_BAY
+  DRIVER_ON_ARRIVAL
+}
+
+enum PodPageKind {
+  RECEIPT
+  SIGNATURE
+  PHOTO
+}
+
+// One position report from a driver's phone.
+//
+// `recordedAt` is the device's clock — when the fix was taken — and `receivedAt`
+// is the server's. The gap between them is how long the report sat in the
+// outbox, which is what the map's "last reliable update" is honest about: the
+// age shown is measured from `recordedAt`, never from when it arrived.
+model VehiclePing {
+  id               String   @id @default(cuid())
+  vehicleId        String
+  vehicle          Vehicle  @relation(fields: [vehicleId], references: [id])
+  tripId           String?
+  trip             Trip?    @relation(fields: [tripId], references: [id])
+  lat              Float
+  lng              Float
+  accuracyM        Float?
+  recordedAt       DateTime
+  receivedAt       DateTime @default(now())
+  reportedByUserId String?
+  deviceId         String?
+  // The phone mints this so a replayed outbox batch cannot double-count.
+  clientPingId     String?  @unique
+
+  @@index([vehicleId, recordedAt])
+  @@index([tripId, recordedAt])
+}
+
+// A person's reading of a chiller gauge, at the bay or on arrival. The target
+// band is copied onto the row so a later change to the policy cannot rewrite
+// whether this reading was in range.
+model ChillerReading {
+  id               String        @id @default(cuid())
+  vehicleId        String
+  vehicle          Vehicle       @relation(fields: [vehicleId], references: [id])
+  tripId           String?
+  trip             Trip?         @relation(fields: [tripId], references: [id])
+  tripStopId       String?
+  tripStop         TripStop?     @relation(fields: [tripStopId], references: [id])
+  tempC            Float
+  targetMinC       Float
+  targetMaxC       Float
+  source           ChillerSource
+  recordedByUserId String?
+  recordedByName   String?
+  recordedAt       DateTime
+  receivedAt       DateTime      @default(now())
+  note             String?
+  clientReadingId  String?       @unique
+
+  @@index([vehicleId, recordedAt])
+  @@index([tripId, recordedAt])
+}
+
+// One captured page of a proof of delivery. A delivery can have several —
+// receipts run to more than one sheet — and a signature or a photo is a page
+// too. The single `signatureData`/`photoData` columns on StopEvent stay for
+// events recorded before pages existed.
+model PodPage {
+  id           String      @id
+  stopEventId  String
+  stopEvent    StopEvent   @relation(fields: [stopEventId], references: [id], onDelete: Cascade)
+  seq          Int
+  kind         PodPageKind
+  data         String
+  // What the capture screen flagged: blurry, cropped, dark. Kept so a disputed
+  // receipt can be examined with what the driver was told at the time.
+  qualityFlags String[]
+  capturedAt   DateTime
+
+  @@unique([stopEventId, seq])
+}

@@ -96,6 +96,7 @@ model StopEvent {
   conflictState  ConflictState @default(NONE)
   serverSeq      BigInt        @default(autoincrement())
 
+  podPages       PodPage[]
   @@index([tripStopId, occurredAt])
   @@index([serverSeq])
   @@index([conflictState])

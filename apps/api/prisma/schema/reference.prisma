@@ -71,6 +71,8 @@ model Vehicle {
   trips       Trip[]
   dayStatuses VehicleDayStatus[]
   fuelLedgers FuelLedger[]
+  pings            VehiclePing[]
+  chillerReadings  ChillerReading[]
 
   /// The allocator's candidate filter is exactly this triple.
   @@index([depotCode, temp, type])
