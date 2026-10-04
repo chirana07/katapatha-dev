@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import autoload from "@fastify/autoload";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
@@ -35,7 +36,7 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   await fastify.register(helmet, { contentSecurityPolicy: false });
   await fastify.register(cookie);
-  await fastify.register(rateLimit, { max: 300, timeWindow: "1 minute" });
+  await fastify.register(rateLimit, { max: 300, timeWindow: "1 minute", keyGenerator: rateLimitKey });
 
   await fastify.register(autoload, { dir: path.join(here, "plugins") });
   await fastify.register(autoload, {
@@ -44,4 +45,22 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
 
   return fastify;
+}
+
+/**
+ * Who a request counts against for the rate limit.
+ *
+ * Per signed-in session, not per IP: every web page reaches the API from the
+ * one Next.js server, so keyed by IP the whole depot's web users shared a
+ * single 300-a-minute allowance and a few busy screens locked everyone out
+ * ("could not verify your session"). Sign-in itself stays keyed by IP, so a
+ * made-up cookie cannot buy more password guesses; the per-account login
+ * throttle in lib/loginThrottle.ts sits behind it as well.
+ */
+function rateLimitKey(request: FastifyRequest): string {
+  if (request.url.startsWith("/v1/auth/session")) return `ip:${request.ip}`;
+  const bearer = request.headers.authorization?.startsWith("Bearer ") ? request.headers.authorization.slice(7) : undefined;
+  const cookie = /(?:^|;\s*)katapatha_session=([^;]+)/.exec(request.headers.cookie ?? "")?.[1];
+  const token = bearer ?? cookie;
+  return token ? `session:${createHash("sha256").update(token).digest("hex").slice(0, 32)}` : `ip:${request.ip}`;
 }

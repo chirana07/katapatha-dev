@@ -5,7 +5,7 @@ import { ErrorPanel } from "@/components/ui/states";
 import { requireRole } from "@/lib/auth";
 import { todayInColombo } from "@/lib/dates";
 import { readFailure } from "@/lib/failures";
-import { loadDock, loadShift, loadTripView } from "../../dock-data.server";
+import { loadShift, loadTripView } from "../../dock-data.server";
 import { tallyLines } from "../../dock-model";
 import { DockStatus, Panel } from "../../dock-ui";
 import { MobileHeader } from "../../mobile-header";
@@ -46,7 +46,7 @@ export default async function TripLoadListPage({ params, searchParams }: { param
   }
 
   const { trip, status, lines, districts, vehicle } = view;
-  const [shift, day] = await Promise.all([loadShift(date), loadDock(date)]);
+  const shift = await loadShift(date);
   const base = `/loader/trips/${encodeURIComponent(tripId)}`;
   const tally = tallyLines(lines);
   // The bay picker jumps to the vehicle loading at that bay.
@@ -58,7 +58,8 @@ export default async function TripLoadListPage({ params, searchParams }: { param
       current: at?.tripId === tripId,
     };
   });
-  const others = day.ok ? day.trips.filter((t) => t.id !== tripId && (t.status === "PLANNED" || t.status === "LOADING")).length : 0;
+  // From the shift summary already read, rather than every trip's load list.
+  const others = (shift?.trips ?? []).filter((t) => t.tripId !== tripId && (t.status === "PLANNED" || t.status === "LOADING")).length;
 
   return (
     <PageBody>
