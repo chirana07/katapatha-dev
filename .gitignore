@@ -5,7 +5,10 @@ out/
 build/
 .turbo/
 coverage/
-screens/
+# Design exports at the repo root only. An unanchored `screens/` also matched
+# apps/mobile/src/screens, so files added there after the first few were never
+# committed and CI could not typecheck the mobile app.
+/Screens/
 *.tsbuildinfo
 .env
 .env.local

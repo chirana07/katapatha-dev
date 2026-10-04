@@ -365,7 +365,8 @@ describe("on whole days", () => {
     }
     // On days this size the greedy leaves something to find, on most of them.
     expect(better).toBeGreaterThan(10);
-  });
+    // Sixty full allocations: about 7s on a CI runner, over vitest's default 5s.
+  }, 60_000);
 
   it("reports what it did, and the before and after agree with the plan it returned", () => {
     const s = scene(7, { orders: 40, extraVehicles: 4 });
