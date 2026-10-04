@@ -16,6 +16,11 @@
  */
 :root {
   --c-navy: #20364e;
+  /* The Figma file's night rail and dark headers (L-02…L-08), and the two
+     surfaces drawn on it. */
+  --c-night: #111a2e;
+  --c-night-raised: #1e2a44;
+  --c-night-line: #22304a;
   --c-flame: #f6b723;
   --c-ruby: #ae0109;
   --c-ochre: #fbcd5a;
@@ -131,6 +136,9 @@
   --color-action: var(--c-flame);
   --color-rail: var(--c-navy);
   --color-navy: var(--c-navy);
+  --color-night: var(--c-night);
+  --color-night-raised: var(--c-night-raised);
+  --color-night-line: var(--c-night-line);
   --color-ochre: var(--c-ochre);
   --color-critical: var(--c-ruby);
   --color-canvas: var(--c-canvas);

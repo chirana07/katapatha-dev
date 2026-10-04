@@ -52,6 +52,10 @@ export async function recordLoadCheck(input: LoadCheckInput): Promise<{ ok: true
         checkedByName: input.checkedByName.trim(),
         reasonCode: input.condition === "OK" ? null : input.reasonCode,
         clientRequestId: input.clientRequestId,
+        ...(input.itemCounts ? { itemCounts: input.itemCounts } : {}),
+        ...(input.productSku ? { productSku: input.productSku } : {}),
+        ...(input.photoData ? { photoData: input.photoData } : {}),
+        ...(input.holdSealing === false ? { holdSealing: false } : {}),
       },
     });
   } catch {
@@ -169,4 +173,92 @@ export async function recordChillerReading(input: {
     recordedAt: reading.recordedAt,
     recordedByName: reading.recordedByName,
   };
+}
+
+/**
+ * A count in progress: the steppers on an order not yet checked. Saved as the
+ * loader works so every other screen sees the vehicle filling up; it is never
+ * a check, so it cannot release a vehicle.
+ */
+export async function saveLoadProgress(input: {
+  tripId: string;
+  orderId: string;
+  loadedUnits: number;
+  itemCounts: Record<string, number> | null;
+  updatedByName: string;
+}): Promise<{ ok: true } | Failed> {
+  await requireRole("LOADER", "/loader");
+  if (!input.tripId || !input.orderId) return failed("This line is no longer valid", "Reload the trip and try again.");
+  if (!Number.isInteger(input.loadedUnits) || input.loadedUnits < 0) return failed("That count cannot be saved", "Counts are whole numbers, zero or more.");
+  if (typeof input.updatedByName !== "string" || input.updatedByName.trim().length < 2) {
+    return failed("Who is loading?", "Enter who is loading. The dock terminal is shared, so every count carries a real name.");
+  }
+
+  let result;
+  try {
+    const client = await api();
+    result = await client.PUT("/trips/{tripId}/load-progress/{orderId}", {
+      params: { path: { tripId: input.tripId, orderId: input.orderId } },
+      body: {
+        loadedUnits: input.loadedUnits,
+        updatedByName: input.updatedByName.trim(),
+        ...(input.itemCounts ? { itemCounts: input.itemCounts } : {}),
+      },
+    });
+  } catch {
+    return fromStatus(0, "save this count");
+  }
+  if (result.error || !result.data) return fromStatus(result.response.status, "save this count");
+  refreshDock();
+  return { ok: true };
+}
+
+/** The dock working a vehicle swap: unloaded, the new vehicle is here, read. */
+export async function recordSwapStep(input: {
+  tripId: string;
+  swapId: string;
+  step: "UNLOADED" | "ARRIVED" | "ACKNOWLEDGED";
+  byName: string;
+}): Promise<{ ok: true } | Failed> {
+  await requireRole("LOADER", "/loader");
+  if (!input.tripId || !input.swapId) return failed("This swap is no longer open", "Reload the dock and try again.");
+  if (!["UNLOADED", "ARRIVED", "ACKNOWLEDGED"].includes(input.step)) return failed("Unknown step", "Reload the dock and try again.");
+  if (typeof input.byName !== "string" || input.byName.trim().length < 2) {
+    return failed("Who did this?", "Enter your name. The dock terminal is shared.");
+  }
+
+  let result;
+  try {
+    const client = await api();
+    result = await client.POST("/trips/{tripId}/vehicle-swap/{swapId}/steps", {
+      params: { path: { tripId: input.tripId, swapId: input.swapId } },
+      body: { step: input.step, byName: input.byName.trim() },
+    });
+  } catch {
+    return fromStatus(0, "record this step");
+  }
+  if (result.error || !result.data) return fromStatus(result.response.status, "record this step");
+  refreshDock();
+  return { ok: true };
+}
+
+/** The shift handover note. One per day; the latest edit wins. */
+export async function saveHandoverNote(input: { date: string; body: string; authorName: string }): Promise<{ ok: true } | Failed> {
+  await requireRole("LOADER", "/loader");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) return failed("That day is not valid", "Reload the page and try again.");
+  const body = typeof input.body === "string" ? input.body.trim() : "";
+  if (body.length === 0) return failed("The note is empty", "Write what the next shift needs to know.");
+  if (body.length > 2000) return failed("The note is too long", "Keep it under 2000 characters.");
+  if (typeof input.authorName !== "string" || input.authorName.trim().length < 2) return failed("Who is writing?", "Enter your name.");
+
+  let result;
+  try {
+    const client = await api();
+    result = await client.PUT("/dock/handover", { body: { date: input.date, body, authorName: input.authorName.trim() } });
+  } catch {
+    return fromStatus(0, "save the handover note");
+  }
+  if (result.error || !result.data) return fromStatus(result.response.status, "save the handover note");
+  refreshDock();
+  return { ok: true };
 }

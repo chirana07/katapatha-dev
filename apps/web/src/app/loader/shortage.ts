@@ -18,6 +18,14 @@ export type LoadCheckInput = {
   checkedByName: string;
   reasonCode: string | null;
   clientRequestId: string;
+  /** Per-item counts that add up to loadedUnits, when the order has items. */
+  itemCounts?: Record<string, number> | null;
+  /** The one product a report is about. */
+  productSku?: string | null;
+  /** A photo of the problem, as a data URL. */
+  photoData?: string | null;
+  /** False lets the vehicle be sealed before the dispatcher decides. */
+  holdSealing?: boolean;
 };
 
 const MAX_UNITS = 999_999;
@@ -42,6 +50,15 @@ export function validateLoadCheck(input: LoadCheckInput): string | null {
   if (input.condition === "MISSING" && input.loadedUnits !== 0) return "A missing line has no units loaded. Set loaded units to 0.";
   if (input.condition !== "OK" && !input.reasonCode) return "Pick a reason. A reported line holds the vehicle until the dispatcher decides.";
   if (typeof input.clientRequestId !== "string" || !UUID.test(input.clientRequestId)) return "Reload the page and try again.";
+  if (input.itemCounts) {
+    const sum = Object.values(input.itemCounts).reduce((a, b) => a + b, 0);
+    if (Object.values(input.itemCounts).some((n) => !Number.isInteger(n) || n < 0) || sum !== input.loadedUnits) {
+      return "The item counts do not add up to the loaded units. Reload the trip and count again.";
+    }
+  }
+  if (input.photoData && (!/^data:image\/(jpeg|png|webp);base64,/.test(input.photoData) || input.photoData.length > 3_000_000)) {
+    return "That photo cannot be sent. Take it again.";
+  }
   return null;
 }
 

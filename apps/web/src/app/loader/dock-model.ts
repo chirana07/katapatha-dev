@@ -23,8 +23,11 @@ export type LoadTally = {
   flagged: number;
   /** Units on the load list. */
   expectedUnits: number;
-  /** Units the dock has recorded as loaded, over checked lines only. */
+  /** Units on board: a checked line's check, or an unchecked line's count in
+   *  progress. What the progress bars show. */
   loadedUnits: number;
+  /** Units on checked lines only — what the dock has vouched for. */
+  checkedUnits: number;
   /** Units missing on flagged lines: ordered minus loaded, never negative. */
   shortUnits: number;
   /** Flagged lines whose shortfall is still open with the dispatcher. */
@@ -42,14 +45,19 @@ export function tallyLines(lines: LoadLine[]): LoadTally {
   let flagged = 0;
   let expectedUnits = 0;
   let loadedUnits = 0;
+  let checkedUnits = 0;
   let shortUnits = 0;
   let awaiting = 0;
   let awaitingUnits = 0;
   for (const line of lines) {
     expectedUnits += line.expectedUnits;
-    if (line.condition == null || line.loadedUnits == null) continue;
+    if (line.condition == null || line.loadedUnits == null) {
+      loadedUnits += line.progress?.loadedUnits ?? 0;
+      continue;
+    }
     checked += 1;
     loadedUnits += line.loadedUnits;
+    checkedUnits += line.loadedUnits;
     if (line.condition !== "OK") {
       flagged += 1;
       const missing = Math.max(line.expectedUnits - line.loadedUnits, 0);
@@ -66,6 +74,7 @@ export function tallyLines(lines: LoadLine[]): LoadTally {
     flagged,
     expectedUnits,
     loadedUnits,
+    checkedUnits,
     shortUnits,
     awaiting,
     awaitingUnits,
@@ -139,7 +148,12 @@ export type Attention =
   | { kind: "shortage"; flagged: number; shortUnits: number }
   | { kind: "chiller"; tempC: number }
   | { kind: "overdue" }
+  | { kind: "behind"; minutes: number }
   | { kind: "departing-soon"; minutes: number; unchecked: number };
+
+/** Minutes behind the dock's loading plan before a vehicle is flagged. The
+ *  server measures it (see `minutesBehind` on the dock shift). */
+export const BEHIND_THRESHOLD_MINUTES = 5;
 
 /** How close to departure counts as "soon" for a vehicle that is not loaded. */
 export const DEPARTING_SOON_MINUTES = 30;
@@ -168,7 +182,7 @@ function clockMinutes(clock: string): number {
  * is never inferred from pace — only from the clock against the planned
  * departure.
  */
-export function attentionFor(trip: DockTrip, clock: DockClock): Attention[] {
+export function attentionFor(trip: DockTrip, clock: DockClock, behindMinutes: number | null = null): Attention[] {
   if (trip.status !== "PLANNED" && trip.status !== "LOADING") return [];
   const found: Attention[] = [];
   const load = trip.load;
@@ -190,6 +204,7 @@ export function attentionFor(trip: DockTrip, clock: DockClock): Attention[] {
     const minutes = clockMinutes(trip.plannedDepartAt) - clock.minutesNow;
     const unchecked = load ? load.lines - load.checked : 0;
     if (minutes < 0) found.push({ kind: "overdue" });
+    else if (behindMinutes != null && behindMinutes >= BEHIND_THRESHOLD_MINUTES) found.push({ kind: "behind", minutes: behindMinutes });
     else if (minutes <= DEPARTING_SOON_MINUTES && unchecked > 0) {
       found.push({ kind: "departing-soon", minutes, unchecked });
     }
@@ -205,6 +220,8 @@ export function attentionLabel(item: Attention): string {
       return `Chiller ${formatTemp(item.tempC)}`;
     case "overdue":
       return "Past departure time";
+    case "behind":
+      return `${item.minutes} min behind`;
     case "departing-soon":
       return `Departs in ${item.minutes} min`;
   }
@@ -260,7 +277,8 @@ export function groupByStop(lines: LoadLine[]): StopGroup[] {
       loadOrder: index + 1,
       lines: stopLines,
       tally,
-      state: tally.checked === tally.lines ? "done" : tally.checked === 0 ? "untouched" : "partial",
+      state:
+        tally.checked === tally.lines ? "done" : tally.checked === 0 && tally.loadedUnits === 0 ? "untouched" : "partial",
     };
   });
 }

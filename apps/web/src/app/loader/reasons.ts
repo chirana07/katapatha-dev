@@ -19,6 +19,7 @@ export const FALLBACK_SHORTFALL_REASONS: ShortfallReason[] = [
   "DAMAGED",
   "SHORT_QUANTITY",
   "NOT_COLD_ENOUGH",
+  "WRONG_ITEM",
 ];
 
 export const SHORTFALL_REASON_LABEL: Record<string, string> = {
@@ -26,6 +27,7 @@ export const SHORTFALL_REASON_LABEL: Record<string, string> = {
   DAMAGED: "Damaged goods",
   SHORT_QUANTITY: "Short quantity",
   NOT_COLD_ENOUGH: "Not cold enough",
+  WRONG_ITEM: "Wrong item picked",
 };
 
 export function labelFor(reason: string): string {

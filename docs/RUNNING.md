@@ -97,6 +97,14 @@ Password is `waypoint` for all four.
 | `sunil@waypoint.lk` | DRIVER | claims a vehicle at the dock |
 | `fathima@waypoint.lk` | STORE_MANAGER | outlet OUT074 |
 
+The loader's dock tablet signs in with a **staff ID and PIN** instead (L-01):
+staff ID `LDR-0142`, PIN `4826`. Ranjith's email and password still work too.
+
+For screens with something on them, run `pnpm demo:morning` after a reset. It
+leaves the hero day (`?date=2026-04-09`) mid-morning: trips loaded, short, half
+counted, a vehicle swapped mid-load (VEH102 trip 2 → VEH104), a warm chiller and
+a handover note, with the dock's times placed on the hero day itself.
+
 ---
 
 ## 3. API and web

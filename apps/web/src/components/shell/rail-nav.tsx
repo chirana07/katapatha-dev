@@ -20,7 +20,7 @@ import { NavIcon } from "./nav-icon";
  * at render time, and `next build` does not catch it.
  */
 
-export function RailNav({ role, label }: { role: Role; label: string }) {
+export function RailNav({ role, label, variant = "default" }: { role: Role; label: string; variant?: "default" | "dock" }) {
   const pathname = usePathname() ?? "";
   const items = NAV[role].items;
 
@@ -34,11 +34,22 @@ export function RailNav({ role, label }: { role: Role; label: string }) {
             href={item.href}
             aria-current={active ? "page" : undefined}
             prefetch={false}
-            className={`flex min-h-11 items-center gap-2.5 rounded-control px-3 ${
-              active ? "bg-white font-semibold text-ink" : "text-white/80 hover:bg-white/10"
-            }`}
+            className={
+              variant === "dock"
+                ? `relative flex min-h-10 items-center gap-3 rounded-[6px] px-4 text-[14.5px] ${
+                    active ? "bg-night-raised font-semibold text-white" : "text-white hover:bg-white/5"
+                  }`
+                : `flex min-h-11 items-center gap-2.5 rounded-control px-3 ${
+                    active ? "bg-white font-semibold text-ink" : "text-white/80 hover:bg-white/10"
+                  }`
+            }
           >
-            <NavIcon kind={item.icon} />
+            {variant === "dock" && active ? (
+              <span aria-hidden className="absolute left-0 top-1.5 h-7 w-0.75 rounded-[2px] bg-action" />
+            ) : null}
+            <span className={variant === "dock" && active ? "text-action" : undefined}>
+              <NavIcon kind={item.icon} />
+            </span>
             {item.label}
           </Link>
         );

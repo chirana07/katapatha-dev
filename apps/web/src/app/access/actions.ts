@@ -19,6 +19,12 @@ const ALLOWED_EMAILS = new Set([
 
 const SAFE_HOMES = new Set(["/store", "/dispatcher", "/loader", "/driver"]);
 
+/** The loader signs in the way the dock tablet does (L-01): staff ID and PIN,
+ *  the seed's (apps/api/prisma/seed/users.ts). */
+const DEMO_STAFF: Record<string, { staffId: string; pin: string }> = {
+  "ranjith@waypoint.lk": { staffId: "LDR-0142", pin: "4826" },
+};
+
 /**
  * Quick sign-in for a reviewer, using the four seeded demo accounts and the
  * password that is already published in the README. It is not a session forgery
@@ -63,7 +69,7 @@ export async function signInAs(
   try {
     const client = await api();
     result = await client.POST("/auth/session", {
-      body: { email, password: DEMO_PASSWORD },
+      body: DEMO_STAFF[email] ?? { email, password: DEMO_PASSWORD },
     });
   } catch {
     return {

@@ -26,12 +26,18 @@ import { MobileNav, RailNav } from "./rail-nav";
  *
  * Width is 212px, per DESIGN.md's "persistent 212px rail". The sidebars this
  * replaces had drifted to w-64.
+ *
+ * `variant="dock"` is the Figma file's unified sidebar (L-02…L-06): a night
+ * rail, the role block in flame, a dark active row with a flame bar. Only the
+ * loader opts in so far; the other workspaces keep the treatment they shipped
+ * with until their own Figma pass.
  */
 export function AppShell({
   role,
   name,
   scope,
   children,
+  variant = "default",
 }: {
   role: Role;
   /** The signed-in person. */
@@ -39,6 +45,7 @@ export function AppShell({
   /** Depot, dock or outlet — the records this session can touch. */
   scope: string;
   children: ReactNode;
+  variant?: "default" | "dock";
 }) {
   const nav = NAV[role];
   const navLabel = `${nav.title} workspace`;
@@ -53,6 +60,9 @@ export function AppShell({
         Skip to workspace
       </a>
 
+      {variant === "dock" ? (
+        <DockRail role={role} name={name} scope={scope} initials={initials} title={nav.title} home={nav.home} label={navLabel} />
+      ) : (
       <aside className="hidden h-screen w-53 shrink-0 flex-col justify-between bg-rail p-4 text-white lg:sticky lg:top-0 lg:flex">
         <div className="flex flex-col gap-5">
           <Link href={nav.home} className="flex items-center">
@@ -89,6 +99,7 @@ export function AppShell({
           <SignOutLink />
         </div>
       </aside>
+      )}
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="bg-rail text-white lg:hidden">
@@ -136,5 +147,60 @@ function SignOutLink() {
     >
       <NavIcon kind="sign-out" />
     </Link>
+  );
+}
+
+/** The Figma sidebar (node 37:482): night rail, flame role block, dark active
+ *  row with a flame indicator, and a plain avatar footer. */
+function DockRail({
+  role,
+  name,
+  scope,
+  initials,
+  title,
+  home,
+  label,
+}: {
+  role: Role;
+  name: string;
+  scope: string;
+  initials: string;
+  title: string;
+  home: string;
+  label: string;
+}) {
+  return (
+    <aside className="hidden h-screen w-53 shrink-0 flex-col justify-between bg-night px-2 pb-4 pt-5 text-white lg:sticky lg:top-0 lg:flex">
+      <div className="flex flex-col gap-3">
+        <Link href={home} className="flex items-center px-2">
+          <Image src="/logo/katapatha-lockup-dark.png" alt="Katapatha" width={1600} height={409} className="h-auto w-36" priority />
+        </Link>
+
+        <div className="mt-2 flex min-h-12.5 items-center gap-3 rounded-control bg-action px-3 text-[#111]">
+          <NavIcon kind={NAV[role].items[0]?.icon ?? "dock"} />
+          <div className="min-w-0 flex-1">
+            <p className="text-[15px] font-bold leading-tight">{title}</p>
+            <p className="truncate text-[11.5px] font-medium opacity-70">{scope}</p>
+          </div>
+        </div>
+
+        <RailNav role={role} label={label} variant="dock" />
+      </div>
+
+      <div className="border-t border-night-line pt-4">
+        <div className="flex items-center justify-between gap-2 px-2">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="inline-flex size-9.5 shrink-0 items-center justify-center rounded-full bg-night-line text-[13px] font-semibold text-white">
+              {initials}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-white">{name}</p>
+              <p className="truncate text-xs text-white/60">{title}</p>
+            </div>
+          </div>
+          <SignOutLink />
+        </div>
+      </div>
+    </aside>
   );
 }

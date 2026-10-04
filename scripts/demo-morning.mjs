@@ -17,6 +17,10 @@
  *   - two more vehicles departed: one running late, one in Lamp Mode (its last
  *     report is old)
  *   - a driver-raised problem and a store-raised issue
+ *   - the dock's own record on the hero day: when each vehicle started loading,
+ *     when each order was checked and when it was sealed (re-timed onto the
+ *     hero day, since the API stamps them with whenever this script ran), a
+ *     count in progress, a handover note, and a vehicle swapped mid-load
  *
  * Everything goes through the HTTP API except the two vehicles the single seeded
  * driver cannot play — those are set up in SQL through `psql`, because the
@@ -71,7 +75,8 @@ function ulid() {
 function psql(sql) {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is needed for the SQL part of the scenario");
-  const r = spawnSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-q", "-t", "-A", "-c", sql], { encoding: "utf8" });
+  // psql rejects Prisma's `?schema=public`; the schema is the default anyway.
+  const r = spawnSync("psql", [url.replace(/\?.*$/, ""), "-v", "ON_ERROR_STOP=1", "-q", "-t", "-A", "-c", sql], { encoding: "utf8" });
   if (r.status !== 0) throw new Error(`psql failed: ${r.stderr}`);
   return r.stdout.trim();
 }
@@ -221,8 +226,11 @@ async function main() {
     log(`store issue ${r.status}`);
   }
 
+  // ---- dock: counts in progress, a swap, the hero day's clock ------------------
+  const swapTrip = await dockScenario({ trips, ready, short, partial });
+
   // ---- SQL: two vehicles the single seeded driver cannot play ---------------
-  const others = trips.filter((t) => t.vehicleId !== ready.vehicleId).slice(0, 4);
+  const others = trips.filter((t) => t.vehicleId !== ready.vehicleId && t.id !== swapTrip?.id).slice(0, 4);
   const late = others.find((t) => t.id !== short?.id && t.id !== partial?.id);
   const lamp = others.find((t) => t.id !== late?.id && t.id !== short?.id && t.id !== partial?.id);
   const pingSql = (t, lat, lng, minAgo) =>
@@ -245,6 +253,100 @@ async function main() {
   }
 
   console.log("Done.");
+}
+
+/**
+ * The dock's half of the morning. Everything the dock writes is stamped with
+ * the time this script runs, which is not the hero day, so the times are moved
+ * onto the hero day afterwards, relative to each vehicle's planned departure —
+ * a vehicle that was sealed is sealed a few minutes before it was due to go.
+ */
+async function dockScenario({ trips, ready, short, partial }) {
+  await signIn("ranjith");
+
+  // A count in progress on the half-checked trip's next order: on board, not
+  // yet checked.
+  if (partial) {
+    const list = await must("load-list", "GET", `/trips/${partial.id}/load-list`);
+    const next = list.lines.find((line) => line.condition == null);
+    if (next) {
+      const half = Math.floor(next.expectedUnits / 2);
+      const items = next.items ?? [];
+      let left = half;
+      const itemCounts = {};
+      for (const item of items) {
+        const take = Math.min(item.quantity, left);
+        itemCounts[item.sku] = take;
+        left -= take;
+      }
+      await must("progress", "PUT", `/trips/${partial.id}/load-progress/${next.orderId}`, {
+        loadedUnits: half,
+        updatedByName: "Ranjith Silva",
+        ...(items.length > 0 ? { itemCounts } : {}),
+      });
+      log(`in progress: ${partial.vehicleId} trip ${partial.tripNo}, ${half} of ${next.expectedUnits} on ${next.orderRef}`);
+    }
+  }
+
+  await must("handover", "PUT", "/dock/handover", {
+    date: DATE,
+    authorName: "Ranjith Silva",
+    body:
+      "VEH101's chiller was slow to pull down on trip 2 — recheck before it leaves. VEH102 trip 2 moved to VEH104 " +
+      "(tail-lift fault); the first items had already gone on, so they come off at its bay first.",
+  });
+  log("handover note written");
+
+  // The swap: VEH102's second trip is pulled for a tail-lift fault after the
+  // dock had started on it, and VEH104 — in the workshop on the scenario day —
+  // is recalled to take it.
+  const swapTrip = trips.find((t) => t.vehicleId === "VEH102" && t.tripNo === 2);
+  if (swapTrip) {
+    const list = await must("load-list", "GET", `/trips/${swapTrip.id}/load-list`);
+    const line = list.lines[0];
+    if (line) {
+      await must("progress", "PUT", `/trips/${swapTrip.id}/load-progress/${line.orderId}`, {
+        loadedUnits: Math.min(6, line.expectedUnits),
+        updatedByName: "Ranjith Silva",
+      });
+    }
+    psql(`UPDATE "VehicleDayStatus" SET status='AVAILABLE', note='Recalled from the workshop' WHERE "vehicleId"='VEH104' AND date='${DATE}';`);
+    await signIn("nimal");
+    const swap = await call("POST", `/trips/${swapTrip.id}/vehicle-swap`, {
+      toVehicleId: "VEH104",
+      reason: "Tail-lift fault on VEH102",
+      newDepartAt: "10:40",
+    });
+    log(`swap ${swap.status}: ${swapTrip.vehicleId} trip ${swapTrip.tripNo} → VEH104`);
+    if (swap.status === 201) {
+      await signIn("ranjith");
+      await must("unloaded", "POST", `/trips/${swapTrip.id}/vehicle-swap/${swap.data.id}/steps`, { step: "UNLOADED", byName: "Ranjith Silva" });
+    }
+  }
+
+  // Re-time the dock's record onto the hero day.
+  const dayStartUtc = Date.parse(`${DATE}T00:00:00Z`) - 330 * 60000;
+  const at = (minutes) => new Date(dayStartUtc + minutes * 60000).toISOString();
+  const toMin = (clock) => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5));
+  for (const trip of [ready, short, partial].filter(Boolean)) {
+    const depart = toMin(trip.plannedDepartAt);
+    const start = depart - (trip.id === partial?.id ? 30 : 52);
+    const checks = psql(`SELECT "orderId" FROM "LoadCheck" WHERE "tripId"='${trip.id}' ORDER BY "checkedAt"`).split("\n").filter(Boolean);
+    psql(`UPDATE "Trip" SET "loadStartedAt"='${at(start)}' WHERE id='${trip.id}';`);
+    checks.forEach((orderId, i) => {
+      psql(`UPDATE "LoadCheck" SET "checkedAt"='${at(start + 12 + i * 14)}' WHERE "tripId"='${trip.id}' AND "orderId"='${orderId}';`);
+    });
+    psql(`UPDATE "LoadProgress" SET "updatedAt"='${at(start + 20)}' WHERE "tripId"='${trip.id}';`);
+    if (trip.id === ready.id) psql(`UPDATE "Trip" SET "loadConfirmedAt"='${at(depart - 6)}' WHERE id='${trip.id}';`);
+    psql(`UPDATE "Shortfall" SET "raisedAt"='${at(start + 12)}' WHERE "tripId"='${trip.id}';`);
+  }
+  if (swapTrip) {
+    const depart = toMin(swapTrip.plannedDepartAt);
+    psql(`UPDATE "VehicleSwap" SET "createdAt"='${at(depart - 75)}', "unloadedAt"=CASE WHEN "unloadedAt" IS NULL THEN NULL ELSE '${at(depart - 64)}'::timestamp END WHERE "tripId"='${swapTrip.id}';`);
+  }
+  psql(`UPDATE "DockNote" SET "updatedAt"='${at(7 * 60 + 10)}' WHERE date='${DATE}';`);
+  log("dock times moved onto the hero day");
+  return swapTrip;
 }
 
 main().catch((e) => { console.error(e.message); process.exit(1); });

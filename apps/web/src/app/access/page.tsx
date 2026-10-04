@@ -48,6 +48,8 @@ const ACCOUNTS = [
     does: "Check each line onto the vehicle, raise shortfalls, mark ready.",
     home: "/loader",
     accent: "border-blue-200",
+    // The dock tablet signs in by badge (L-01); the email works too.
+    staff: { id: "LDR-0142", pin: "4826" },
   },
   {
     role: "Driver",
@@ -130,6 +132,14 @@ export default function AccessPage() {
                 <dd className="tabular text-ink">{account.email}</dd>
                 <dt className="font-semibold text-muted">Password</dt>
                 <dd className="tabular text-ink">waypoint</dd>
+                {"staff" in account ? (
+                  <>
+                    <dt className="font-semibold text-muted">Staff ID</dt>
+                    <dd className="tabular text-ink">{account.staff.id}</dd>
+                    <dt className="font-semibold text-muted">PIN</dt>
+                    <dd className="tabular text-ink">{account.staff.pin}</dd>
+                  </>
+                ) : null}
                 <dt className="font-semibold text-muted">Lands on</dt>
                 <dd className="text-ink">{account.home}</dd>
               </dl>

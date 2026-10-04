@@ -14,11 +14,17 @@ export async function signIn(
   _previous: SignInState,
   formData: FormData,
 ): Promise<SignInState> {
+  const requestedNext = String(formData.get("next") ?? "");
+  const byStaff = formData.has("staffId");
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
-  const requestedNext = String(formData.get("next") ?? "");
+  const staffId = String(formData.get("staffId") ?? "").trim().toUpperCase();
+  const pin = String(formData.get("pin") ?? "").trim();
 
-  if (!email || !password) {
+  if (byStaff) {
+    if (!staffId || !pin) return { error: "Enter your staff ID and PIN." };
+    if (!/^[0-9]{4,8}$/.test(pin)) return { error: "Your PIN is 4 to 8 digits." };
+  } else if (!email || !password) {
     return { error: "Enter your work email and password." };
   }
 
@@ -26,7 +32,7 @@ export async function signIn(
   try {
     const client = await api();
     result = await client.POST("/auth/session", {
-      body: { email, password },
+      body: byStaff ? { staffId, pin } : { email, password },
     });
   } catch {
     return { error: "Katapatha is temporarily unreachable. Check your connection and try again." };

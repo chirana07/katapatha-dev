@@ -19,6 +19,7 @@ import type { Trip } from "./wave";
  */
 
 export type Vehicle = components["schemas"]["Vehicle"];
+export type DockShift = components["schemas"]["DockShift"];
 
 export type DockDay =
   | { ok: true; trips: DockTrip[]; districts: Record<string, string>; vehicles: Record<string, Vehicle> }
@@ -106,3 +107,18 @@ export async function loadTripView(tripId: string): Promise<TripView> {
     districts: refs.districts,
   };
 }
+
+/**
+ * The dock's shift: bays, load timing, pace, the last seven nights and the
+ * handover note. Null when it cannot be read — every panel that uses it has a
+ * plain fallback, so a failed read hides the panel rather than the page.
+ */
+export const loadShift = cache(async (date: string): Promise<DockShift | null> => {
+  try {
+    const client = await api();
+    const result = await client.GET("/dock/shift", { params: { query: { date } } });
+    return result.error || !result.data ? null : result.data;
+  } catch {
+    return null;
+  }
+});

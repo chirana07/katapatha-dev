@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { RoleGlyph } from "@/components/ui/role-glyph";
+import { ShieldCheckIcon } from "@/app/loader/icons";
 import { SignInForm } from "./sign-in-form";
 import { parseSignInRole, ROLE_COPY, ROLE_ORDER } from "./roles";
 
@@ -25,6 +26,9 @@ export default async function SignInPage({
   const next = typeof query.next === "string" ? query.next : "";
   const role = parseSignInRole(query.role);
   const copy = role ? ROLE_COPY[role] : null;
+  // The loader's L-01 is the Figma pass's: the night panel, the tile mark,
+  // shield bullets and the staff ID form. The other roles keep theirs.
+  const dock = role === "loader";
 
   return (
     <main className="flex min-h-screen flex-col bg-canvas lg:grid lg:grid-cols-[1fr_1fr]">
@@ -32,7 +36,7 @@ export default async function SignInPage({
         className="relative flex flex-col gap-8 px-5 pb-12 pt-5 text-white sm:px-8 lg:min-h-screen lg:justify-between lg:p-12"
         style={{
           background:
-            "radial-gradient(60% 55% at 85% 0%, color-mix(in srgb, var(--c-ruby) 55%, transparent), transparent), radial-gradient(45% 40% at 0% 100%, color-mix(in srgb, var(--c-ochre) 22%, transparent), transparent), var(--c-navy)",
+            `radial-gradient(60% 55% at 85% 0%, color-mix(in srgb, var(--c-ruby) ${dock ? 45 : 55}%, transparent), transparent), radial-gradient(45% 40% at 0% 100%, color-mix(in srgb, var(--c-ochre) 22%, transparent), transparent), ${dock ? "var(--c-night)" : "var(--c-navy)"}`,
         }}
       >
         <div className="flex items-center justify-between gap-4">
@@ -61,7 +65,7 @@ export default async function SignInPage({
           <p className="mt-5 text-xs font-semibold uppercase tracking-[0.2em] text-action">
             {copy ? copy.eyebrow : "Katapatha / Operations"}
           </p>
-          <p className="mt-3 text-4xl font-semibold leading-[1.08] tracking-tight sm:text-5xl lg:text-6xl">
+          <p className={`mt-3 text-4xl leading-[1.08] tracking-tight sm:text-5xl lg:text-6xl ${dock ? "font-extrabold tracking-[-0.03em] lg:leading-[1.25]" : "font-semibold"}`}>
             {copy ? copy.headline : "One shared truth for every delivery."}
           </p>
           <p className="mt-4 max-w-md text-base text-white/75 lg:mt-6 lg:text-lg">
@@ -71,7 +75,7 @@ export default async function SignInPage({
             <ul className="mt-8 hidden flex-col gap-3 lg:flex">
               {copy.points.map((point) => (
                 <li key={point} className="flex items-center gap-3 text-base text-white/90">
-                  <span aria-hidden="true" className="text-action">✓</span>
+                  {dock ? <ShieldCheckIcon className="size-4 text-action" /> : <span aria-hidden="true" className="text-action">✓</span>}
                   {point}
                 </li>
               ))}
@@ -84,23 +88,30 @@ export default async function SignInPage({
 
       <section className="relative -mt-6 flex flex-1 flex-col rounded-t-3xl bg-canvas px-5 pb-10 pt-8 sm:px-8 lg:mt-0 lg:items-center lg:justify-center lg:rounded-none lg:px-12">
         <div className="w-full max-w-md">
-          <Image
-            src="/logo/katapatha-lockup-light.png"
-            alt=""
-            width={1600}
-            height={417}
-            className="hidden h-auto w-40 lg:block"
-          />
+          {dock ? (
+            // eslint-disable-next-line @next/next/no-img-element -- a local SVG mark
+            <img src="/logo/katapatha-mark.svg" alt="" width={52} height={52} className="hidden size-13 lg:block" />
+          ) : (
+            <Image
+              src="/logo/katapatha-lockup-light.png"
+              alt=""
+              width={1600}
+              height={417}
+              className="hidden h-auto w-40 lg:block"
+            />
+          )}
 
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted lg:mt-8">
             {copy ? copy.context : "Operations access"}
           </p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">
+          <h1 className={`mt-2 text-3xl tracking-tight text-ink ${dock ? "font-extrabold" : "font-semibold"}`}>
             {copy ? copy.heading : "Sign in to Katapatha"}
           </h1>
-          <p className="mt-2 text-base text-muted">Enter your work email and password to continue.</p>
+          <p className="mt-2 text-base text-muted">
+            {copy?.credential === "staff" ? "Enter your Waypoint staff ID and PIN to continue." : "Enter your work email and password to continue."}
+          </p>
 
-          <SignInForm next={next} submitLabel={copy ? copy.submit : "Sign in"} />
+          <SignInForm next={next} submitLabel={copy ? copy.submit : "Sign in"} credential={copy?.credential ?? "email"} />
 
           {role === "driver" ? (
             <p className="mt-5 rounded-card bg-raised px-4 py-3 text-sm text-muted">

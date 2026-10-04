@@ -16,7 +16,7 @@ export default async function LoaderLayout({ children }: { children: React.React
   const user = await requireRole("LOADER", "/loader");
 
   return (
-    <AppShell role="LOADER" name={user.name} scope={scopeLabel(user)}>
+    <AppShell role="LOADER" name={user.name} scope={scopeLabel(user)} variant="dock">
       {children}
     </AppShell>
   );
