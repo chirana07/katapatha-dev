@@ -19,10 +19,13 @@ const ALLOWED_EMAILS = new Set([
 
 const SAFE_HOMES = new Set(["/store", "/dispatcher", "/loader", "/driver"]);
 
-/** The loader signs in the way the dock tablet does (L-01): staff ID and PIN,
- *  the seed's (apps/api/prisma/seed/users.ts). */
+/** Each account signs in the way its sign-in screen does: Waypoint staff ID
+ *  and PIN, the seed's (apps/api/prisma/seed/users.ts). */
 const DEMO_STAFF: Record<string, { staffId: string; pin: string }> = {
+  "nimal@waypoint.lk": { staffId: "DSP-0101", pin: "2580" },
   "ranjith@waypoint.lk": { staffId: "LDR-0142", pin: "4826" },
+  "sunil@waypoint.lk": { staffId: "DRV-0207", pin: "1357" },
+  "fathima@waypoint.lk": { staffId: "STR-0074", pin: "9024" },
 };
 
 /**

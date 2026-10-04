@@ -108,10 +108,10 @@ export default async function SignInPage({
             {copy ? copy.heading : "Sign in to Katapatha"}
           </h1>
           <p className="mt-2 text-base text-muted">
-            {copy?.credential === "staff" ? "Enter your Waypoint staff ID and PIN to continue." : "Enter your work email and password to continue."}
+            {(copy?.credential ?? "staff") === "staff" ? "Enter your Waypoint staff ID and PIN to continue." : "Enter your work email and password to continue."}
           </p>
 
-          <SignInForm next={next} submitLabel={copy ? copy.submit : "Sign in"} credential={copy?.credential ?? "email"} />
+          <SignInForm next={next} submitLabel={copy ? copy.submit : "Sign in"} credential={copy?.credential ?? "staff"} />
 
           {role === "driver" ? (
             <p className="mt-5 rounded-card bg-raised px-4 py-3 text-sm text-muted">

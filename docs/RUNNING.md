@@ -97,8 +97,18 @@ Password is `waypoint` for all four.
 | `sunil@waypoint.lk` | DRIVER | claims a vehicle at the dock |
 | `fathima@waypoint.lk` | STORE_MANAGER | outlet OUT074 |
 
-The loader's dock tablet signs in with a **staff ID and PIN** instead (L-01):
-staff ID `LDR-0142`, PIN `4826`. Ranjith's email and password still work too.
+Every sign-in page asks for a **Waypoint staff ID and PIN** (D-01, L-01,
+R-01, S-01):
+
+| Role | Staff ID | PIN |
+|---|---|---|
+| DISPATCHER | `DSP-0101` | `2580` |
+| LOADER | `LDR-0142` | `4826` |
+| DRIVER | `DRV-0207` | `1357` |
+| STORE_MANAGER | `STR-0074` | `9024` |
+
+The API still accepts the email and password above. Nothing on screen asks
+for them, but the native driver app and the demo/smoke scripts sign in that way.
 
 For screens with something on them, run `pnpm demo:morning` after a reset. It
 leaves the hero day (`?date=2026-04-09`) mid-morning: trips loaded, short, half

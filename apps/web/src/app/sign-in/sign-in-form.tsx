@@ -11,11 +11,12 @@ const INPUT =
 export function SignInForm({
   next,
   submitLabel,
-  credential = "email",
+  credential = "staff",
 }: {
   next: string;
   submitLabel: string;
-  /** "staff": staff ID and PIN, for the loader's shared dock tablet (L-01). */
+  /** "staff": Waypoint staff ID and PIN, what every sign-in screen asks for.
+   *  "email" is kept for callers that still need it; the API takes both. */
   credential?: "email" | "staff";
 }) {
   const [state, formAction, pending] = useActionState(signIn, INITIAL_STATE);
@@ -110,7 +111,7 @@ export function SignInForm({
       <button
         type="submit"
         disabled={pending}
-        className={`flex min-h-12 w-full items-center justify-center gap-2 rounded-control px-5 font-semibold text-white transition-[filter] hover:brightness-125 disabled:cursor-wait disabled:opacity-60 ${credential === "staff" ? "bg-night" : "bg-navy"}`}
+        className={`flex min-h-12 w-full items-center justify-center gap-2 rounded-control px-5 font-semibold text-white transition-[filter] hover:brightness-125 disabled:cursor-wait disabled:opacity-60 bg-night`}
       >
         {pending ? "Signing in…" : submitLabel}
         {pending ? null : <span aria-hidden="true">→</span>}

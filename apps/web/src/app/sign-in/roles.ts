@@ -24,8 +24,8 @@ export interface RoleCopy {
   points: [string, string, string];
   /** The button words, "Open dispatcher workspace". */
   submit: string;
-  /** How this role signs in. The loader's shared dock tablet takes a staff ID
-   *  and PIN (L-01); everyone else, a work email and password. */
+  /** How this role signs in. Every sign-in screen in the Figma file (D-01,
+   *  L-01, R-01, S-01) asks for the Waypoint staff ID and PIN. */
   credential: "email" | "staff";
 }
 
@@ -40,7 +40,7 @@ export const ROLE_COPY: Record<SignInRole, RoleCopy> = {
     lead: "Turn confirmed orders into a plan the whole team can trust.",
     points: ["Allocate orders", "Record deferrals", "Monitor delivery progress"],
     submit: "Open dispatcher workspace",
-    credential: "email",
+    credential: "staff",
   },
   loader: {
     role: "loader",
@@ -64,7 +64,7 @@ export const ROLE_COPY: Record<SignInRole, RoleCopy> = {
     lead: "See your route and record every delivery, stop by stop.",
     points: ["See the next stop", "Record counts and receipts", "Report a problem at the door"],
     submit: "Open driver workspace",
-    credential: "email",
+    credential: "staff",
   },
   store: {
     role: "store",
@@ -76,7 +76,7 @@ export const ROLE_COPY: Record<SignInRole, RoleCopy> = {
     lead: "Know when stock is coming, place tomorrow's order, and confirm receipt.",
     points: ["Track incoming deliveries", "Place and edit orders", "Confirm receipt and report issues"],
     submit: "Open store workspace",
-    credential: "email",
+    credential: "staff",
   },
 };
 
