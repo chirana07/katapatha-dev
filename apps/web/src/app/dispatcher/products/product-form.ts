@@ -1,4 +1,5 @@
 import type { components } from "@katapatha/contracts/types";
+import { isTemp, type Temp } from "@/lib/temperature";
 
 type Create = components["schemas"]["CreateProductRequest"];
 type Update = components["schemas"]["UpdateProductRequest"];
@@ -78,8 +79,8 @@ function checkFields(values: ProductFormValues): Checked {
   const brand = values.brand.trim();
   if (brand !== "" && !BRANDS.includes(brand as Brand)) errors.brand = "Choose a brand, or All brands.";
 
-  if (values.tempRequirement !== "ambient" && values.tempRequirement !== "chilled") {
-    errors.tempRequirement = "Choose ambient or chilled.";
+  if (!isTemp(values.tempRequirement)) {
+    errors.tempRequirement = "Choose ambient, chilled or frozen.";
   }
 
   const unitLabel = values.unitLabel.trim();
@@ -104,7 +105,7 @@ function checkFields(values: ProductFormValues): Checked {
     fields: {
       name,
       brand: brand === "" ? null : (brand as Brand),
-      tempRequirement: values.tempRequirement as "ambient" | "chilled",
+      tempRequirement: values.tempRequirement as Temp,
       unitLabel,
       kgPerUnit: kg.value,
       m3PerUnit: m3.value,

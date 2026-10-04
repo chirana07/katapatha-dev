@@ -20,3 +20,6 @@ next-env.d.ts
 # `pnpm gen && git add`. CI enforces they are in sync via `pnpm gen:check`.
 !packages/contracts/dist/
 !packages/contracts/dist/openapi.json
+
+# OSRM road data built by `pnpm osrm:prepare`
+/.osrm/

@@ -18,6 +18,7 @@ import type {
   OrderRef,
   OutletRef,
   ParkingConstraint,
+  TempRequirement,
 } from "@katapatha/core/domain/types";
 import type { AllocatorInput, AllocatorVehicle, FuelPosition } from "./types";
 
@@ -160,7 +161,7 @@ export async function loadPeakDayScenario(
     brand: r.brand as Brand,
     district: r.district,
     depot: r.depot as "Peliyagoda" | "Kandy",
-    tempRequirement: r.temp_requirement as "chilled" | "ambient",
+    tempRequirement: r.temp_requirement as TempRequirement,
     units: Number(r.order_units),
     weightKg: Number(r.order_weight_kg),
     volumeM3: Number(r.order_volume_m3),

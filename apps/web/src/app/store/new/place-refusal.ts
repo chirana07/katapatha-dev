@@ -1,4 +1,5 @@
 import type { Failure } from "@/lib/failures";
+import { TEMP_LABEL, isTemp } from "@/lib/temperature";
 
 export interface ApiRefusal {
   code?: string;
@@ -6,7 +7,7 @@ export interface ApiRefusal {
   details?: Record<string, unknown>;
 }
 
-const GOODS = { ambient: "Ambient", chilled: "Chilled" } as const;
+const GOODS = TEMP_LABEL;
 
 /**
  * What a 422 from `POST /orders` means to the person holding the basket.
@@ -22,7 +23,7 @@ export function placeRefusal(refusal: ApiRefusal | undefined): Failure | null {
 
   switch (refusal.code) {
     case "ORDER_TOO_LARGE": {
-      const temp = details.tempRequirement === "chilled" ? "chilled" : details.tempRequirement === "ambient" ? "ambient" : null;
+      const temp = isTemp(details.tempRequirement) ? details.tempRequirement : null;
       const max = typeof details.maxUnitsPerOrder === "number" ? details.maxUnitsPerOrder : null;
       const units = typeof details.units === "number" ? details.units : null;
       if (temp && max === 0) {

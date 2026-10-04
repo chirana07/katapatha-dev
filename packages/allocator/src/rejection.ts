@@ -33,10 +33,14 @@ const CODE_WEIGHT: Record<RejectionCode, number> = {
   ORDER_EXCEEDS_FLEET_CAPACITY: 100,
   NO_REEFER_IN_FLEET: 95,
   NO_VAN_IN_FLEET: 95,
+  NO_COMMON_WINDOW: 93,
+  FRESH_DEADLINE_UNREACHABLE: 92,
+  OUTLET_UNREACHABLE_IN_WINDOW: 91,
   DISTRICT_UNREACHABLE_IN_BUDGET: 90,
   NO_REEFER_AVAILABLE: 80,
   NO_VAN_AVAILABLE: 80,
   WINDOW_UNREACHABLE: 60,
+  TRIP_SEQUENCE_CONFLICT: 58,
   PREDAWN_BUDGET_EXCEEDED: 55,
   DAYTIME_BUDGET_EXCEEDED: 55,
   NO_TRIP_SLOT: 50,
@@ -145,6 +149,7 @@ const BUSY = new Set<RejectionCode>([
   "VOLUME_CAP_EXCEEDED",
   "WEIGHT_CAP_EXCEEDED",
   "NO_TRIP_SLOT",
+  "TRIP_SEQUENCE_CONFLICT",
   "PREDAWN_BUDGET_EXCEEDED",
   "DAYTIME_BUDGET_EXCEEDED",
   "FUEL_QUOTA_EXCEEDED",
@@ -209,6 +214,14 @@ function suggest(
       return `${order.outletId} can only be reached by van, and this depot has none.`;
     case "DISTRICT_UNREACHABLE_IN_BUDGET":
       return `${order.district} cannot be reached and served inside the operating window, even on an empty vehicle.`;
+    case "NO_COMMON_WINDOW":
+      return `${order.outletId}'s own delivery window and its mall's access window never overlap, so it cannot be delivered to until one of them is corrected.`;
+    case "FRESH_DEADLINE_UNREACHABLE":
+      return `${order.outletId} is too far from the depot for Fresh to arrive before stores open, even leaving as early as the pre-dawn window allows.`;
+    case "OUTLET_UNREACHABLE_IN_WINDOW":
+      return `${order.outletId} cannot be reached before its window closes at ${order.windowClose}, even leaving as early as possible.`;
+    case "TRIP_SEQUENCE_CONFLICT":
+      return "The vehicles that could take this are already out on the road when it would have to leave: a second trip cannot go until the first is back and reloaded.";
     case "NO_REEFER_AVAILABLE":
       return unavailable("refrigerated vehicle", "Every refrigerated vehicle is already full today.");
     case "NO_VAN_AVAILABLE":

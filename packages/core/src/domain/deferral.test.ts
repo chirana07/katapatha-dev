@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deferralMessage, nextOperatingDate, shortDay, suggestDeferralReason } from "./deferral";
+import { deferralMessage, isOperatingDay, nextOperatingDate, operatingDaysBetween, previousOperatingDate, shortDay, suggestDeferralReason } from "./deferral";
 import { DEFERRAL_REASONS } from "./reasons";
 
 describe("suggestDeferralReason", () => {
@@ -139,5 +139,57 @@ describe("deferralMessage — what the store manager reads", () => {
   it("formats days without depending on the host's locale data", () => {
     expect(shortDay("2026-04-10")).toBe("Fri 10 Apr");
     expect(shortDay("2026-09-30")).toBe("Wed 30 Sep");
+  });
+});
+
+describe("isOperatingDay", () => {
+  it("believes the calendar when it has a row, even on a Sunday or a holiday", () => {
+    expect(isOperatingDay("2026-10-04", true)).toBe(true);
+    expect(isOperatingDay("2026-10-05", false)).toBe(false);
+  });
+
+  it("falls back to Monday to Saturday when the calendar has no row", () => {
+    expect(isOperatingDay("2026-10-04", undefined)).toBe(false); // Sunday
+    expect(isOperatingDay("2026-10-05", undefined)).toBe(true); // Monday
+    expect(isOperatingDay("2026-10-10", undefined)).toBe(true); // Saturday
+  });
+});
+
+describe("previousOperatingDate", () => {
+  const none = () => undefined;
+
+  it("steps back over a Sunday when the calendar is silent", () => {
+    expect(previousOperatingDate("2026-10-05", none)).toBe("2026-10-03"); // Monday -> Saturday
+    expect(previousOperatingDate("2026-10-06", none)).toBe("2026-10-05");
+  });
+
+  it("steps back over a closed day the calendar names", () => {
+    const closed = (d: string) => (d === "2026-10-05" ? false : undefined);
+    expect(previousOperatingDate("2026-10-06", closed)).toBe("2026-10-03");
+  });
+
+  it("trusts an operating Sunday in the calendar", () => {
+    expect(previousOperatingDate("2026-10-05", (d) => (d === "2026-10-04" ? true : undefined))).toBe("2026-10-04");
+  });
+});
+
+describe("operatingDaysBetween", () => {
+  const none = () => undefined;
+
+  it("is one for yesterday, and zero for today or the future", () => {
+    expect(operatingDaysBetween("2026-10-05", "2026-10-06", none)).toBe(1);
+    expect(operatingDaysBetween("2026-10-06", "2026-10-06", none)).toBe(0);
+    expect(operatingDaysBetween("2026-10-07", "2026-10-06", none)).toBe(0);
+  });
+
+  it("does not count a Sunday as a day an outlet went without", () => {
+    // Served Saturday 3rd, planning Monday 5th: only Monday itself lies after Saturday on an operating day.
+    expect(operatingDaysBetween("2026-10-03", "2026-10-05", none)).toBe(1);
+    expect(operatingDaysBetween("2026-10-02", "2026-10-06", none)).toBe(3);
+  });
+
+  it("follows the calendar where it has rows, closed days included", () => {
+    const holiday = (d: string) => (d === "2026-10-06" ? false : undefined);
+    expect(operatingDaysBetween("2026-10-05", "2026-10-07", holiday)).toBe(1);
   });
 });

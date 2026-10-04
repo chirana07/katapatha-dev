@@ -11,6 +11,7 @@ import { requireRole } from "@/lib/auth";
 import { longDate } from "@/lib/dates";
 import { deskDate } from "../desk-date";
 import { plural } from "@/lib/format";
+import { countTemps, tempBreakdown } from "@/lib/temperature";
 import { deferralReasonLabel } from "@katapatha/core/domain/deferral";
 import { loadDay } from "../desk-data";
 import { FleetPanel } from "../fleet-panel";
@@ -88,7 +89,7 @@ export default async function PlanningDesk({
   const violations = check?.violations ?? [];
   const errors = countErrors(violations);
   const available = fleet?.vehicles.filter((v) => v.status === "AVAILABLE") ?? [];
-  const chilled = orders.filter((o) => o.tempRequirement === "chilled").length;
+  const mix = tempBreakdown(countTemps(orders));
   const vehiclesUsed = planData ? new Set(planData.trips.map((t) => t.vehicleId)).size : 0;
   const requestId = validRetry(query.retry) ?? crypto.randomUUID();
 
@@ -120,7 +121,7 @@ export default async function PlanningDesk({
           icon={<Glyph kind="orders" />}
           value={orders.length}
           label="Total orders"
-          foot={plan ? `${plan.stats.served} allocated · ${plan.stats.deferred} deferred` : `${chilled} chilled · ${orders.length - chilled} ambient`}
+          foot={plan ? `${plan.stats.served} allocated · ${plan.stats.deferred} deferred` : mix}
         />
         <StatCard
           icon={<Glyph kind="truck" />}

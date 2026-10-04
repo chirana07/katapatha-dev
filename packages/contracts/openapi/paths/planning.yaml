@@ -34,8 +34,11 @@ closure:
     operationId: closeOrderQueue
     summary: Close the order queue for the day
     description: >
-      OPEN to CLOSED, writing a queue snapshot. Replaying returns 200 with the
-      current state rather than an error — closing twice is not a mistake worth
+      OPEN to CLOSED, writing a queue snapshot. Closing also settles the
+      allocator's fairness inputs for the orders stores placed: how many
+      operating days since each outlet was last served, and whether it was
+      passed over on the previous run. Replaying returns 200 with the current
+      state rather than an error — closing twice is not a mistake worth
       blocking a dispatcher for.
     tags: [planning]
     responses:
@@ -84,7 +87,8 @@ plans:
       planning day to be CLOSED or PLANNING: an OPEN queue answers 409
       `QUEUE_OPEN`, and a day whose plan is already published answers 409
       `ALREADY_PUBLISHED` rather than putting a second draft beside the live
-      plan. No planning day answers 404 `NO_PLANNING_DAY`.
+      plan. A day the depot does not operate answers 409 `NON_OPERATING_DAY`.
+      No planning day answers 404 `NO_PLANNING_DAY`.
     tags: [planning]
     parameters:
       - $ref: "../components/parameters/common.yaml#/IdempotencyKey"
@@ -312,9 +316,12 @@ planPublication:
     operationId: publishPlan
     summary: Publish the plan
     description: >
-      An atomic one-time claim. Publishing commits fuel, notifies deferred
-      outlets, and moves served orders to PLANNED. A second attempt is a 409,
-      not a silent success.
+      An atomic one-time claim. Publishing commits the plan's fuel to each
+      vehicle's weekly ledger, notifies deferred outlets, and moves served
+      orders to PLANNED. A deferral a later day can fix also queues a follow-up
+      order, the whole order and its contents, for the next operating day;
+      one that cannot (an order too large for any vehicle) does not. A second
+      attempt is a 409, not a silent success.
     tags: [planning]
     parameters:
       - $ref: "../components/parameters/common.yaml#/IdempotencyKey"

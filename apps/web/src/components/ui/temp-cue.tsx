@@ -1,16 +1,22 @@
+import type { Temp } from "@/lib/temperature";
+import { TEMP_LABEL } from "@/lib/temperature";
+
 /**
- * "Ambient" or "Chilled", as an icon and a word.
+ * "Ambient", "Chilled" or "Frozen", as an icon and a word.
  *
  * The temperature decides which vehicle can carry a product, so it is never
- * left to colour: the snowflake and the word say it, and the tint only echoes
- * it. Plain markup, usable from server and client components.
+ * left to colour: the icon and the word say it, and the tint only echoes it.
+ * Plain markup, usable from server and client components.
  */
-export function TempCue({ temp, className = "" }: { temp: "ambient" | "chilled"; className?: string }) {
-  const chilled = temp === "chilled";
+export function TempCue({ temp, className = "" }: { temp: Temp; className?: string }) {
+  const cold = temp !== "ambient";
   return (
-    <span className={`inline-flex items-center gap-1 text-xs font-semibold ${chilled ? "text-info-ink" : "text-muted"} ${className}`}>
+    <span className={`inline-flex items-center gap-1 text-xs font-semibold ${cold ? "text-info-ink" : "text-muted"} ${className}`}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="size-3.5" aria-hidden>
-        {chilled ? (
+        {temp === "frozen" ? (
+          // A snowflake with its arms tipped, to read as colder than chilled.
+          <path d="M12 3v18M4.2 7.5l15.6 9M19.8 7.5l-15.6 9M9.5 4.5 12 6.5l2.5-2M9.5 19.5 12 17.5l2.5 2" />
+        ) : cold ? (
           <path d="M12 3v18M4.2 7.5l15.6 9M19.8 7.5l-15.6 9" />
         ) : (
           <>
@@ -19,7 +25,7 @@ export function TempCue({ temp, className = "" }: { temp: "ambient" | "chilled";
           </>
         )}
       </svg>
-      {chilled ? "Chilled" : "Ambient"}
+      {TEMP_LABEL[temp]}
     </span>
   );
 }

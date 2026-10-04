@@ -98,6 +98,4 @@ export function isBrand(value: unknown): value is Order["brand"] {
   return value === "Fresh" || value === "Style" || value === "Tech";
 }
 
-export function isTemp(value: unknown): value is Order["tempRequirement"] {
-  return value === "chilled" || value === "ambient";
-}
+export { isTemp } from "@/lib/temperature";

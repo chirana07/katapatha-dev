@@ -29,11 +29,13 @@ function product(overrides: Partial<Product> & Pick<Product, "id" | "sku" | "nam
 const rice = product({ id: "p1", sku: "FA001", name: "White Rice 5 kg", tempRequirement: "ambient", kgPerUnit: 5.1, m3PerUnit: 0.007 });
 const flour = product({ id: "p2", sku: "FA003", name: "Wheat Flour 1 kg", tempRequirement: "ambient", kgPerUnit: 12.5, m3PerUnit: 0.02, unitLabel: "carton" });
 const milk = product({ id: "p3", sku: "FC001", name: "Fresh Milk 1 L", tempRequirement: "chilled", kgPerUnit: 12.6, m3PerUnit: 0.02, unitLabel: "crate" });
+const peas = product({ id: "p4", sku: "FF002", name: "Frozen Peas 1 kg", tempRequirement: "frozen", kgPerUnit: 10.6, m3PerUnit: 0.016, unitLabel: "carton" });
 const catalogue = [rice, flour, milk];
 
 const limits = {
   ambient: { m3PerUnit: 0.1, kgPerUnit: 10, maxUnitsPerOrder: 300 },
   chilled: { m3PerUnit: 0.09, kgPerUnit: 8, maxUnitsPerOrder: 0 },
+  frozen: { m3PerUnit: 0.09, kgPerUnit: 8, maxUnitsPerOrder: 0 },
 };
 
 describe("quantities", () => {
@@ -61,9 +63,10 @@ describe("filtering", () => {
   });
 
   it("counts each temperature under the current search", () => {
-    expect(countByTemp(catalogue, "")).toEqual({ all: 3, ambient: 2, chilled: 1 });
-    expect(countByTemp(catalogue, "f")).toEqual({ all: 3, ambient: 2, chilled: 1 });
-    expect(countByTemp(catalogue, "milk")).toEqual({ all: 1, ambient: 0, chilled: 1 });
+    expect(countByTemp(catalogue, "")).toEqual({ all: 3, ambient: 2, chilled: 1, frozen: 0 });
+    expect(countByTemp(catalogue, "f")).toEqual({ all: 3, ambient: 2, chilled: 1, frozen: 0 });
+    expect(countByTemp(catalogue, "milk")).toEqual({ all: 1, ambient: 0, chilled: 1, frozen: 0 });
+    expect(countByTemp([...catalogue, peas], "")).toEqual({ all: 4, ambient: 2, chilled: 1, frozen: 1 });
   });
 });
 
@@ -79,6 +82,13 @@ describe("planBasket", () => {
     expect(plan.totalUnits).toBe(34);
     expect(plan.weightKg).toBeCloseTo(102 + 50 + 126);
     expect(plan.lines.map((line) => line.product.id)).toEqual(["p1", "p2", "p3"]);
+  });
+
+  it("places frozen goods as their own order, after chilled", () => {
+    const plan = planBasket([...catalogue, peas], { p1: 2, p3: 1, p4: 3 }, limits);
+    expect(plan.groups.map((group) => group.temp)).toEqual(["ambient", "chilled", "frozen"]);
+    expect(plan.groups[2]!.units).toBe(3);
+    expect(plan.groups[2]!.blocked).toBe(true);
   });
 
   it("lists only the temperatures that have something in them", () => {

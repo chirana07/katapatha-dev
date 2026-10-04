@@ -104,6 +104,7 @@ paths:
   /auth/session:                              { $ref: "./paths/auth.yaml#/session" }
   /auth/me:                                   { $ref: "./paths/auth.yaml#/me" }
   /reference/outlets:                         { $ref: "./paths/reference.yaml#/outlets" }
+  /reference/outlets/{outletId}/location:     { $ref: "./paths/reference.yaml#/outletLocation" }
   /reference/vehicles:                        { $ref: "./paths/reference.yaml#/vehicles" }
   /reference/vocabularies:                    { $ref: "./paths/reference.yaml#/vocabularies" }
   /reference/calendar/next-operating-day:     { $ref: "./paths/reference.yaml#/nextOperatingDay" }

@@ -45,6 +45,10 @@ export const PRODUCT_CATALOGUE: readonly CatalogueEntry[] = [
   { sku: "FC005", name: "Whole Chicken (10 kg crate)", brand: "Fresh", tempRequirement: "chilled", unitLabel: "crate", kgPerUnit: 10.8, m3PerUnit: 0.022 },
   { sku: "FC006", name: "Fresh Tuna (10 kg box)", brand: "Fresh", tempRequirement: "chilled", unitLabel: "box", kgPerUnit: 11.5, m3PerUnit: 0.02 },
   { sku: "FC007", name: "Mixed Vegetables (10 kg crate)", brand: "Fresh", tempRequirement: "chilled", unitLabel: "crate", kgPerUnit: 10.5, m3PerUnit: 0.03 },
+  // --- Fresh, frozen (needs a reefer, like chilled) ----------------------------
+  { sku: "FF001", name: "Vanilla Ice Cream 2 L (6 per carton)", brand: "Fresh", tempRequirement: "frozen", unitLabel: "carton", kgPerUnit: 7.4, m3PerUnit: 0.019 },
+  { sku: "FF002", name: "Frozen Peas 1 kg (10 per carton)", brand: "Fresh", tempRequirement: "frozen", unitLabel: "carton", kgPerUnit: 10.6, m3PerUnit: 0.016 },
+  { sku: "FF003", name: "Frozen Fish Fillets (10 kg box)", brand: "Fresh", tempRequirement: "frozen", unitLabel: "box", kgPerUnit: 10.9, m3PerUnit: 0.015 },
   // --- Style, ambient --------------------------------------------------------
   { sku: "ST001", name: "Cotton T-Shirt (10 per pack)", brand: "Style", tempRequirement: "ambient", unitLabel: "pack", kgPerUnit: 2.4, m3PerUnit: 0.02 },
   { sku: "ST002", name: "Denim Jeans (5 per pack)", brand: "Style", tempRequirement: "ambient", unitLabel: "pack", kgPerUnit: 3.6, m3PerUnit: 0.025 },

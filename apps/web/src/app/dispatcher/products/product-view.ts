@@ -1,4 +1,5 @@
 import type { components } from "@katapatha/contracts/types";
+import { isTemp, tempLabel } from "@/lib/temperature";
 import { BRANDS } from "./product-form";
 
 export type Product = components["schemas"]["Product"];
@@ -28,7 +29,7 @@ export function parseFilters(query: Query): ProductFilters {
   const brand = first(query.brand);
   const status = first(query.status);
   return {
-    temp: temp === "ambient" || temp === "chilled" ? temp : null,
+    temp: isTemp(temp) ? temp : null,
     brand: brand === "all-brands" ? "all-brands" : (BRANDS as readonly string[]).includes(brand) ? (brand as Brand) : "any",
     status: status === "active" || status === "inactive" ? status : "all",
     q: first(query.q).trim().slice(0, 80),
@@ -39,9 +40,7 @@ export function brandLabel(brand: Product["brand"]): string {
   return brand ?? "All brands";
 }
 
-export function tempLabel(temp: Temp): string {
-  return temp === "chilled" ? "Chilled" : "Ambient";
-}
+export { tempLabel };
 
 /**
  * The catalogue narrowed by the filters. `ignore` lets the tab counts apply
@@ -66,6 +65,7 @@ export function tempCounts(products: readonly Product[], filters: ProductFilters
     all: rest.length,
     ambient: rest.filter((product) => product.tempRequirement === "ambient").length,
     chilled: rest.filter((product) => product.tempRequirement === "chilled").length,
+    frozen: rest.filter((product) => product.tempRequirement === "frozen").length,
   };
 }
 

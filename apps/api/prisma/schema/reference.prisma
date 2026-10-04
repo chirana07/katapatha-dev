@@ -7,6 +7,9 @@
 model Depot {
   code      String     @id
   name      String
+  /// Where the vehicles leave from and return to. Null until seeded.
+  lat       Float?
+  lng       Float?
   districts District[]
   outlets   Outlet[]
   vehicles  Vehicle[]
@@ -45,6 +48,15 @@ model Outlet {
   windowOpen        String
   windowClose       String
   displayName       String?
+  /// Where the outlet is. Seeded near the district centre until a CSV or a
+  /// dispatcher supplies a real position; `geoSource` says which it is.
+  lat               Float?
+  lng               Float?
+  geoSource         GeoSource?
+  /// True once the position has been moved onto the nearest road.
+  geoSnapped        Boolean           @default(false)
+  geoUpdatedAt      DateTime?
+  geoUpdatedByUserId String?
 
   orders       Order[]
   tripStops    TripStop[]
@@ -217,4 +229,21 @@ model HistoricalLeg {
 
   @@index([date, vehicleId])
   @@index([routeId, seq])
+}
+
+/// Road distance and time between two points, cached so a plan is repeatable:
+/// the same coordinates give the same figures until the road data is refreshed.
+/// Keyed by the coordinate pair (5 decimal places, about a metre) rather than by
+/// outlet, so moving one pin invalidates only that pin's row and column.
+model RoadLeg {
+  fromKey     String
+  toKey       String
+  durationS   Float
+  distanceM   Float
+  source      RoadSource
+  /// The road dataset the figure came from, or "estimate-v1".
+  dataVersion String
+  fetchedAt   DateTime   @default(now())
+
+  @@id([fromKey, toKey])
 }

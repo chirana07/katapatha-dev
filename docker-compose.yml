@@ -32,6 +32,9 @@ services:
       NODE_ENV: production
       PORT: 3001
       ALLOW_DEMO_ACCESS: ${ALLOW_DEMO_ACCESS:-0}
+      # Empty means no road network: plans use straight-line estimates and say so.
+      # With the routing profile up, set OSRM_URL=http://osrm:5000.
+      OSRM_URL: ${OSRM_URL:-}
     restart: unless-stopped
 
   web:
@@ -52,6 +55,20 @@ services:
       - "8080:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    restart: unless-stopped
+
+  # The OpenStreetMap road network for Sri Lanka. Opt in with
+  # `--profile routing` so a plain `docker compose up` is unchanged; build the
+  # data first with `pnpm osrm:prepare` (scripts/osrm-prepare.sh).
+  osrm:
+    profiles: ["routing"]
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    command: osrm-routed --algorithm mld --max-table-size 1000 /data/sri-lanka-latest.osrm
+    ports:
+      # Loopback only, like the database.
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - ./.osrm:/data:ro
     restart: unless-stopped
 
 volumes:

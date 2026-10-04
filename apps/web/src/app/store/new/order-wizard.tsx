@@ -27,6 +27,7 @@ import {
   type TempChoice,
 } from "./basket";
 import { readSaved, subscribeSaved, writeSaved } from "./basket-storage";
+import { tempLabel } from "@/lib/temperature";
 import { planBasket, type PlanGroup } from "./order-plan";
 
 type OrderLimits = components["schemas"]["OrderLimits"];
@@ -37,6 +38,7 @@ const STEPS = ["Choose products", "Review order", "Confirmed"];
 const TEMPS: { id: Temp; label: string; hint: string }[] = [
   { id: "ambient", label: "Ambient", hint: "Shelf-stable goods, carried at normal temperature." },
   { id: "chilled", label: "Chilled", hint: "Cold-chain goods, carried on a refrigerated vehicle." },
+  { id: "frozen", label: "Frozen", hint: "Deep-frozen goods, carried on a refrigerated vehicle." },
 ];
 
 /**
@@ -187,7 +189,7 @@ export function OrderWizard({
             ) : null}
 
             <p className="mt-3 rounded-control bg-info-surface p-3 text-sm text-info-ink">
-              Ambient and chilled goods are each placed as their own order.
+              Ambient, chilled and frozen goods are each placed as their own order.
             </p>
           </section>
 
@@ -282,7 +284,7 @@ function ProductPicker({
     <section aria-labelledby="products-heading" className="rounded-card border border-line bg-surface p-4 sm:p-5">
       <h2 id="products-heading" className="text-lg font-bold text-ink">What do you need?</h2>
       <p className="mt-1 text-sm text-muted">
-        Choose products and how many of each. Ambient and chilled goods travel separately, so they are placed as separate orders.
+        Choose products and how many of each. Ambient, chilled and frozen goods travel separately, so they are placed as separate orders.
       </p>
 
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -308,6 +310,7 @@ function ProductPicker({
               { id: "all", label: "All" },
               { id: "ambient", label: "Ambient" },
               { id: "chilled", label: "Chilled" },
+              { id: "frozen", label: "Frozen" },
             ] as const
           ).map((chip) => (
             <button
@@ -430,7 +433,7 @@ function ProductRow({
 }
 
 function ReviewSection({ group }: { group: PlanGroup }) {
-  const label = group.temp === "chilled" ? "Chilled" : "Ambient";
+  const label = tempLabel(group.temp);
   return (
     <section aria-labelledby={`review-${group.temp}`} className="overflow-hidden rounded-control border border-line">
       <div className="flex flex-wrap items-center justify-between gap-2 bg-raised px-3 py-2.5">

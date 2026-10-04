@@ -129,10 +129,11 @@ export function ProductDialog({ product, returnTo }: { product: Product | null; 
               ))}
             </select>
           </Field>
-          <Field label="Temperature" htmlFor={id("tempRequirement")} error={errors.tempRequirement} hint="Chilled goods travel on a refrigerated vehicle.">
+          <Field label="Temperature" htmlFor={id("tempRequirement")} error={errors.tempRequirement} hint="Chilled and frozen goods travel on a refrigerated vehicle.">
             <select {...aria("tempRequirement", true)} value={values.tempRequirement} onChange={set("tempRequirement")} className={`${INPUT} ${border("tempRequirement")}`}>
               <option value="ambient">Ambient</option>
               <option value="chilled">Chilled</option>
+              <option value="frozen">Frozen</option>
             </select>
           </Field>
           <Field label="Unit label" htmlFor={id("unitLabel")} error={errors.unitLabel} hint="What one unit is called: bag, carton, crate.">

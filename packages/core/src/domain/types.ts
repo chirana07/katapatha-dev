@@ -5,16 +5,22 @@
  * competition CSVs. Two distinctions are easy to conflate and are kept
  * deliberately separate:
  *
- *   - an ORDER is `chilled` or `ambient`   (`temp_requirement`)
- *   - a VEHICLE is `reefer` or `ambient`   (`temp`)
+ *   - an ORDER is `chilled`, `frozen` or `ambient`   (`temp_requirement`)
+ *   - a VEHICLE is `reefer` or `ambient`             (`temp`)
  *
- * A reefer may carry either kind of order; an ambient vehicle may not carry
- * chilled. Mixing the two vocabularies is the single most common way to get
- * rule 2 wrong.
+ * A reefer may carry any kind of order; an ambient vehicle may carry only
+ * ambient. Mixing the two vocabularies is the single most common way to get
+ * rule 2 wrong. The competition data has no frozen orders; it is ours, and it
+ * obeys rule 2 exactly as chilled does.
  */
 
 export type Brand = "Fresh" | "Style" | "Tech";
-export type TempRequirement = "chilled" | "ambient";
+export type TempRequirement = "chilled" | "frozen" | "ambient";
+
+/** Rule 2: chilled and frozen goods need a refrigerated vehicle; ambient goods ride anything. */
+export function needsReefer(temp: TempRequirement): boolean {
+  return temp !== "ambient";
+}
 export type VehicleTemp = "reefer" | "ambient";
 export type VehicleType = "truck" | "van";
 export type DockType = "rear_dock" | "street" | "mall_bay";
@@ -121,6 +127,16 @@ export const TOLERANCE = 1e-6;
 
 export const PREDAWN_START: ClockTime = "03:30";
 export const PREDAWN_END: ClockTime = "08:00";
+
+/**
+ * Fresh deliveries must arrive before stores open at 08:00, whatever an
+ * individual outlet's own window says. It is a rule about arrival, where the
+ * pre-dawn wave above is a rule about when a vehicle may leave.
+ */
+export const FRESH_DEADLINE: ClockTime = "08:00";
+
+/** Minutes to unload at the depot and reload before a vehicle's second trip leaves. */
+export const RELOAD_MIN = 30;
 export const DAYTIME_START: ClockTime = "08:30";
 
 /** Orders placed after this roll to the following run. */

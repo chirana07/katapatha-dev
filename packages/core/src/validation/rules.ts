@@ -16,10 +16,13 @@
  * taking our word for it.
  */
 
-import { computeStopSchedule, effectiveWindow } from "../domain/schedule";
+import { computeRoadSchedule, matrixCovers, roadKmOf, type RoadSchedule } from "../domain/roadSchedule";
+import { computeStopSchedule, effectiveWindow, windowIsEmpty, type ScheduledStop } from "../domain/schedule";
+import { toMin } from "../domain/time";
 import { tripFuelLitres, tripMinutes } from "../domain/tripTime";
 import {
   MAX_TRIPS_PER_VEHICLE,
+  needsReefer,
   PREDAWN_START,
   TOLERANCE,
   waveForBrand,
@@ -70,6 +73,8 @@ interface ResolvedTrip {
   hasChilled: boolean;
   vanOnlyOutletIds: string[];
   unknownOutletIds: string[];
+  /** The trip walked over the road network; set only when road travel times were supplied. */
+  road?: RoadSchedule;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +171,7 @@ export function validatePlan(
         r.docks.push(outlet.dockType);
         r.totalVolumeM3 += order.volumeM3;
         r.totalWeightKg += order.weightKg;
-        if (order.tempRequirement === "chilled") r.hasChilled = true;
+        if (needsReefer(order.tempRequirement)) r.hasChilled = true;
 
         const list = placements.get(ref) ?? [];
         list.push({ vehicleId: trip.vehicleId, tripNo: trip.tripNo });
@@ -213,12 +218,13 @@ export function validatePlan(
       );
     }
 
-    // Rule 2 — chilled needs a reefer.
+    // Rule 2 — chilled and frozen need a reefer. (The code keeps its
+    // organiser-facing name; `hasChilled` means "needs a reefer".)
     if (r.hasChilled && vehicle.temp !== "reefer") {
       push(
-        v("CHILLED_ON_NON_REEFER", `${trip.vehicleId} is not refrigerated and cannot carry the chilled orders on trip ${trip.tripNo}.`, {
+        v("CHILLED_ON_NON_REEFER", `${trip.vehicleId} is not refrigerated and cannot carry the chilled or frozen orders on trip ${trip.tripNo}.`, {
           ...where,
-          orderRefs: r.orderRefs.filter((ref) => orders.get(ref)?.tempRequirement === "chilled"),
+          orderRefs: r.orderRefs.filter((ref) => needsReefer(orders.get(ref)?.tempRequirement ?? "ambient")),
         }),
       );
     }
@@ -271,32 +277,56 @@ export function validatePlan(
       );
     }
 
+    // An outlet whose own window and its mall's never overlap cannot be served
+    // at any time of day, so no schedule can be right for it.
+    const unservable = new Set<string>();
+    for (const stop of trip.stops) {
+      const outlet = reference.outlets.get(stop.outletId);
+      if (!outlet || stop.orderRefs.length === 0 || !windowIsEmpty(outlet) || unservable.has(outlet.outletId)) continue;
+      unservable.add(outlet.outletId);
+      push(
+        v("NO_COMMON_WINDOW", `${outlet.outletId} asks for ${outlet.windowOpen}-${outlet.windowClose} but its mall only allows ${outlet.mallWindowOpen}-${outlet.mallWindowClose}. The two never overlap, so it cannot be delivered to.`, {
+          ...where,
+          outletIds: [outlet.outletId],
+          orderRefs: trip.stops.filter((s) => s.outletId === outlet.outletId).flatMap((s) => s.orderRefs),
+        }),
+      );
+    }
+
     // Delivery windows. Skipped when the trip has no departure time, because
     // without one there are no arrivals to check.
     if (trip.departAt && r.brands.size === 1 && r.districts.size === 1) {
       const brand = [...r.brands][0];
       const district = [...r.districts][0];
       const travel = reference.districts.get(district);
-      if (travel) {
-        const scheduleStops = trip.stops
-          .filter((s) => reference.outlets.has(s.outletId) && s.orderRefs.length > 0)
-          .map((s) => ({
-            outletId: s.outletId,
-            docks: s.orderRefs.map(() => reference.outlets.get(s.outletId)!.dockType),
-          }));
+      const scheduleStops = trip.stops
+        .filter((s) => reference.outlets.has(s.outletId) && s.orderRefs.length > 0)
+        .map((s) => ({
+          outletId: s.outletId,
+          docks: s.orderRefs.map(() => reference.outlets.get(s.outletId)!.dockType),
+        }));
 
-        const schedule = computeStopSchedule(
-          trip.departAt,
-          travel,
-          brand,
-          scheduleStops,
-          reference.outlets,
-          reference.allowance,
-        );
+      // On the road when the road is known, else on the organisers' district
+      // table. Either way the stops are taken in the order they are given.
+      const road =
+        reference.travel && scheduleStops.length > 0 && matrixCovers(reference.travel, vehicle.depot, scheduleStops.map((s) => s.outletId))
+          ? computeRoadSchedule(trip.departAt, vehicle.depot, brand, scheduleStops, reference.outlets, reference.travel, reference.allowance, {
+              freshDeadline: config.freshDeadline,
+            })
+          : null;
+      r.road = road ?? undefined;
 
-        for (const s of schedule) {
-          if (s.lateByMin <= 0) continue;
-          const outlet = reference.outlets.get(s.outletId)!;
+      const schedule: Array<ScheduledStop & { freshLateByMin?: number }> | null = road
+        ? road.stops
+        : travel
+          ? computeStopSchedule(trip.departAt, travel, brand, scheduleStops, reference.outlets, reference.allowance)
+          : null;
+
+      for (const s of schedule ?? []) {
+        // Already reported once as unservable; a late arrival is beside the point.
+        if (unservable.has(s.outletId)) continue;
+        const outlet = reference.outlets.get(s.outletId)!;
+        if (s.lateByMin > 0) {
           const win = effectiveWindow(outlet);
           const isFresh = outlet.brand === "Fresh";
           const code: RuleCode = win.isMallWindow
@@ -314,6 +344,16 @@ export function validatePlan(
               outletIds: [s.outletId],
               severity,
               metric: { name: "late", have: s.lateByMin, limit: 0, unit: "min" },
+            }),
+          );
+        } else if ((s.freshLateByMin ?? 0) > 0) {
+          // The window would have allowed it; the rule that Fresh is in before
+          // stores open does not.
+          push(
+            v("FRESH_AFTER_0800", `${s.outletId} is reached at ${s.arrival}, ${s.freshLateByMin} min after Fresh deliveries must be in (stores open at ${config.freshDeadline}).`, {
+              ...where,
+              outletIds: [s.outletId],
+              metric: { name: "late", have: s.freshLateByMin!, limit: 0, unit: "min" },
             }),
           );
         }
@@ -345,6 +385,31 @@ export function validatePlan(
       );
     }
 
+    // One vehicle cannot be on two roads at once: the second trip leaves only
+    // after the first is home and the vehicle is unloaded and reloaded.
+    const timed = trips
+      .filter((t): t is ResolvedTrip & { road: RoadSchedule } => t.road !== undefined && t.trip.departAt !== undefined)
+      .sort((a, b) => toMin(a.trip.departAt!) - toMin(b.trip.departAt!) || a.trip.tripNo - b.trip.tripNo);
+    for (let i = 1; i < timed.length; i += 1) {
+      const before = timed[i - 1]!;
+      const after = timed[i]!;
+      const gap = toMin(after.trip.departAt!) - before.road.returnMin;
+      if (gap >= config.reloadMin) continue;
+      push(
+        v(
+          "TRIPS_OVERLAP",
+          gap < 0
+            ? `${vehicleId} leaves on trip ${after.trip.tripNo} at ${after.trip.departAt} but trip ${before.trip.tripNo} is not back until ${before.road.returnAt}.`
+            : `${vehicleId} leaves on trip ${after.trip.tripNo} at ${after.trip.departAt}, only ${gap} min after trip ${before.trip.tripNo} is back at ${before.road.returnAt}; it needs ${config.reloadMin} min to unload and reload.`,
+          {
+            vehicleId,
+            tripNo: after.trip.tripNo,
+            metric: { name: "turnaround", have: gap, limit: config.reloadMin, unit: "min" },
+          },
+        ),
+      );
+    }
+
     // Wave budgets. Fresh trips share the pre-dawn budget; Style and Tech
     // share the daytime one. They are separate windows, which is exactly why
     // a vehicle can run one of each but not three of anything.
@@ -363,7 +428,13 @@ export function validatePlan(
       if (waveForBrand(brand) === "PREDAWN") predawnUsed += minutes;
       else daytimeUsed += minutes;
 
-      fuelL += tripFuelLitres(travel, r.orderRefs.length, vehicle.kmPerL);
+      // Litres are burned on the road, so the road's distance is used when it is
+      // known: the real legs, the way home included.
+      const servedOutletIds = r.trip.stops.filter((s) => s.orderRefs.length > 0).map((s) => s.outletId);
+      fuelL +=
+        reference.travel && servedOutletIds.length > 0 && matrixCovers(reference.travel, vehicle.depot, servedOutletIds)
+          ? roadKmOf(vehicle.depot, servedOutletIds, reference.travel) / vehicle.kmPerL
+          : tripFuelLitres(travel, r.orderRefs.length, vehicle.kmPerL);
     }
 
     if (exceeds(predawnUsed, config.predawnBudget)) {
@@ -516,6 +587,9 @@ export function rulesTouchedByMove(): RuleCode[] {
     "WINDOW_CLOSE_MISSED",
     "MALL_WINDOW_MISSED",
     "NON_FRESH_WINDOW_MISSED",
+    "FRESH_AFTER_0800",
+    "TRIPS_OVERLAP",
+    "NO_COMMON_WINDOW",
     "ORDER_SPLIT_ACROSS_TRIPS",
     "DUPLICATE_ASSIGNMENT",
   ];

@@ -2,17 +2,17 @@ import type { components } from "@katapatha/contracts/types";
 import { DataTable, RowCard, Td, Th, Tr } from "@/components/ui/data-table";
 import { BrandPill } from "@/components/ui/status-pill";
 import { EmptyState } from "@/components/ui/states";
+import { TEMPS } from "@/lib/temperature";
 import { sumVolume, sumWeight } from "../order-status";
 
 type Order = components["schemas"]["Order"];
 
 const BRANDS = ["Fresh", "Style", "Tech"] as const;
-const TEMPS = ["chilled", "ambient"] as const;
 
 /**
  * What is in the queue, grouped the way the allocator has to think about it:
- * brand (one brand per trip) and temperature (chilled needs a refrigerated
- * vehicle). It is the answer to "is it time to close the queue?" and uses only
+ * brand (one brand per trip) and temperature (chilled and frozen need a
+ * refrigerated vehicle). It is the answer to "is it time to close the queue?" and uses only
  * the day's orders, so it works before any plan exists.
  */
 export function QueueBreakdown({ orders }: { orders: Order[] }) {

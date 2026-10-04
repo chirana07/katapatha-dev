@@ -143,7 +143,7 @@ export interface BasketOrder {
 }
 
 /** Fixed, so a mixed basket always comes back chilled first and replays the same way. */
-const TEMPERATURE_ORDER: readonly TempRequirement[] = ["chilled", "ambient"];
+const TEMPERATURE_ORDER: readonly TempRequirement[] = ["chilled", "frozen", "ambient"];
 
 /**
  * A basket as the orders it becomes: one per temperature, because an order has

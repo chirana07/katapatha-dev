@@ -46,6 +46,8 @@ vi.mock("../lib/db.js", () => ({
     problem: { updateMany: vi.fn() },
     outlet: { findUnique: vi.fn() },
     serviceAllowance: { findUnique: vi.fn() },
+    planningDay: { upsert: vi.fn() },
+    orderLine: { findMany: vi.fn() },
     district: { findUnique: vi.fn() },
     stopReassignment: { create: vi.fn() },
     chillerReading: { findFirst: vi.fn() },
@@ -887,6 +889,14 @@ describe("exceptions routes", () => {
           clientRequestId: "followup:SF1",
         });
         expect(vi.mocked(prisma.order.create).mock.calls[0]![0].data.requestedDate).toEqual(new Date("2026-09-30T00:00:00.000Z"));
+        // The new day has to exist for the order to be closable and plannable.
+        expect(prisma.planningDay.upsert).toHaveBeenCalledWith({
+          where: { date_depotCode: { date: new Date("2026-09-30T00:00:00.000Z"), depotCode: orderRow.depotCode } },
+          create: { date: new Date("2026-09-30T00:00:00.000Z"), depotCode: orderRow.depotCode },
+          update: {},
+        });
+        // A share of an order is not the whole of its contents, so no lines are copied.
+        expect(prisma.orderLine.findMany).not.toHaveBeenCalled();
         const body = response.json();
         expect(body.consequences.map((c: { audience: string }) => c.audience)).toEqual(["loader", "store", "order", "record"]);
         expect(body.consequences[2].detail).toContain("ORD-004391");
