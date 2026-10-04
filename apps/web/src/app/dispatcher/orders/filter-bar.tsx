@@ -56,8 +56,9 @@ export function FilterBar({
       <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
         Load
         <select name="temp" defaultValue={temp ?? ""} className={`${FIELD} font-normal`}>
-          <option value="">Chilled and ambient</option>
+          <option value="">All loads</option>
           <option value="chilled">Chilled</option>
+          <option value="frozen">Frozen</option>
           <option value="ambient">Ambient</option>
         </select>
       </label>

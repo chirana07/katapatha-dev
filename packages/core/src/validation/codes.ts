@@ -45,6 +45,11 @@ export const RULE_CODES = [
   "MALL_WINDOW_MISSED",
   "NON_FRESH_WINDOW_MISSED",
 
+  // --- The road schedule: only checked when road travel times are supplied ---
+  "FRESH_AFTER_0800",
+  "TRIPS_OVERLAP",
+  "NO_COMMON_WINDOW",
+
   // --- Our policy -----------------------------------------------------------
   "ORDER_EXCEEDS_FLEET_CAPACITY",
   "DEFERRED_WITHOUT_REASON",
@@ -112,6 +117,9 @@ export const RULE_LABELS: Record<RuleCode, string> = {
   WINDOW_CLOSE_MISSED: "Arrives after the delivery window closes",
   MALL_WINDOW_MISSED: "Outside the mall's access window",
   NON_FRESH_WINDOW_MISSED: "Arrives after the requested window",
+  FRESH_AFTER_0800: "Fresh delivery arrives after stores open",
+  TRIPS_OVERLAP: "Second trip leaves before the first is back and reloaded",
+  NO_COMMON_WINDOW: "Outlet's own and mall windows never overlap",
   ORDER_EXCEEDS_FLEET_CAPACITY: "No vehicle in the fleet can carry this order",
   DEFERRED_WITHOUT_REASON: "Deferral has no reason recorded",
   HIGH_PRIORITY_DEFERRED: "Outlet would be skipped twice running",

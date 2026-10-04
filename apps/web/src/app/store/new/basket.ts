@@ -1,7 +1,8 @@
 import type { components } from "@katapatha/contracts/types";
 
 export type Product = components["schemas"]["Product"];
-export type Temp = Product["tempRequirement"];
+export type { Temp } from "@/lib/temperature";
+import type { Temp } from "@/lib/temperature";
 /** What the manager has chosen: quantity by product id. Absent means zero. */
 export type Basket = Record<string, number>;
 export type TempChoice = "all" | Temp;
@@ -42,6 +43,7 @@ export function countByTemp(products: readonly Product[], query: string): Record
     all: matching.length,
     ambient: matching.filter((product) => product.tempRequirement === "ambient").length,
     chilled: matching.filter((product) => product.tempRequirement === "chilled").length,
+    frozen: matching.filter((product) => product.tempRequirement === "frozen").length,
   };
 }
 

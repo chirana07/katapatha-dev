@@ -24,7 +24,50 @@ outlets:
                 windowClose: "11:00"
                 mallWindowOpen: null
                 mallWindowClose: null
+                lat: 6.94131
+                lng: 79.87615
+                geoSource: SYNTHETIC
+                geoSnapped: false
       "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+
+outletLocation:
+  parameters:
+    - name: outletId
+      in: path
+      required: true
+      schema: { type: string }
+  patch:
+    operationId: setOutletLocation
+    summary: Correct where an outlet is
+    description: >
+      Dispatcher only, for an outlet at their own depot. The position must be in
+      Sri Lanka and is snapped to the nearest road unless `snap` is false. It is
+      recorded as the dispatcher's, so a re-seed never overwrites it. Plans
+      already built keep their routes; re-run the allocator to use the new
+      position.
+    tags: [reference]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/reference.yaml#/OutletLocationRequest" }
+          example: { lat: 6.9302, lng: 79.8605, snap: true }
+    responses:
+      "200":
+        description: The outlet's new position.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/reference.yaml#/OutletLocation" }
+            example:
+              id: "OUT074"
+              lat: 6.9302
+              lng: 79.8605
+              geoSource: DISPATCHER
+              geoSnapped: true
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
 
 vehicles:
   get:

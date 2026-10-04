@@ -79,6 +79,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/reference/outlets/{outletId}/location": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                outletId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Correct where an outlet is
+         * @description Dispatcher only, for an outlet at their own depot. The position must be in Sri Lanka and is snapped to the nearest road unless `snap` is false. It is recorded as the dispatcher's, so a re-seed never overwrites it. Plans already built keep their routes; re-run the allocator to use the new position.
+         */
+        patch: operations["setOutletLocation"];
+        trace?: never;
+    };
     "/reference/vehicles": {
         parameters: {
             query?: never;
@@ -170,7 +192,7 @@ export interface paths {
         };
         /**
          * How big one order can be for the signed-in store
-         * @description Per temperature: the outlet's unit-size estimate and the most units one order can hold on the roomiest vehicle allowed to carry it (reefers for chilled, vans for a van-only outlet). The whole depot fleet counts, workshop or not. Store manager only.
+         * @description Per temperature: the outlet's unit-size estimate and the most units one order can hold on the roomiest vehicle allowed to carry it (reefers for chilled and frozen, vans for a van-only outlet). The whole depot fleet counts, workshop or not. Store manager only.
          */
         get: operations["getOrderLimits"];
         put?: never;
@@ -326,7 +348,7 @@ export interface paths {
         put?: never;
         /**
          * Close the order queue for the day
-         * @description OPEN to CLOSED, writing a queue snapshot. Replaying returns 200 with the current state rather than an error — closing twice is not a mistake worth blocking a dispatcher for.
+         * @description OPEN to CLOSED, writing a queue snapshot. Closing also settles the allocator's fairness inputs for the orders stores placed: how many operating days since each outlet was last served, and whether it was passed over on the previous run. Replaying returns 200 with the current state rather than an error — closing twice is not a mistake worth blocking a dispatcher for.
          */
         post: operations["closeOrderQueue"];
         delete?: never;
@@ -386,7 +408,7 @@ export interface paths {
         put?: never;
         /**
          * Run the allocator and produce a draft plan
-         * @description Also the re-run path: an existing DRAFT for the day is replaced, so re-running is free and leaves no trail of half-plans. Requires the planning day to be CLOSED or PLANNING: an OPEN queue answers 409 `QUEUE_OPEN`, and a day whose plan is already published answers 409 `ALREADY_PUBLISHED` rather than putting a second draft beside the live plan. No planning day answers 404 `NO_PLANNING_DAY`.
+         * @description Also the re-run path: an existing DRAFT for the day is replaced, so re-running is free and leaves no trail of half-plans. Requires the planning day to be CLOSED or PLANNING: an OPEN queue answers 409 `QUEUE_OPEN`, and a day whose plan is already published answers 409 `ALREADY_PUBLISHED` rather than putting a second draft beside the live plan. A day the depot does not operate answers 409 `NON_OPERATING_DAY`. No planning day answers 404 `NO_PLANNING_DAY`.
          */
         post: operations["createPlan"];
         delete?: never;
@@ -494,7 +516,7 @@ export interface paths {
         put?: never;
         /**
          * Publish the plan
-         * @description An atomic one-time claim. Publishing commits fuel, notifies deferred outlets, and moves served orders to PLANNED. A second attempt is a 409, not a silent success.
+         * @description An atomic one-time claim. Publishing commits the plan's fuel to each vehicle's weekly ledger, notifies deferred outlets, and moves served orders to PLANNED. A deferral a later day can fix also queues a follow-up order, the whole order and its contents, for the next operating day; one that cannot (an order too large for any vehicle) does not. A second attempt is a 409, not a silent success.
          */
         post: operations["publishPlan"];
         delete?: never;
@@ -1277,9 +1299,42 @@ export interface components {
             windowClose: components["schemas"]["ClockTime"];
             mallWindowOpen?: components["schemas"]["ClockTime"] | null;
             mallWindowClose?: components["schemas"]["ClockTime"] | null;
+            /**
+             * @description Where the outlet is. Approximate until geoSource is CSV or DISPATCHER.
+             * @example 6.94131
+             */
+            lat?: number | null;
+            /** @example 79.87615 */
+            lng?: number | null;
+            /**
+             * @description SYNTHETIC is a stand-in near the district centre, CSV came from the supplied locations file, DISPATCHER was placed by a person.
+             * @enum {string|null}
+             */
+            geoSource?: "SYNTHETIC" | "CSV" | "DISPATCHER" | null;
+            /** @description True once the position is on the nearest road. */
+            geoSnapped?: boolean;
+        };
+        OutletLocationRequest: {
+            /** @example 6.9302 */
+            lat: number;
+            /** @example 79.8605 */
+            lng: number;
+            /** @description Move the pin onto the nearest road. Defaults to true. */
+            snap?: boolean;
+        };
+        OutletLocation: {
+            /** @example OUT074 */
+            id: string;
+            lat: number;
+            lng: number;
+            /** @enum {string} */
+            geoSource: "SYNTHETIC" | "CSV" | "DISPATCHER";
+            geoSnapped: boolean;
+            /** @description Present when the pin is unusually far from its district. */
+            warning?: string;
         };
         /**
-         * @description What a VEHICLE can do. A reefer may carry either; ambient may not carry chilled. Conflating this with TempRequirement is the single most common way to break feasibility rule 2.
+         * @description What a VEHICLE can do. A reefer may carry any order; ambient may carry only ambient. Conflating this with TempRequirement is the single most common way to break feasibility rule 2.
          * @enum {string}
          */
         VehicleTemp: "reefer" | "ambient";
@@ -1363,10 +1418,10 @@ export interface components {
          */
         DateOnly: string;
         /**
-         * @description What an ORDER needs. Deliberately distinct from VehicleTemp.
+         * @description What an ORDER needs. Deliberately distinct from VehicleTemp. Chilled and frozen goods both need a refrigerated vehicle; frozen is not in the competition data.
          * @enum {string}
          */
-        TempRequirement: "chilled" | "ambient";
+        TempRequirement: "chilled" | "frozen" | "ambient";
         /** @enum {string} */
         OrderStatus: "DRAFT" | "PLACED" | "QUEUED" | "PLANNED" | "LOADED" | "IN_TRANSIT" | "DELIVERED" | "PART_DELIVERED" | "FAILED" | "DEFERRED" | "CANCELLED";
         /** @description One product's quantity within an order, as it was when the order was placed. Read-only context for the loader, driver and store: load checks and deliveries still count the order's `units`, not products. Absent or empty on orders that were placed as units only, and on the competition's orders. */
@@ -1458,6 +1513,7 @@ export interface components {
         };
         OrderLimits: {
             chilled: components["schemas"]["OrderLimit"];
+            frozen: components["schemas"]["OrderLimit"];
             ambient: components["schemas"]["OrderLimit"];
         };
         ReceiptRequest: {
@@ -3433,33 +3489,6 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description The request was well formed but the operation is blocked by business rules. `details.violations` carries the reasons, so the client can render them beside the failed action instead of guessing. */
-        ValidationFailed: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                /**
-                 * @example {
-                 *       "error": {
-                 *         "code": "PLAN_HAS_BLOCKING_VIOLATIONS",
-                 *         "message": "Two trips exceed their volume capacity.",
-                 *         "details": {
-                 *           "violations": [
-                 *             {
-                 *               "code": "VOLUME_CAP_EXCEEDED",
-                 *               "severity": "error",
-                 *               "message": "Trip 2 on VEH043 exceeds its volume capacity by 0.8 m³.",
-                 *               "overridable": false
-                 *             }
-                 *           ]
-                 *         }
-                 *       }
-                 *     }
-                 */
-                "application/json": components["schemas"]["Error"];
-            };
-        };
         /** @description Authenticated but not permitted. Either the role is wrong, or the record is not owned by this depot, outlet or vehicle. */
         Forbidden: {
             headers: {
@@ -3488,6 +3517,33 @@ export interface components {
                  *       "error": {
                  *         "code": "NOT_FOUND",
                  *         "message": "No such order."
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description The request was well formed but the operation is blocked by business rules. `details.violations` carries the reasons, so the client can render them beside the failed action instead of guessing. */
+        ValidationFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "error": {
+                 *         "code": "PLAN_HAS_BLOCKING_VIOLATIONS",
+                 *         "message": "Two trips exceed their volume capacity.",
+                 *         "details": {
+                 *           "violations": [
+                 *             {
+                 *               "code": "VOLUME_CAP_EXCEEDED",
+                 *               "severity": "error",
+                 *               "message": "Trip 2 on VEH043 exceeds its volume capacity by 0.8 m³.",
+                 *               "overridable": false
+                 *             }
+                 *           ]
+                 *         }
                  *       }
                  *     }
                  */
@@ -3675,7 +3731,11 @@ export interface operations {
                      *         "windowOpen": "06:00",
                      *         "windowClose": "11:00",
                      *         "mallWindowOpen": null,
-                     *         "mallWindowClose": null
+                     *         "mallWindowClose": null,
+                     *         "lat": 6.94131,
+                     *         "lng": 79.87615,
+                     *         "geoSource": "SYNTHETIC",
+                     *         "geoSnapped": false
                      *       }
                      *     ]
                      */
@@ -3683,6 +3743,52 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    setOutletLocation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                outletId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "lat": 6.9302,
+                 *       "lng": 79.8605,
+                 *       "snap": true
+                 *     }
+                 */
+                "application/json": components["schemas"]["OutletLocationRequest"];
+            };
+        };
+        responses: {
+            /** @description The outlet's new position. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "OUT074",
+                     *       "lat": 6.9302,
+                     *       "lng": 79.8605,
+                     *       "geoSource": "DISPATCHER",
+                     *       "geoSnapped": true
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OutletLocation"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     listVehicles: {
@@ -3973,6 +4079,11 @@ export interface operations {
                     /**
                      * @example {
                      *       "chilled": {
+                     *         "m3PerUnit": 0.09,
+                     *         "kgPerUnit": 8,
+                     *         "maxUnitsPerOrder": 333
+                     *       },
+                     *       "frozen": {
                      *         "m3PerUnit": 0.09,
                      *         "kgPerUnit": 8,
                      *         "maxUnitsPerOrder": 333

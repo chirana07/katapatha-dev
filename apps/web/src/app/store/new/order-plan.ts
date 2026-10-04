@@ -1,4 +1,5 @@
 import type { components } from "@katapatha/contracts/types";
+import { TEMPS } from "@/lib/temperature";
 import type { Basket, Product, Temp } from "./basket";
 
 type OrderLimits = components["schemas"]["OrderLimits"];
@@ -48,7 +49,7 @@ export function planBasket(products: readonly Product[], basket: Basket, limits:
     return quantity && quantity > 0 ? [{ product, quantity }] : [];
   });
 
-  const groups: PlanGroup[] = (["ambient", "chilled"] as const).flatMap((temp) => {
+  const groups: PlanGroup[] = TEMPS.flatMap((temp) => {
     const own = lines.filter((line) => line.product.tempRequirement === temp);
     if (own.length === 0) return [];
     const limit = limits?.[temp];

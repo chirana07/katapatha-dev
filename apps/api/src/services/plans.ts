@@ -2,6 +2,7 @@
 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/db";
+import { fuelPositions } from "./fuel";
 import { allocate } from "@katapatha/allocator/allocate";
 import type { AllocatorInput, AllocatorOutput, AllocatorVehicle } from "@katapatha/allocator/types";
 import { allowanceKey, type AllowanceTable } from "@katapatha/core/domain/tripTime";
@@ -131,7 +132,7 @@ export async function loadDayContext(
   });
   if (!planningDay) return null;
 
-  const [orders, vehicles, statuses, outlets, districts, allowance, week] =
+  const [orders, vehicles, statuses, outlets, districts, allowance] =
     await Promise.all([
       prisma.order.findMany({
         where: { requestedDate: date, depotCode: depot, status: { not: "CANCELLED" } },
@@ -142,20 +143,12 @@ export async function loadDayContext(
       loadOutlets(),
       loadDistricts(),
       loadAllowance(),
-      isoWeekOf(date),
     ]);
 
   const statusById = new Map(statuses.map((s) => [s.vehicleId, s.status]));
 
-  const ledgers = await prisma.fuelLedger.findMany({
-    where: {
-      vehicleId: { in: vehicles.map((v) => v.id) },
-      isoYear: week.isoYear,
-      isoWeek: week.isoWeek,
-    },
-    include: { entries: { select: { litres: true, tripId: true } } },
-  });
-  const ledgerByVehicle = new Map(ledgers.map((l) => [l.vehicleId, l]));
+  // The week's quota (raised or standing) and what other days have already spent.
+  const fuel = await fuelPositions(date, vehicles);
 
   const allocatorVehicles: AllocatorVehicle[] = vehicles.map((v) => ({
     vehicleId: v.id,
@@ -202,15 +195,7 @@ export async function loadDayContext(
       outlets,
       districts,
       allowance,
-      fuel: new Map(
-        allocatorVehicles.map((v) => [
-          v.vehicleId,
-          {
-            quotaL: v.weeklyFuelQuotaL,
-            committedOtherDaysL: ledgerByVehicle.get(v.vehicleId)?.committedL ?? 0,
-          },
-        ]),
-      ),
+      fuel,
     },
     orderIdByRef: new Map(orders.map((o) => [o.ref, o.id])),
   };

@@ -4,7 +4,7 @@ import { PROBLEM_REASONS, STORE_ISSUE_REASONS, STORE_PROBLEM_KINDS, reasonLabel 
 import { RULE_LABELS } from "@katapatha/core/validation/codes";
 import type { Violation } from "@katapatha/core/validation/types";
 import { validatePlan } from "@katapatha/core/validation/rules";
-import type { DepotCode } from "@katapatha/core/domain/types";
+import { needsReefer, type DepotCode, type TempRequirement } from "@katapatha/core/domain/types";
 import { prisma } from "../lib/db";
 import { historyFor } from "../lib/audit";
 import { loadDayContext, loadPlan, asDate, isoDate } from "./plans";
@@ -104,7 +104,7 @@ export interface StopInput {
     id: string;
     ref: string;
     units: number;
-    tempRequirement: "chilled" | "ambient";
+    tempRequirement: TempRequirement;
     weightKg: number;
     volumeM3: number;
   }>;
@@ -401,13 +401,13 @@ function pendingStops(trip: TripInput): StopInput[] {
   return trip.stops.filter((s) => s.status === "PENDING");
 }
 
-function outletsOf(stops: StopInput[], onlyChilled = false): AffectedOutlet[] {
+function outletsOf(stops: StopInput[], onlyColdChain = false): AffectedOutlet[] {
   return stops
     .map((s) => {
-      const orders = onlyChilled ? s.orders.filter((o) => o.tempRequirement === "chilled") : s.orders;
+      const orders = onlyColdChain ? s.orders.filter((o) => needsReefer(o.tempRequirement)) : s.orders;
       return { stop: s, orders };
     })
-    .filter(({ orders }) => orders.length > 0 || !onlyChilled)
+    .filter(({ orders }) => orders.length > 0 || !onlyColdChain)
     .map(({ stop, orders }) => ({
       outletId: stop.outletId,
       outletName: stop.outletName,
@@ -417,8 +417,8 @@ function outletsOf(stops: StopInput[], onlyChilled = false): AffectedOutlet[] {
     }));
 }
 
-function refsOf(stops: StopInput[], onlyChilled = false): string[] {
-  return stops.flatMap((s) => s.orders.filter((o) => !onlyChilled || o.tempRequirement === "chilled").map((o) => o.ref));
+function refsOf(stops: StopInput[], onlyColdChain = false): string[] {
+  return stops.flatMap((s) => s.orders.filter((o) => !onlyColdChain || needsReefer(o.tempRequirement)).map((o) => o.ref));
 }
 
 /**

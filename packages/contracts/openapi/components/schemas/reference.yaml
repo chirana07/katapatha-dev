@@ -14,6 +14,35 @@ Outlet:
     windowClose: { $ref: "./common.yaml#/ClockTime" }
     mallWindowOpen: { oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }] }
     mallWindowClose: { oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }] }
+    lat: { type: [number, "null"], description: "Where the outlet is. Approximate until geoSource is CSV or DISPATCHER.", examples: [6.94131] }
+    lng: { type: [number, "null"], examples: [79.87615] }
+    geoSource:
+      type: [string, "null"]
+      enum: [SYNTHETIC, CSV, DISPATCHER, null]
+      description: >
+        SYNTHETIC is a stand-in near the district centre, CSV came from the
+        supplied locations file, DISPATCHER was placed by a person.
+    geoSnapped: { type: boolean, description: "True once the position is on the nearest road." }
+
+OutletLocationRequest:
+  type: object
+  additionalProperties: false
+  required: [lat, lng]
+  properties:
+    lat: { type: number, examples: [6.9302] }
+    lng: { type: number, examples: [79.8605] }
+    snap: { type: boolean, description: "Move the pin onto the nearest road. Defaults to true." }
+
+OutletLocation:
+  type: object
+  required: [id, lat, lng, geoSource, geoSnapped]
+  properties:
+    id: { type: string, examples: ["OUT074"] }
+    lat: { type: number }
+    lng: { type: number }
+    geoSource: { type: string, enum: [SYNTHETIC, CSV, DISPATCHER] }
+    geoSnapped: { type: boolean }
+    warning: { type: string, description: "Present when the pin is unusually far from its district." }
 
 Vehicle:
   type: object

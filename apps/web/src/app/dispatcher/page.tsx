@@ -12,6 +12,7 @@ import { requireRole } from "@/lib/auth";
 import { longDate } from "@/lib/dates";
 import { deskDate } from "./desk-date";
 import { clockTime, percent, plural } from "@/lib/format";
+import { countTemps, tempBreakdown } from "@/lib/temperature";
 import { readFailure } from "@/lib/failures";
 import { loadDay } from "./desk-data";
 import { Flash } from "./flash";
@@ -75,7 +76,7 @@ export default async function DispatcherDashboard({
   const detail = planDetail?.data ?? null;
 
   const counts = groupCounts(orders);
-  const chilled = orders.filter((o) => o.tempRequirement === "chilled").length;
+  const mix = tempBreakdown(countTemps(orders));
   const served = plan?.stats.served;
   const deferred = plan?.stats.deferred ?? counts.deferred;
   const pendingDeferrals = detail ? detail.deferrals.filter((d) => !d.reasonCode).length : 0;
@@ -136,7 +137,7 @@ export default async function DispatcherDashboard({
           icon={<Glyph kind="orders" />}
           value={orders.length}
           label="Total orders"
-          foot={orders.length ? `${chilled} chilled · ${orders.length - chilled} ambient` : "None in the queue"}
+          foot={orders.length ? mix : "None in the queue"}
         />
         <StatCard
           icon={<Glyph kind="check" />}

@@ -9,6 +9,10 @@ import planningRoutes from "../routes/planning.js";
 import { describeDeferrals, laneAlternatives, nextRunDate } from "../services/deferrals.js";
 import { loadDayContext, loadPlan, runAutoPlan } from "../services/plans.js";
 import { snapshotFromPlan } from "../services/snapshot.js";
+import { isOperatingDay } from "../services/calendar.js";
+import { commitPlanFuel } from "../services/fuel.js";
+import { derivePriorityInputs } from "../services/priority.js";
+import { rollDeferredOrders } from "../services/rollover.js";
 
 /**
  * The dispatcher's desk: planning days, plans, deferral confirmation, and the
@@ -48,6 +52,10 @@ vi.mock("../services/deferrals.js", () => ({
 }));
 
 vi.mock("../services/snapshot.js", () => ({ snapshotFromPlan: vi.fn() }));
+vi.mock("../services/calendar.js", () => ({ isOperatingDay: vi.fn() }));
+vi.mock("../services/fuel.js", () => ({ commitPlanFuel: vi.fn() }));
+vi.mock("../services/priority.js", () => ({ derivePriorityInputs: vi.fn() }));
+vi.mock("../services/rollover.js", () => ({ rollDeferredOrders: vi.fn() }));
 vi.mock("@katapatha/core/validation/rules", () => ({ validatePlan: vi.fn() }));
 
 const dispatcher: SessionUser = {
@@ -88,6 +96,10 @@ describe("planning routes", () => {
       ((fn: (tx: typeof prisma) => unknown) => fn(prisma)) as never,
     );
     vi.mocked(nextRunDate).mockResolvedValue("2026-10-05");
+    vi.mocked(isOperatingDay).mockResolvedValue(true);
+    vi.mocked(commitPlanFuel).mockResolvedValue({ trips: 0, litres: 0 });
+    vi.mocked(derivePriorityInputs).mockResolvedValue(0);
+    vi.mocked(rollDeferredOrders).mockResolvedValue([]);
   });
 
   afterEach(async () => {
@@ -331,6 +343,19 @@ describe("planning routes", () => {
       expect(runAutoPlan).not.toHaveBeenCalled();
     });
 
+    it("answers 409 NON_OPERATING_DAY for a day the depot does not run, before anything else is read", async () => {
+      vi.mocked(isOperatingDay).mockResolvedValue(false);
+      const server = await serverFor();
+
+      const response = await post(server);
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json().error.code).toBe("NON_OPERATING_DAY");
+      expect(isOperatingDay).toHaveBeenCalledWith(new Date("2026-10-03T00:00:00.000Z"));
+      expect(prisma.planningDay.findUnique).not.toHaveBeenCalled();
+      expect(runAutoPlan).not.toHaveBeenCalled();
+    });
+
     it("answers 404 NO_PLANNING_DAY when the depot has no day for that date", async () => {
       vi.mocked(prisma.planningDay.findUnique).mockResolvedValue(null);
       vi.mocked(runAutoPlan).mockResolvedValue(null);
@@ -426,12 +451,21 @@ describe("planning routes", () => {
       vi.mocked(prisma.planningDay.findFirst).mockResolvedValue(planningDay() as never);
       vi.mocked(prisma.order.count).mockResolvedValue(85);
       vi.mocked(prisma.planningDay.update).mockResolvedValue(planningDay({ status: "CLOSED" }) as never);
+      vi.mocked(derivePriorityInputs).mockResolvedValue(12);
       const server = await serverFor();
 
       const response = await close(server);
 
       expect(response.statusCode).toBe(200);
       expect(response.json()).toEqual({ id: "PD1", date: "2026-10-03", depotCode: "Peliyagoda", status: "CLOSED", cutoffAt: "16:00" });
+      // The fairness signals are settled for this depot and day, in the transaction that closes it.
+      expect(derivePriorityInputs).toHaveBeenCalledWith(prisma, DAY, "Peliyagoda");
+      expect(vi.mocked(prisma.$transaction).mock.invocationCallOrder[0]!).toBeLessThan(
+        vi.mocked(derivePriorityInputs).mock.invocationCallOrder[0]!,
+      );
+      expect(vi.mocked(derivePriorityInputs).mock.invocationCallOrder[0]!).toBeLessThan(
+        vi.mocked(prisma.planningDay.update).mock.invocationCallOrder[0]!,
+      );
       // Cancelled orders are not part of the queue the dispatcher is closing.
       expect(vi.mocked(prisma.order.count).mock.calls[0]![0]!.where).toEqual({
         depotCode: "Peliyagoda",
@@ -453,7 +487,7 @@ describe("planning routes", () => {
           entityType: "PlanningDay",
           entityId: "PD1",
           before: { status: "OPEN" },
-          after: { status: "CLOSED", ordersAtClose: 85 },
+          after: { status: "CLOSED", ordersAtClose: 85, prioritised: 12 },
         }),
       ]);
     });
@@ -468,6 +502,8 @@ describe("planning routes", () => {
 
         expect(response.statusCode).toBe(200);
         expect(response.json().status).toBe(status);
+        // Nothing was closed now, so nothing is re-derived.
+        expect(derivePriorityInputs).not.toHaveBeenCalled();
         expect(prisma.planningDay.update).not.toHaveBeenCalled();
         expect(prisma.order.count).not.toHaveBeenCalled();
         expect(auditRows()).toHaveLength(0);
@@ -856,6 +892,29 @@ describe("planning routes", () => {
       );
     });
 
+    it("spends the plan's fuel inside the same transaction as the claim", async () => {
+      const server = await serverFor();
+
+      await publish(server);
+
+      expect(commitPlanFuel).toHaveBeenCalledWith(prisma, "PLN1", DAY);
+      expect(vi.mocked(prisma.$transaction).mock.invocationCallOrder[0]!).toBeLessThan(
+        vi.mocked(commitPlanFuel).mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("publishes nothing, and answers an error, when the fuel cannot be recorded", async () => {
+      vi.mocked(commitPlanFuel).mockRejectedValue(new Error("ledger down"));
+      const server = await serverFor();
+
+      const response = await publish(server);
+
+      expect(response.statusCode).toBeGreaterThanOrEqual(500);
+      // The throw happens inside the transaction, so it rolls everything back.
+      expect(prisma.notification.create).not.toHaveBeenCalled();
+      expect(prisma.auditEvent.createMany).not.toHaveBeenCalled();
+    });
+
     it("moves the planning day to PUBLISHED, served orders to PLANNED, and deferred orders to DEFERRED", async () => {
       const server = await serverFor();
 
@@ -870,6 +929,39 @@ describe("planning routes", () => {
         { where: { id: { in: ["O1"] } }, data: { status: "PLANNED" } },
         { where: { id: { in: ["O2", "O3"] } }, data: { status: "DEFERRED" } },
       ]);
+    });
+
+    it("queues the deferred orders that tomorrow can fix for the next run, and not the permanent one", async () => {
+      vi.mocked(rollDeferredOrders).mockResolvedValue(["ORD-004500"]);
+      const server = await serverFor();
+
+      await publish(server);
+
+      expect(rollDeferredOrders).toHaveBeenCalledTimes(1);
+      expect(rollDeferredOrders).toHaveBeenCalledWith(prisma, {
+        planId: "PLN1",
+        orderIds: ["O2"],
+        forDate: "2026-10-05",
+        userId: "USR001",
+      });
+    });
+
+    it("rolls nothing over when every deferral is permanent", async () => {
+      vi.mocked(prisma.plan.findFirst).mockResolvedValue(draft([served, permanent]) as never);
+      const server = await serverFor();
+
+      await publish(server);
+
+      expect(vi.mocked(rollDeferredOrders).mock.calls[0]![1].orderIds).toEqual([]);
+    });
+
+    it("rolls nothing over when nothing was deferred", async () => {
+      vi.mocked(prisma.plan.findFirst).mockResolvedValue(draft([served]) as never);
+      const server = await serverFor();
+
+      await publish(server);
+
+      expect(rollDeferredOrders).not.toHaveBeenCalled();
     });
 
     it("records a Deferral per deferred order: the next run for a temporary cause, none for a permanent one", async () => {

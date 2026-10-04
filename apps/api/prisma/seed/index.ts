@@ -12,6 +12,7 @@ import { PrismaClient } from "@prisma/client";
 import { seedForecastShells, seedHeroDay } from "./heroDay";
 import { seedHistory } from "./history";
 import { seedFixtureOrderLines, seedProducts } from "./products";
+import { seedGeography } from "./geography";
 import { seedReference } from "./reference";
 import { resolveDataSource, sourceChecksum } from "./source";
 import { printAccounts, seedUsers } from "./users";
@@ -35,7 +36,7 @@ async function reset(): Promise<void> {
       "Notification", "AuditEvent", "Session", "LoginThrottle", "User",
       "VehicleDayStatus", "HistoricalLeg", "ServiceObservation",
       "DemandForecast", "DailyDemandHistory", "WeeklyDemandHistory",
-      "RoadCondition", "TrafficSpeed", "CalendarDay", "ServiceAllowance",
+      "RoadCondition", "RoadLeg", "TrafficSpeed", "CalendarDay", "ServiceAllowance",
       "Vehicle", "Outlet", "District", "Depot", "SeedMeta"
     RESTART IDENTITY CASCADE
   `);
@@ -66,6 +67,12 @@ async function main(): Promise<void> {
   for (const [name, count] of Object.entries(reference)) {
     console.log(`         ${String(count).padStart(6)}  ${name}`);
   }
+
+  const geography = await seedGeography(prisma, source);
+  console.log(
+    `[seed] Positions: ${geography.depots} depots, ${geography.fromCsv} outlets from outlet_locations.csv, ` +
+      `${geography.synthetic} placed near their district centre (approximate; run geo:snap for roads).`,
+  );
 
   const users = await seedUsers(prisma);
   console.log(`[seed] ${users} accounts, one per role.`);

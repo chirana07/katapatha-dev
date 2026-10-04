@@ -17,6 +17,7 @@ import type {
   TempRequirement,
   VehicleRef,
 } from "../domain/types";
+import type { TravelMatrix } from "../domain/travel";
 import { DEFAULT_PLAN_CONFIG } from "./types";
 import type { FuelPosition, PlanSnapshot, TripSnapshot, VehicleDayStatus } from "./types";
 
@@ -165,6 +166,8 @@ export interface SnapshotParts {
   fuel?: Record<string, FuelPosition>;
   config?: Partial<PlanSnapshot["config"]>;
   openShortfallOrderRefs?: string[];
+  /** Road legs; when given, windows, the Fresh deadline, turnaround and fuel are judged on the road. */
+  travel?: TravelMatrix;
 }
 
 export function snapshot(parts: SnapshotParts = {}): PlanSnapshot {
@@ -179,6 +182,7 @@ export function snapshot(parts: SnapshotParts = {}): PlanSnapshot {
       allowance: ALLOWANCE,
       vehicleStatus: new Map(Object.entries(parts.status ?? {})),
       fuel: new Map(Object.entries(parts.fuel ?? {})),
+      ...(parts.travel ? { travel: parts.travel } : {}),
     },
     orders: new Map((parts.orders ?? []).map((x) => [x.ref, x])),
     trips: parts.trips ?? [],

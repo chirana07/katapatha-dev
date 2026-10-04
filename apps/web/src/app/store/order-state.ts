@@ -1,5 +1,6 @@
 import type { components } from "@katapatha/contracts/types";
 import type { Tone } from "@/components/ui/status-pill";
+import { tempLabel } from "@/lib/temperature";
 
 type Order = components["schemas"]["Order"];
 
@@ -49,9 +50,9 @@ export function receivingWindowLabel(
     : "Awaiting plan";
 }
 
-/** "Ambient" or "Chilled", as the store manager would say it. */
+/** "Ambient", "Chilled" or "Frozen", as the store manager would say it. */
 export function goodsLabel(temp: string): string {
-  return temp === "chilled" ? "Chilled" : "Ambient";
+  return tempLabel(temp);
 }
 
 const PROGRESS = [

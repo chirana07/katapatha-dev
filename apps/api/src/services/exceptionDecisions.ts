@@ -10,6 +10,7 @@ import {
 } from "../lib/authorization";
 import { AuthError } from "../lib/auth";
 import { asDate, isoDate } from "./plans";
+import { createFollowUpOrder } from "./followUp";
 import {
   activityFor,
   colomboDateOf,
@@ -690,53 +691,4 @@ async function decideShortfall(
   });
   const updated = await reload(user.depotCode!, inputs.date, { kind: "SHORTFALL", key: sf.id }, item.id, now, item);
   return { ok: true, replayed: false, exception: updated, consequences };
-}
-
-/**
- * The next-day order for the units a shortfall left behind.
- *
- * Same conventions as POST /orders: an `ORD-` ref allocated from the highest
- * existing one, QUEUED, outlet/brand/district/depot/window copied from the
- * order it follows, weight and volume scaled from it (the same goods, so the
- * same size per unit). `rolledFromOrderId` links it back. `deferredYesterday`
- * is true: the store was shorted on its day and the allocator's first priority
- * rule exists for exactly an outlet in that position.
- */
-async function createFollowUpOrder(
-  tx: Prisma.TransactionClient,
-  order: NonNullable<Awaited<ReturnType<typeof prisma.order.findUnique>>>,
-  units: number,
-  forDate: string,
-  userId: string,
-  clientRequestId: string,
-) {
-  const latest = await tx.order.findFirst({
-    where: { ref: { startsWith: "ORD-" } },
-    orderBy: { ref: "desc" },
-    select: { ref: true },
-  });
-  const start = latest ? Number.parseInt(latest.ref.slice(4), 10) : 4000;
-  const ref = `ORD-${String((Number.isFinite(start) ? start : 4000) + 1).padStart(6, "0")}`;
-  const share = units / order.units;
-  return tx.order.create({
-    data: {
-      ref,
-      outletId: order.outletId,
-      brand: order.brand,
-      districtName: order.districtName,
-      depotCode: order.depotCode,
-      tempRequirement: order.tempRequirement,
-      units,
-      weightKg: round(order.weightKg * share, 1),
-      volumeM3: round(order.volumeM3 * share, 2),
-      windowOpen: order.windowOpen,
-      windowClose: order.windowClose,
-      requestedDate: asDate(forDate),
-      placedByUserId: userId,
-      status: "QUEUED",
-      deferredYesterday: true,
-      rolledFromOrderId: order.id,
-      clientRequestId,
-    },
-  });
 }

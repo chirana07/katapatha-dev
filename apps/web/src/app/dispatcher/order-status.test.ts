@@ -60,6 +60,7 @@ describe("filterOrders", () => {
     expect(isBrand("Fresh")).toBe(true);
     expect(isBrand("fresh")).toBe(false);
     expect(isTemp("chilled")).toBe(true);
-    expect(isTemp("frozen")).toBe(false);
+    expect(isTemp("frozen")).toBe(true);
+    expect(isTemp("tepid")).toBe(false);
   });
 });

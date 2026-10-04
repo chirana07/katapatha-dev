@@ -86,6 +86,30 @@ describe("rule 2 - refrigeration", () => {
     expect(has(validatePlan(s), "CHILLED_ON_NON_REEFER")).toBe(true);
   });
 
+  it("rejects frozen on an ambient vehicle, exactly as chilled", () => {
+    const s = snapshot({
+      vehicles: [vehicle("VEH008", { temp: "ambient" })],
+      orders: [order("A", { tempRequirement: "frozen" })],
+      trips: [trip("VEH008", 1, [{ outletId: "OUT001", orderRefs: ["A"] }])],
+    });
+    const found = validatePlan(s).filter((x) => x.code === "CHILLED_ON_NON_REEFER");
+    expect(found).toHaveLength(1);
+    expect(found[0]!.orderRefs).toEqual(["A"]);
+  });
+
+  it("allows a reefer to carry chilled, frozen and ambient together", () => {
+    const s = snapshot({
+      vehicles: [vehicle("VEH001", { temp: "reefer" })],
+      orders: [
+        order("A", { tempRequirement: "frozen" }),
+        order("B", { tempRequirement: "chilled" }),
+        order("C", { tempRequirement: "ambient" }),
+      ],
+      trips: [trip("VEH001", 1, [{ outletId: "OUT001", orderRefs: ["A", "B", "C"] }])],
+    });
+    expect(has(validatePlan(s), "CHILLED_ON_NON_REEFER")).toBe(false);
+  });
+
   it("allows a reefer to carry ambient goods", () => {
     const s = snapshot({
       vehicles: [vehicle("VEH001", { temp: "reefer" })],

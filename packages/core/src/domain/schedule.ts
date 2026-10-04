@@ -38,9 +38,20 @@ export interface ScheduledStop {
 }
 
 /**
- * The window a stop must actually be served in. Mall outlets are governed by
- * the mall's fixed access window when one is recorded; everything else uses
- * the outlet's own requested window.
+ * The window a stop must actually be served in.
+ *
+ * A mall outlet has two constraints, and both must hold: the outlet's own
+ * requested window and the mall's fixed access window. The effective window is
+ * where they overlap, so a delivery cannot be accepted by the shop and refused
+ * at the mall gate, or the other way round. Outlets outside malls have only
+ * their own window.
+ *
+ * The two can fail to overlap at all, and then the outlet cannot be served on
+ * any day. `windowIsEmpty` says so; the window returned in that case has
+ * `open` after `close` and must not be scheduled against.
+ *
+ * `isMallWindow` means "this outlet has a mall window", which is what decides
+ * how a missed window is reported, not which of the two was the tighter.
  */
 export function effectiveWindow(outlet: OutletRef): {
   open: ClockTime;
@@ -49,12 +60,18 @@ export function effectiveWindow(outlet: OutletRef): {
 } {
   if (outlet.mallWindowOpen && outlet.mallWindowClose) {
     return {
-      open: outlet.mallWindowOpen,
-      close: outlet.mallWindowClose,
+      open: laterOf(outlet.windowOpen, outlet.mallWindowOpen),
+      close: toMin(outlet.windowClose) <= toMin(outlet.mallWindowClose) ? outlet.windowClose : outlet.mallWindowClose,
       isMallWindow: true,
     };
   }
   return { open: outlet.windowOpen, close: outlet.windowClose, isMallWindow: false };
+}
+
+/** True when the outlet's windows leave no time at all in which it can be served. */
+export function windowIsEmpty(outlet: OutletRef): boolean {
+  const win = effectiveWindow(outlet);
+  return toMin(win.open) > toMin(win.close);
 }
 
 /**
@@ -87,7 +104,9 @@ export function computeStopSchedule(
       0,
     );
     const leave = addMin(serviceStart, handling);
-    const lateByMin = Math.max(0, toMin(arrival) - toMin(win.close));
+    // From when service starts, not from arrival: they agree for any window
+    // that has room in it, and a window with none is never met.
+    const lateByMin = Math.max(0, toMin(serviceStart) - toMin(win.close));
 
     out.push({
       outletId: stop.outletId,

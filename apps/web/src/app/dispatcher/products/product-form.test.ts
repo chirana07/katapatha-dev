@@ -49,7 +49,8 @@ describe("validateNewProduct", () => {
   });
 
   it("rejects a bad temperature, brand or sort order", () => {
-    expect(validateNewProduct({ ...valid, tempRequirement: "frozen" }).ok).toBe(false);
+    expect(validateNewProduct({ ...valid, tempRequirement: "tepid" }).ok).toBe(false);
+    expect(validateNewProduct({ ...valid, tempRequirement: "frozen" }).ok).toBe(true);
     expect(validateNewProduct({ ...valid, brand: "Acme" }).ok).toBe(false);
     expect(validateNewProduct({ ...valid, sortOrder: "1.5" }).ok).toBe(false);
     expect(validateNewProduct({ ...valid, sortOrder: "-1" }).ok).toBe(false);
