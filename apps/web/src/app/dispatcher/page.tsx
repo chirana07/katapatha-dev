@@ -9,7 +9,8 @@ import { ButtonLink } from "@/components/ui/button";
 import { EmptyState, ErrorPanel } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { requireRole } from "@/lib/auth";
-import { dateParam, longDate } from "@/lib/dates";
+import { longDate } from "@/lib/dates";
+import { deskDate } from "./desk-date";
 import { clockTime, percent, plural } from "@/lib/format";
 import { readFailure } from "@/lib/failures";
 import { loadDay } from "./desk-data";
@@ -40,7 +41,7 @@ export default async function DispatcherDashboard({
 }) {
   const user = await requireRole("DISPATCHER", "/dispatcher");
   const query = await searchParams;
-  const date = dateParam(query.date);
+  const date = await deskDate(query.date);
   const withDate = (path: string) => `${path}?date=${date}`;
 
   const loaded = await loadDay(date, "/dispatcher");

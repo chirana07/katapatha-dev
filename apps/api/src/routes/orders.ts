@@ -661,6 +661,16 @@ export default async function (fastify: FastifyInstance) {
       // is likeliest in the minutes before the cutoff, when every outlet orders.
       const placeOnce = () =>
         prisma.$transaction(async (tx) => {
+          // The depot's queue for this day. Nothing else ever creates one, so
+          // without this an order for a day the seed did not cover is listed on
+          // the desk but can never be closed or planned. A day that is already
+          // closed or published is left as it is.
+          await tx.planningDay.upsert({
+            where: { date_depotCode: { date: requestedDate, depotCode: outlet.depotCode } },
+            create: { date: requestedDate, depotCode: outlet.depotCode },
+            update: {},
+          });
+
           // Allocate per-line sequential refs under the same requestedDate to
           // keep the (ref, requestedDate) unique index happy, and to leave an
           // operations-readable number on the dock card.

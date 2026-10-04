@@ -21,6 +21,7 @@ vi.mock("../lib/db.js", () => ({
   prisma: {
     order: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     outlet: { findUnique: vi.fn() },
+    planningDay: { upsert: vi.fn() },
     vehicle: { findMany: vi.fn() },
     product: { findMany: vi.fn() },
     receiptConfirmation: { upsert: vi.fn() },
@@ -412,6 +413,21 @@ describe("orders routes", () => {
 
       for (const r of [response, badLine, notUuid, zero, empty]) expect(r.statusCode).toBe(422);
       expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("opens the depot's planning day for the date, so the dispatcher can close and plan it", async () => {
+      emptyDatabase();
+      const server = await serverFor();
+
+      const response = await post(server, validBody);
+
+      expect(response.statusCode).toBe(201);
+      // Upsert with an empty update: a day already closed or published is not reopened.
+      expect(prisma.planningDay.upsert).toHaveBeenCalledWith({
+        where: { date_depotCode: { date: new Date("2026-10-05T00:00:00.000Z"), depotCode: "Peliyagoda" } },
+        create: { date: new Date("2026-10-05T00:00:00.000Z"), depotCode: "Peliyagoda" },
+        update: {},
+      });
     });
 
     it("places one order per line, with outlet details from the directory and size from the unit estimate", async () => {

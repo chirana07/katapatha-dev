@@ -8,7 +8,8 @@ import { ButtonLink } from "@/components/ui/button";
 import { EmptyState, ErrorPanel } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { requireRole } from "@/lib/auth";
-import { dateParam, longDate } from "@/lib/dates";
+import { longDate } from "@/lib/dates";
+import { deskDate } from "../desk-date";
 import { plural } from "@/lib/format";
 import { deferralReasonLabel } from "@katapatha/core/domain/deferral";
 import { loadDay } from "../desk-data";
@@ -43,7 +44,7 @@ export default async function PlanningDesk({
 }) {
   const user = await requireRole("DISPATCHER", "/dispatcher/planning");
   const query = await searchParams;
-  const date = dateParam(query.date);
+  const date = await deskDate(query.date);
 
   const header = (
     <PageHeader

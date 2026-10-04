@@ -10,7 +10,8 @@ import { Tabs, type TabItem } from "@/components/ui/tabs";
 import { ButtonLink } from "@/components/ui/button";
 import { EmptyState, ErrorPanel } from "@/components/ui/states";
 import { requireRole } from "@/lib/auth";
-import { dateParam, longDate } from "@/lib/dates";
+import { longDate } from "@/lib/dates";
+import { deskDate } from "../desk-date";
 import { percent, plural } from "@/lib/format";
 import { loadDay } from "../desk-data";
 import { Glyph } from "../icons";
@@ -69,7 +70,7 @@ type Params = {
 export default async function DispatcherOrders({ searchParams }: { searchParams: Promise<Params> }) {
   await requireRole("DISPATCHER", "/dispatcher/orders");
   const query = await searchParams;
-  const date = dateParam(query.date);
+  const date = await deskDate(query.date);
   const group = isOrderGroup(query.status) ? query.status : undefined;
   const brand = isBrand(query.brand) ? query.brand : undefined;
   const temp = isTemp(query.temp) ? query.temp : undefined;
