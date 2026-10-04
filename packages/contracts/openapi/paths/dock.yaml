@@ -1,0 +1,40 @@
+# Owner: BE3 (dock)
+shift:
+  get:
+    operationId: getDockShift
+    summary: The dock's shift for one day
+    description: >
+      Bays, each vehicle's load timing, units per 15 minutes, the last seven
+      nights and the handover note, for the caller's depot. Loader or
+      dispatcher. Gives the day's trips their bays on first read.
+    tags: [loading]
+    parameters:
+      - $ref: "../components/parameters/common.yaml#/Date"
+    responses:
+      "200":
+        description: The shift.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/dock.yaml#/DockShift" }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+
+handover:
+  put:
+    operationId: saveDockHandover
+    summary: Write the shift handover note
+    description: One note per depot per day; the latest edit wins.
+    tags: [loading]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/dock.yaml#/DockHandoverRequest" }
+    responses:
+      "200":
+        description: Saved.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/dock.yaml#/DockHandover" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }

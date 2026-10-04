@@ -7,6 +7,9 @@
 model Depot {
   code      String     @id
   name      String
+  /// Loading bays at this depot's dock. Trips are spread across them when the
+  /// dock first reads a published day (see services/dock.ts).
+  dockBays  Int        @default(6)
   districts District[]
   outlets   Outlet[]
   vehicles  Vehicle[]
@@ -73,6 +76,8 @@ model Vehicle {
   fuelLedgers FuelLedger[]
   pings            VehiclePing[]
   chillerReadings  ChillerReading[]
+  swapsFrom        VehicleSwap[] @relation("SwapFrom")
+  swapsTo          VehicleSwap[] @relation("SwapTo")
 
   /// The allocator's candidate filter is exactly this triple.
   @@index([depotCode, temp, type])

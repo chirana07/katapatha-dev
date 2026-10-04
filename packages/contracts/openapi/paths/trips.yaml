@@ -188,3 +188,95 @@ readiness:
                 code: LOAD_INCOMPLETE
                 message: "3 of 7 lines are still unchecked."
                 details: { checked: 4, expected: 7 }
+
+loadProgress:
+  parameters:
+    - { name: tripId, in: path, required: true, schema: { type: string } }
+    - { name: orderId, in: path, required: true, schema: { type: string } }
+  put:
+    operationId: recordLoadProgress
+    summary: Save a count in progress on an order
+    description: >
+      The dock's steppers. Moves the trip to LOADING and starts its load clock.
+      Never a check: 409 LINE_CHECKED once the order has one.
+    tags: [loading]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/trips.yaml#/LoadProgressRequest" }
+    responses:
+      "200":
+        description: Saved.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/trips.yaml#/LoadProgress" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+      "409": { $ref: "../components/responses/common.yaml#/Conflict" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+vehicleSwapCandidates:
+  parameters:
+    - { name: tripId, in: path, required: true, schema: { type: string } }
+  get:
+    operationId: listVehicleSwapCandidates
+    summary: Vehicles that could take this trip
+    description: Dispatcher only. Every vehicle at the depot, with why it cannot when it cannot.
+    tags: [loading]
+    responses:
+      "200":
+        description: Candidates.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/trips.yaml#/VehicleSwapCandidate" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+
+vehicleSwap:
+  parameters:
+    - { name: tripId, in: path, required: true, schema: { type: string } }
+  post:
+    operationId: swapTripVehicle
+    summary: Move a trip at the dock onto another vehicle
+    description: >
+      Dispatcher only. Only while the trip is PLANNED or LOADING. Clears the
+      trip's checks and counts for the reload (kept on the swap), and tells the
+      stores on the trip.
+    tags: [loading]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/trips.yaml#/VehicleSwapRequest" }
+    responses:
+      "201":
+        description: Swapped.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/trips.yaml#/VehicleSwap" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+      "409": { $ref: "../components/responses/common.yaml#/Conflict" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+vehicleSwapSteps:
+  parameters:
+    - { name: tripId, in: path, required: true, schema: { type: string } }
+    - { name: swapId, in: path, required: true, schema: { type: string } }
+  post:
+    operationId: recordVehicleSwapStep
+    summary: Record a step of a vehicle swap at the dock
+    description: Each step is recorded once; a repeat returns the swap unchanged.
+    tags: [loading]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/trips.yaml#/VehicleSwapStepRequest" }
+    responses:
+      "200":
+        description: Recorded.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/trips.yaml#/VehicleSwap" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }

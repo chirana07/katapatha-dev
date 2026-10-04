@@ -27,6 +27,7 @@ export const SHORTFALL_REASONS = [
   { code: "DAMAGED", label: "Damaged" },
   { code: "SHORT_QUANTITY", label: "Short quantity" },
   { code: "NOT_COLD_ENOUGH", label: "Not cold enough" },
+  { code: "WRONG_ITEM", label: "Wrong item picked" },
 ] as const;
 
 export const PROBLEM_REASONS = [

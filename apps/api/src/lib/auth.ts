@@ -70,6 +70,25 @@ export async function verifyCredentials(
   return ok ? user : null;
 }
 
+/** Staff ID and PIN, for the loader's shared dock tablet. Same constant-time
+ *  shape as email and password: an unknown staff ID still costs one compare. */
+export async function verifyStaffPin(staffId: string, pin: string): Promise<User | null> {
+  const user = await prisma.user.findUnique({
+    where: { staffId: normalizeStaffId(staffId) },
+  });
+  if (!user?.pinHash) {
+    await bcrypt.compare(pin, "$2b$10$invalidinvalidinvalidinvalidinvalidinv");
+    return null;
+  }
+  const ok = await bcrypt.compare(pin, user.pinHash);
+  return ok ? user : null;
+}
+
+/** Staff IDs are printed on badges in capitals; people type them any way. */
+export function normalizeStaffId(staffId: string): string {
+  return staffId.trim().toUpperCase();
+}
+
 /**
  * Mint a session row and return the opaque token.
  *

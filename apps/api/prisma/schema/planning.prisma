@@ -51,6 +51,7 @@ model Order {
   tripStopLinks TripStopOrder[]
   deferrals    Deferral[]
   loadChecks   LoadCheck[]
+  loadProgress LoadProgress[]
   shortfalls   Shortfall[]
   stopEvents   StopEvent[]
   problems     Problem[]
@@ -155,11 +156,20 @@ model Trip {
   sumVolumeM3       Float
   status            TripStatus @default(PLANNED)
   loadConfirmedAt   DateTime?
+  /// The dock bay this trip loads at, 1..Depot.dockBays. Filled the first time
+  /// the dock reads a published day, then kept, so a bay never moves under a
+  /// loader.
+  dockBay           Int?
+  /// The first load check or in-progress count on this trip. With
+  /// loadConfirmedAt (the seal) it gives the load time.
+  loadStartedAt     DateTime?
   departedAt        DateTime?
   completedAt       DateTime?
 
   stops             TripStop[]
   loadChecks        LoadCheck[]
+  loadProgress      LoadProgress[]
+  vehicleSwaps      VehicleSwap[]
   shortfalls        Shortfall[]
   problems          Problem[]
   fromReassignments StopReassignment[] @relation("ReassignFrom")

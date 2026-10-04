@@ -39,6 +39,9 @@ model LoadCheck {
   checkedByUserId String?
   checkedAt       DateTime      @default(now())
   clientRequestId String?       @unique
+  /// Units loaded per product sku, when the order was placed from products and
+  /// the dock counted it item by item. They sum to loadedUnits. Null otherwise.
+  itemCounts      Json?
 
   shortfalls Shortfall[]
 
@@ -66,6 +69,11 @@ model Shortfall {
   note             String?
   /// True while the vehicle may not depart — the loader's ready gate.
   blocksDeparture  Boolean              @default(true)
+  /// The product the dock reported, when it reported one item rather than the
+  /// whole order.
+  productSku       String?
+  /// A photo the loader took of the problem, as a data URL.
+  photoData        String?
 
   /// The dispatcher's inbox query.
   @@index([status, raisedAt])
@@ -135,4 +143,62 @@ model ReceiptConfirmation {
   matches         Boolean
   issueKind       String?
   note            String?
+}
+
+/// What the dock has counted onto a vehicle for one order before the order is
+/// checked. A count in progress, not a check: it never satisfies the ready
+/// gate, and it is deleted when the check for the order lands.
+model LoadProgress {
+  tripId        String
+  trip          Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  orderId       String
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  loadedUnits   Int
+  itemCounts    Json?
+  updatedByName String
+  updatedAt     DateTime @default(now()) @updatedAt
+
+  @@id([tripId, orderId])
+}
+
+/// The dispatcher moved a trip onto another vehicle after publishing, while
+/// the dock was loading it. The loader works the steps on the record.
+model VehicleSwap {
+  id               String    @id @default(cuid())
+  tripId           String
+  trip             Trip      @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  fromVehicleId    String
+  fromVehicle      Vehicle   @relation("SwapFrom", fields: [fromVehicleId], references: [id])
+  toVehicleId      String
+  toVehicle        Vehicle   @relation("SwapTo", fields: [toVehicleId], references: [id])
+  reason           String
+  previousDepartAt String
+  newDepartAt      String
+  /// Units on the old vehicle at the moment of the swap: what must come off.
+  unloadedUnits    Int
+  /// The checks and counts the old vehicle had, kept because the trip's own
+  /// are cleared for the reload.
+  previousLoad     Json?
+  createdByUserId  String?
+  createdAt        DateTime  @default(now())
+  unloadedAt       DateTime?
+  unloadedByName   String?
+  arrivedAt        DateTime?
+  arrivedByName    String?
+  acknowledgedAt   DateTime?
+
+  @@index([tripId, createdAt])
+}
+
+/// A shift handover note for one depot's dock on one day. One per day; the
+/// latest edit wins.
+model DockNote {
+  depotCode    String
+  date         DateTime @db.Date
+  body         String
+  authorName   String
+  authorUserId String?
+  updatedAt    DateTime @default(now()) @updatedAt
+
+  @@id([depotCode, date])
 }

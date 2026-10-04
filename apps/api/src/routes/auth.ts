@@ -3,6 +3,8 @@ import {
   createSession,
   destroySessionByToken,
   verifyCredentials,
+  verifyStaffPin,
+  normalizeStaffId,
   SESSION_COOKIE,
   HOME_FOR_ROLE,
   AuthError,
@@ -46,14 +48,18 @@ export default async function (fastify: FastifyInstance) {
   fastify.post("/auth/session", {
     config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
     schema: {
+      // Email and password for everyone; staff ID and PIN for the loader's
+      // shared dock tablet. Exactly one pair.
       body: {
         type: "object",
-        required: ["email", "password"],
         additionalProperties: false,
         properties: {
           email: { type: "string", format: "email" },
           password: { type: "string", minLength: 1 },
+          staffId: { type: "string", minLength: 2, maxLength: 32 },
+          pin: { type: "string", pattern: "^[0-9]{4,8}$" },
         },
+        oneOf: [{ required: ["email", "password"] }, { required: ["staffId", "pin"] }],
       },
       response: {
         201: {
@@ -71,16 +77,22 @@ export default async function (fastify: FastifyInstance) {
       },
     },
   }, async (request, reply) => {
-    const { email, password } = request.body as { email: string; password: string };
+    const body = request.body as { email?: string; password?: string; staffId?: string; pin?: string };
+    // The throttle buckets by identifier, so a staff ID gets its own bucket and
+    // can never collide with an email address.
+    const identifier = body.staffId != null ? `staff:${normalizeStaffId(body.staffId)}` : body.email!;
 
-    await assertSignInAllowed(email, request.ip);
+    await assertSignInAllowed(identifier, request.ip);
 
-    const user = await verifyCredentials(email, password);
+    const user =
+      body.staffId != null
+        ? await verifyStaffPin(body.staffId, body.pin!)
+        : await verifyCredentials(body.email!, body.password!);
     if (!user) {
-      await recordSignInFailure(email, request.ip);
+      await recordSignInFailure(identifier, request.ip);
       throw new AuthError("Those details do not match an account.", 401);
     }
-    await clearSignInFailures(email, request.ip);
+    await clearSignInFailures(identifier, request.ip);
 
     const { token, expiresAt } = await createSession(user.id, request.headers["user-agent"]);
     reply.setSessionCookie(token, expiresAt);

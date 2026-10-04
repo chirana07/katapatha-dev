@@ -30,6 +30,123 @@ Trip:
         - $ref: "./vehicles.yaml#/ChillerReadingView"
     date: { $ref: "./common.yaml#/DateOnly" }
     depotCode: { type: string, description: "Only on `GET /trips/{tripId}`.", examples: ["Peliyagoda"] }
+    dockBay:
+      description: >
+        The dock bay this trip loads at. Given the first time the dock reads a
+        published day and never moved after. Present on the loading endpoints.
+        Additive.
+      type: [integer, "null"]
+      examples: [3]
+    loadStartedAt:
+      description: The first load check or count in progress on this trip. Additive.
+      type: [string, "null"]
+      format: date-time
+    sealedAt:
+      description: When the loader marked the vehicle ready (the seal). Additive.
+      type: [string, "null"]
+      format: date-time
+    loadedUnits:
+      description: >
+        Units on board so far: checked orders count their check, unchecked
+        orders their count in progress. Additive.
+      type: integer
+      examples: [42]
+    swap:
+      description: The latest vehicle swap on this trip, if any. Additive.
+      oneOf:
+        - type: "null"
+        - $ref: "#/VehicleSwap"
+
+ItemCounts:
+  type: object
+  description: Units per product sku. They add up to the line's units.
+  additionalProperties: { type: integer, minimum: 0 }
+  maxProperties: 200
+  examples: [{ "FA001": 8, "FA003": 5 }]
+
+VehicleSwap:
+  type: object
+  description: >
+    The dispatcher moved this trip to another vehicle while it was at the dock.
+    The trip's checks and counts were cleared for the reload; the dock records
+    each step as it works it.
+  required: [id, fromVehicleId, toVehicleId, reason, previousDepartAt, newDepartAt, unloadedUnits, createdAt, unloadedAt, unloadedByName, arrivedAt, arrivedByName, acknowledgedAt]
+  properties:
+    id: { type: string }
+    fromVehicleId: { type: string, examples: ["VEH029"] }
+    toVehicleId: { type: string, examples: ["VEH031"] }
+    reason: { type: string, examples: ["Brake fault"] }
+    previousDepartAt: { $ref: "./common.yaml#/ClockTime" }
+    newDepartAt: { $ref: "./common.yaml#/ClockTime" }
+    unloadedUnits: { type: integer, description: Units that were on the old vehicle and must come off., examples: [6] }
+    createdAt: { type: string, format: date-time }
+    unloadedAt: { type: [string, "null"], format: date-time }
+    unloadedByName: { type: [string, "null"] }
+    arrivedAt: { type: [string, "null"], format: date-time }
+    arrivedByName: { type: [string, "null"] }
+    acknowledgedAt: { type: [string, "null"], format: date-time }
+    storesNotified: { type: integer, description: Only on the create response. }
+
+VehicleSwapRequest:
+  type: object
+  required: [toVehicleId, reason]
+  additionalProperties: false
+  properties:
+    toVehicleId: { type: string, examples: ["VEH031"] }
+    reason: { type: string, minLength: 3, maxLength: 200, examples: ["Brake fault"] }
+    newDepartAt:
+      oneOf:
+        - $ref: "./common.yaml#/ClockTime"
+        - type: "null"
+    outOfService:
+      type: boolean
+      description: Also mark the old vehicle in the workshop for the rest of the day.
+
+VehicleSwapCandidate:
+  type: object
+  required: [vehicleId, type, temp, weightCapKg, volumeCapM3, available, reason]
+  properties:
+    vehicleId: { type: string }
+    type: { type: string, enum: [truck, van] }
+    temp: { type: string, enum: [reefer, ambient] }
+    weightCapKg: { type: number }
+    volumeCapM3: { type: number }
+    available: { type: boolean }
+    reason: { type: [string, "null"], description: Why it cannot take the trip., examples: ["Too small for this load"] }
+
+VehicleSwapStepRequest:
+  type: object
+  required: [step, byName]
+  additionalProperties: false
+  properties:
+    step: { type: string, enum: [UNLOADED, ARRIVED, ACKNOWLEDGED] }
+    byName: { type: string, minLength: 2, examples: ["Ranjith Silva"] }
+
+LoadProgressRequest:
+  type: object
+  required: [loadedUnits, updatedByName]
+  additionalProperties: false
+  properties:
+    loadedUnits: { type: integer, minimum: 0, examples: [18] }
+    itemCounts: { $ref: "#/ItemCounts" }
+    updatedByName: { type: string, minLength: 2, examples: ["Ranjith Silva"] }
+
+LoadProgress:
+  type: object
+  description: >
+    A count in progress on an order not yet checked. It shows on progress bars
+    but never satisfies the ready gate.
+  required: [tripId, orderId, loadedUnits, itemCounts, updatedByName, updatedAt]
+  properties:
+    tripId: { type: string }
+    orderId: { type: string }
+    loadedUnits: { type: integer }
+    itemCounts:
+      oneOf:
+        - type: "null"
+        - $ref: "#/ItemCounts"
+    updatedByName: { type: string }
+    updatedAt: { type: string, format: date-time }
 
 LoadList:
   type: object
@@ -64,6 +181,29 @@ LoadList:
           condition:
             type: [string, "null"]
             enum: [OK, SHORT, DAMAGED, MISSING, null]
+          checkedAt:
+            description: When the check landed. Additive.
+            type: [string, "null"]
+            format: date-time
+          itemCounts:
+            description: The per-item counts the check carried, if any. Additive.
+            oneOf:
+              - type: "null"
+              - $ref: "#/ItemCounts"
+          progress:
+            description: A count in progress on a line not yet checked. Additive.
+            oneOf:
+              - type: "null"
+              - type: object
+                required: [loadedUnits, itemCounts, updatedByName, updatedAt]
+                properties:
+                  loadedUnits: { type: integer }
+                  itemCounts:
+                    oneOf:
+                      - type: "null"
+                      - $ref: "#/ItemCounts"
+                  updatedByName: { type: string }
+                  updatedAt: { type: string, format: date-time }
           shortfall:
             description: >
               The shortfall raised for this line and what became of it. A line the
@@ -80,6 +220,9 @@ LoadList:
                   resolution:
                     type: [string, "null"]
                     enum: [SEND_SHORT, HOLD_ORDER, MOVE_TO_TRIP_2, CANCEL_LINE, null]
+                  reasonCode: { type: [string, "null"], description: Additive. }
+                  productSku: { type: [string, "null"], description: "The product reported, if one was. Additive." }
+                  hasPhoto: { type: boolean, description: A photo was attached. Additive. }
 
 LoadCheckRequest:
   type: object
@@ -96,6 +239,23 @@ LoadCheckRequest:
       examples: ["Ranjith Silva"]
     reasonCode: { type: [string, "null"], examples: [null] }
     clientRequestId: { type: [string, "null"], format: uuid, examples: [null] }
+    itemCounts:
+      description: Per-item counts that add up to loadedUnits. Additive.
+      allOf: [{ $ref: "#/ItemCounts" }]
+    productSku:
+      description: The one product a report is about. Additive.
+      type: [string, "null"]
+      maxLength: 32
+    photoData:
+      description: A photo of the problem as a data URL (jpeg, png or webp). Additive.
+      type: [string, "null"]
+      maxLength: 3000000
+    holdSealing:
+      description: >
+        Whether the shortfall holds the vehicle at the dock until the dispatcher
+        decides. Defaults to true. False lets the vehicle be sealed and leave
+        with the line short. Additive.
+      type: boolean
 
 LoadCheck:
   type: object

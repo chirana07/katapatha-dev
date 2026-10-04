@@ -1,11 +1,21 @@
 # Owner: BE1
 SignInRequest:
-  type: object
-  required: [email, password]
-  additionalProperties: false
-  properties:
-    email: { type: string, format: email, examples: ["nimal@waypoint.lk"] }
-    password: { type: string, minLength: 1, examples: ["waypoint"] }
+  description: >
+    Email and password for every role; staff ID and PIN for the loader's shared
+    dock tablet (additive). Exactly one pair.
+  oneOf:
+    - type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email: { type: string, format: email, examples: ["nimal@waypoint.lk"] }
+        password: { type: string, minLength: 1, examples: ["waypoint"] }
+    - type: object
+      required: [staffId, pin]
+      additionalProperties: false
+      properties:
+        staffId: { type: string, minLength: 2, maxLength: 32, examples: ["LDR-0142"] }
+        pin: { type: string, pattern: "^[0-9]{4,8}$", examples: ["4826"] }
 
 Session:
   type: object

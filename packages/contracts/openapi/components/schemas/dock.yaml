@@ -1,0 +1,108 @@
+# Owner: BE3 (dock)
+#
+# The loader's shift view and handover note. Everything here is computed from
+# rows the dock wrote: load checks, counts in progress and the seal.
+
+BayTrip:
+  type: object
+  required: [tripId, vehicleId, tripNo, plannedDepartAt, loadedUnits, expectedUnits]
+  properties:
+    tripId: { type: string }
+    vehicleId: { type: string }
+    tripNo: { type: integer }
+    plannedDepartAt: { type: [string, "null"] }
+    loadedUnits: { type: integer }
+    expectedUnits: { type: integer }
+
+DockHandover:
+  type: object
+  required: [body, authorName, updatedAt]
+  properties:
+    body: { type: string }
+    authorName: { type: string }
+    updatedAt: { type: string, format: date-time }
+
+DockHandoverRequest:
+  type: object
+  required: [date, body, authorName]
+  additionalProperties: false
+  properties:
+    date: { $ref: "./common.yaml#/DateOnly" }
+    body: { type: string, minLength: 1, maxLength: 2000 }
+    authorName: { type: string, minLength: 2, maxLength: 80 }
+
+DockShift:
+  type: object
+  required: [date, depotCode, dockBays, loadTargetMinutes, nowClock, dispatcherName, bays, trips, averageLoadMinutes, unitsPerQuarterHour, history, handover]
+  properties:
+    date: { $ref: "./common.yaml#/DateOnly" }
+    depotCode: { type: string }
+    dockBays: { type: integer, examples: [6] }
+    loadTargetMinutes:
+      type: integer
+      description: The dock's target from first box to sealed door, per vehicle.
+      examples: [45]
+    nowClock:
+      type: [string, "null"]
+      description: The Colombo clock now when the day is today; null otherwise.
+    dispatcherName: { type: [string, "null"], examples: ["Nimal Perera"] }
+    bays:
+      type: array
+      items:
+        type: object
+        required: [bay, current, next]
+        properties:
+          bay: { type: integer }
+          current:
+            description: The vehicle loading at this bay now.
+            oneOf: [{ type: "null" }, { $ref: "#/BayTrip" }]
+          next:
+            description: The next vehicle due at this bay.
+            oneOf: [{ type: "null" }, { $ref: "#/BayTrip" }]
+    trips:
+      type: array
+      items:
+        type: object
+        required: [tripId, vehicleId, tripNo, status, plannedDepartAt, dockBay, loadStartedAt, sealedAt, loadMinutes, sealedOnTime, lateMinutes, loadedUnits, expectedUnits, minutesBehind]
+        properties:
+          tripId: { type: string }
+          vehicleId: { type: string }
+          tripNo: { type: integer }
+          status: { $ref: "./common.yaml#/TripStatus" }
+          plannedDepartAt: { type: [string, "null"] }
+          dockBay: { type: [integer, "null"] }
+          loadStartedAt: { type: [string, "null"], format: date-time }
+          sealedAt: { type: [string, "null"], format: date-time }
+          loadMinutes: { type: [integer, "null"], description: Sealed minus started. }
+          sealedOnTime: { type: [boolean, "null"], description: Sealed at or before the planned departure. }
+          lateMinutes: { type: [integer, "null"] }
+          loadedUnits: { type: integer }
+          expectedUnits: { type: integer }
+          minutesBehind:
+            type: [integer, "null"]
+            description: >
+              Minutes behind the dock's loading plan (a straight line from
+              loadTargetMinutes before departure to departure). Only on today.
+    averageLoadMinutes: { type: [integer, "null"] }
+    unitsPerQuarterHour:
+      type: array
+      description: Units checked onto vehicles per 15 minutes, first to last check of the day.
+      items:
+        type: object
+        required: [start, units]
+        properties:
+          start: { $ref: "./common.yaml#/ClockTime" }
+          units: { type: integer }
+    history:
+      type: array
+      description: The last seven published days up to this one, oldest first.
+      items:
+        type: object
+        required: [date, vehicles, sealed, sealedOnTime]
+        properties:
+          date: { $ref: "./common.yaml#/DateOnly" }
+          vehicles: { type: integer }
+          sealed: { type: integer }
+          sealedOnTime: { type: integer }
+    handover:
+      oneOf: [{ type: "null" }, { $ref: "#/DockHandover" }]

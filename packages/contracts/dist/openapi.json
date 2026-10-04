@@ -2387,6 +2387,278 @@
         }
       }
     },
+    "/trips/{tripId}/load-progress/{orderId}": {
+      "parameters": [
+        {
+          "name": "tripId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "orderId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "put": {
+        "operationId": "recordLoadProgress",
+        "summary": "Save a count in progress on an order",
+        "description": "The dock's steppers. Moves the trip to LOADING and starts its load clock. Never a check: 409 LINE_CHECKED once the order has one.\n",
+        "tags": [
+          "loading"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoadProgressRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoadProgress"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/trips/{tripId}/vehicle-swap/candidates": {
+      "parameters": [
+        {
+          "name": "tripId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "listVehicleSwapCandidates",
+        "summary": "Vehicles that could take this trip",
+        "description": "Dispatcher only. Every vehicle at the depot, with why it cannot when it cannot.",
+        "tags": [
+          "loading"
+        ],
+        "responses": {
+          "200": {
+            "description": "Candidates.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VehicleSwapCandidate"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/trips/{tripId}/vehicle-swap": {
+      "parameters": [
+        {
+          "name": "tripId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "swapTripVehicle",
+        "summary": "Move a trip at the dock onto another vehicle",
+        "description": "Dispatcher only. Only while the trip is PLANNED or LOADING. Clears the trip's checks and counts for the reload (kept on the swap), and tells the stores on the trip.\n",
+        "tags": [
+          "loading"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VehicleSwapRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Swapped.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VehicleSwap"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/trips/{tripId}/vehicle-swap/{swapId}/steps": {
+      "parameters": [
+        {
+          "name": "tripId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "swapId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "recordVehicleSwapStep",
+        "summary": "Record a step of a vehicle swap at the dock",
+        "description": "Each step is recorded once; a repeat returns the swap unchanged.",
+        "tags": [
+          "loading"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VehicleSwapStepRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VehicleSwap"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/dock/shift": {
+      "get": {
+        "operationId": "getDockShift",
+        "summary": "The dock's shift for one day",
+        "description": "Bays, each vehicle's load timing, units per 15 minutes, the last seven nights and the handover note, for the caller's depot. Loader or dispatcher. Gives the day's trips their bays on first read.\n",
+        "tags": [
+          "loading"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Date"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The shift.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DockShift"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/dock/handover": {
+      "put": {
+        "operationId": "saveDockHandover",
+        "summary": "Write the shift handover note",
+        "description": "One note per depot per day; the latest edit wins.",
+        "tags": [
+          "loading"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DockHandoverRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DockHandover"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
     "/drivers/me/vehicle": {
       "put": {
         "operationId": "chooseVehicle",
@@ -5797,28 +6069,58 @@
     },
     "schemas": {
       "SignInRequest": {
-        "type": "object",
-        "required": [
-          "email",
-          "password"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "email": {
-            "type": "string",
-            "format": "email",
-            "examples": [
-              "nimal@waypoint.lk"
-            ]
+        "description": "Email and password for every role; staff ID and PIN for the loader's shared dock tablet (additive). Exactly one pair.\n",
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "email",
+              "password"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "email": {
+                "type": "string",
+                "format": "email",
+                "examples": [
+                  "nimal@waypoint.lk"
+                ]
+              },
+              "password": {
+                "type": "string",
+                "minLength": 1,
+                "examples": [
+                  "waypoint"
+                ]
+              }
+            }
           },
-          "password": {
-            "type": "string",
-            "minLength": 1,
-            "examples": [
-              "waypoint"
-            ]
+          {
+            "type": "object",
+            "required": [
+              "staffId",
+              "pin"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "staffId": {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 32,
+                "examples": [
+                  "LDR-0142"
+                ]
+              },
+              "pin": {
+                "type": "string",
+                "pattern": "^[0-9]{4,8}$",
+                "examples": [
+                  "4826"
+                ]
+              }
+            }
           }
-        }
+        ]
       },
       "Role": {
         "type": "string",
@@ -7838,6 +8140,102 @@
           }
         }
       },
+      "VehicleSwap": {
+        "type": "object",
+        "description": "The dispatcher moved this trip to another vehicle while it was at the dock. The trip's checks and counts were cleared for the reload; the dock records each step as it works it.\n",
+        "required": [
+          "id",
+          "fromVehicleId",
+          "toVehicleId",
+          "reason",
+          "previousDepartAt",
+          "newDepartAt",
+          "unloadedUnits",
+          "createdAt",
+          "unloadedAt",
+          "unloadedByName",
+          "arrivedAt",
+          "arrivedByName",
+          "acknowledgedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "fromVehicleId": {
+            "type": "string",
+            "examples": [
+              "VEH029"
+            ]
+          },
+          "toVehicleId": {
+            "type": "string",
+            "examples": [
+              "VEH031"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "examples": [
+              "Brake fault"
+            ]
+          },
+          "previousDepartAt": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "newDepartAt": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "unloadedUnits": {
+            "type": "integer",
+            "description": "Units that were on the old vehicle and must come off.",
+            "examples": [
+              6
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "unloadedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "unloadedByName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "arrivedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "arrivedByName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "acknowledgedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "storesNotified": {
+            "type": "integer",
+            "description": "Only on the create response."
+          }
+        }
+      },
       "Trip": {
         "type": "object",
         "required": [
@@ -7934,6 +8332,50 @@
             "description": "Only on `GET /trips/{tripId}`.",
             "examples": [
               "Peliyagoda"
+            ]
+          },
+          "dockBay": {
+            "description": "The dock bay this trip loads at. Given the first time the dock reads a published day and never moved after. Present on the loading endpoints. Additive.\n",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "examples": [
+              3
+            ]
+          },
+          "loadStartedAt": {
+            "description": "The first load check or count in progress on this trip. Additive.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "sealedAt": {
+            "description": "When the loader marked the vehicle ready (the seal). Additive.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "loadedUnits": {
+            "description": "Units on board so far: checked orders count their check, unchecked orders their count in progress. Additive.\n",
+            "type": "integer",
+            "examples": [
+              42
+            ]
+          },
+          "swap": {
+            "description": "The latest vehicle swap on this trip, if any. Additive.",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VehicleSwap"
+              }
             ]
           }
         }
@@ -8682,6 +9124,21 @@
           }
         }
       },
+      "ItemCounts": {
+        "type": "object",
+        "description": "Units per product sku. They add up to the line's units.",
+        "additionalProperties": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxProperties": 200,
+        "examples": [
+          {
+            "FA001": 8,
+            "FA003": 5
+          }
+        ]
+      },
       "LoadList": {
         "type": "object",
         "description": "Stops are returned in REVERSE delivery order. The driver unloads from the back, so the loader must load the last stop first. This ordering is part of the contract, not a client concern.\n",
@@ -8772,6 +9229,64 @@
                     null
                   ]
                 },
+                "checkedAt": {
+                  "description": "When the check landed. Additive.",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "itemCounts": {
+                  "description": "The per-item counts the check carried, if any. Additive.",
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ItemCounts"
+                    }
+                  ]
+                },
+                "progress": {
+                  "description": "A count in progress on a line not yet checked. Additive.",
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "loadedUnits",
+                        "itemCounts",
+                        "updatedByName",
+                        "updatedAt"
+                      ],
+                      "properties": {
+                        "loadedUnits": {
+                          "type": "integer"
+                        },
+                        "itemCounts": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "$ref": "#/components/schemas/ItemCounts"
+                            }
+                          ]
+                        },
+                        "updatedByName": {
+                          "type": "string"
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  ]
+                },
                 "shortfall": {
                   "description": "The shortfall raised for this line and what became of it. A line the dispatcher sent short keeps condition SHORT; this says the dock is no longer waiting on it. Additive.\n",
                   "oneOf": [
@@ -8811,6 +9326,24 @@
                             "CANCEL_LINE",
                             null
                           ]
+                        },
+                        "reasonCode": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "Additive."
+                        },
+                        "productSku": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "The product reported, if one was. Additive."
+                        },
+                        "hasPhoto": {
+                          "type": "boolean",
+                          "description": "A photo was attached. Additive."
                         }
                       }
                     }
@@ -8874,6 +9407,34 @@
             "examples": [
               null
             ]
+          },
+          "itemCounts": {
+            "description": "Per-item counts that add up to loadedUnits. Additive.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ItemCounts"
+              }
+            ]
+          },
+          "productSku": {
+            "description": "The one product a report is about. Additive.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 32
+          },
+          "photoData": {
+            "description": "A photo of the problem as a data URL (jpeg, png or webp). Additive.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 3000000
+          },
+          "holdSealing": {
+            "description": "Whether the shortfall holds the vehicle at the dock until the dispatcher decides. Defaults to true. False lets the vehicle be sealed and leave with the line short. Additive.\n",
+            "type": "boolean"
           }
         }
       },
@@ -8956,6 +9517,513 @@
             "examples": [
               "2026-09-30T03:05:00Z"
             ]
+          }
+        }
+      },
+      "LoadProgressRequest": {
+        "type": "object",
+        "required": [
+          "loadedUnits",
+          "updatedByName"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "loadedUnits": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [
+              18
+            ]
+          },
+          "itemCounts": {
+            "$ref": "#/components/schemas/ItemCounts"
+          },
+          "updatedByName": {
+            "type": "string",
+            "minLength": 2,
+            "examples": [
+              "Ranjith Silva"
+            ]
+          }
+        }
+      },
+      "LoadProgress": {
+        "type": "object",
+        "description": "A count in progress on an order not yet checked. It shows on progress bars but never satisfies the ready gate.\n",
+        "required": [
+          "tripId",
+          "orderId",
+          "loadedUnits",
+          "itemCounts",
+          "updatedByName",
+          "updatedAt"
+        ],
+        "properties": {
+          "tripId": {
+            "type": "string"
+          },
+          "orderId": {
+            "type": "string"
+          },
+          "loadedUnits": {
+            "type": "integer"
+          },
+          "itemCounts": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ItemCounts"
+              }
+            ]
+          },
+          "updatedByName": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "VehicleSwapCandidate": {
+        "type": "object",
+        "required": [
+          "vehicleId",
+          "type",
+          "temp",
+          "weightCapKg",
+          "volumeCapM3",
+          "available",
+          "reason"
+        ],
+        "properties": {
+          "vehicleId": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "truck",
+              "van"
+            ]
+          },
+          "temp": {
+            "type": "string",
+            "enum": [
+              "reefer",
+              "ambient"
+            ]
+          },
+          "weightCapKg": {
+            "type": "number"
+          },
+          "volumeCapM3": {
+            "type": "number"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it cannot take the trip.",
+            "examples": [
+              "Too small for this load"
+            ]
+          }
+        }
+      },
+      "VehicleSwapRequest": {
+        "type": "object",
+        "required": [
+          "toVehicleId",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "toVehicleId": {
+            "type": "string",
+            "examples": [
+              "VEH031"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200,
+            "examples": [
+              "Brake fault"
+            ]
+          },
+          "newDepartAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClockTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outOfService": {
+            "type": "boolean",
+            "description": "Also mark the old vehicle in the workshop for the rest of the day."
+          }
+        }
+      },
+      "VehicleSwapStepRequest": {
+        "type": "object",
+        "required": [
+          "step",
+          "byName"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "step": {
+            "type": "string",
+            "enum": [
+              "UNLOADED",
+              "ARRIVED",
+              "ACKNOWLEDGED"
+            ]
+          },
+          "byName": {
+            "type": "string",
+            "minLength": 2,
+            "examples": [
+              "Ranjith Silva"
+            ]
+          }
+        }
+      },
+      "BayTrip": {
+        "type": "object",
+        "required": [
+          "tripId",
+          "vehicleId",
+          "tripNo",
+          "plannedDepartAt",
+          "loadedUnits",
+          "expectedUnits"
+        ],
+        "properties": {
+          "tripId": {
+            "type": "string"
+          },
+          "vehicleId": {
+            "type": "string"
+          },
+          "tripNo": {
+            "type": "integer"
+          },
+          "plannedDepartAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "loadedUnits": {
+            "type": "integer"
+          },
+          "expectedUnits": {
+            "type": "integer"
+          }
+        }
+      },
+      "DockHandover": {
+        "type": "object",
+        "required": [
+          "body",
+          "authorName",
+          "updatedAt"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "authorName": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "DockShift": {
+        "type": "object",
+        "required": [
+          "date",
+          "depotCode",
+          "dockBays",
+          "loadTargetMinutes",
+          "nowClock",
+          "dispatcherName",
+          "bays",
+          "trips",
+          "averageLoadMinutes",
+          "unitsPerQuarterHour",
+          "history",
+          "handover"
+        ],
+        "properties": {
+          "date": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "depotCode": {
+            "type": "string"
+          },
+          "dockBays": {
+            "type": "integer",
+            "examples": [
+              6
+            ]
+          },
+          "loadTargetMinutes": {
+            "type": "integer",
+            "description": "The dock's target from first box to sealed door, per vehicle.",
+            "examples": [
+              45
+            ]
+          },
+          "nowClock": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Colombo clock now when the day is today; null otherwise."
+          },
+          "dispatcherName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "Nimal Perera"
+            ]
+          },
+          "bays": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "bay",
+                "current",
+                "next"
+              ],
+              "properties": {
+                "bay": {
+                  "type": "integer"
+                },
+                "current": {
+                  "description": "The vehicle loading at this bay now.",
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BayTrip"
+                    }
+                  ]
+                },
+                "next": {
+                  "description": "The next vehicle due at this bay.",
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BayTrip"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "trips": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "tripId",
+                "vehicleId",
+                "tripNo",
+                "status",
+                "plannedDepartAt",
+                "dockBay",
+                "loadStartedAt",
+                "sealedAt",
+                "loadMinutes",
+                "sealedOnTime",
+                "lateMinutes",
+                "loadedUnits",
+                "expectedUnits",
+                "minutesBehind"
+              ],
+              "properties": {
+                "tripId": {
+                  "type": "string"
+                },
+                "vehicleId": {
+                  "type": "string"
+                },
+                "tripNo": {
+                  "type": "integer"
+                },
+                "status": {
+                  "$ref": "#/components/schemas/TripStatus"
+                },
+                "plannedDepartAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "dockBay": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "loadStartedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "sealedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "loadMinutes": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Sealed minus started."
+                },
+                "sealedOnTime": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "Sealed at or before the planned departure."
+                },
+                "lateMinutes": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "loadedUnits": {
+                  "type": "integer"
+                },
+                "expectedUnits": {
+                  "type": "integer"
+                },
+                "minutesBehind": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Minutes behind the dock's loading plan (a straight line from loadTargetMinutes before departure to departure). Only on today.\n"
+                }
+              }
+            }
+          },
+          "averageLoadMinutes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "unitsPerQuarterHour": {
+            "type": "array",
+            "description": "Units checked onto vehicles per 15 minutes, first to last check of the day.",
+            "items": {
+              "type": "object",
+              "required": [
+                "start",
+                "units"
+              ],
+              "properties": {
+                "start": {
+                  "$ref": "#/components/schemas/ClockTime"
+                },
+                "units": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "history": {
+            "type": "array",
+            "description": "The last seven published days up to this one, oldest first.",
+            "items": {
+              "type": "object",
+              "required": [
+                "date",
+                "vehicles",
+                "sealed",
+                "sealedOnTime"
+              ],
+              "properties": {
+                "date": {
+                  "$ref": "#/components/schemas/DateOnly"
+                },
+                "vehicles": {
+                  "type": "integer"
+                },
+                "sealed": {
+                  "type": "integer"
+                },
+                "sealedOnTime": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "handover": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DockHandover"
+              }
+            ]
+          }
+        }
+      },
+      "DockHandoverRequest": {
+        "type": "object",
+        "required": [
+          "date",
+          "body",
+          "authorName"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "authorName": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 80
           }
         }
       },

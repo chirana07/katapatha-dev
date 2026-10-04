@@ -633,6 +633,136 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/trips/{tripId}/load-progress/{orderId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tripId: string;
+                orderId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Save a count in progress on an order
+         * @description The dock's steppers. Moves the trip to LOADING and starts its load clock. Never a check: 409 LINE_CHECKED once the order has one.
+         */
+        put: operations["recordLoadProgress"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/trips/{tripId}/vehicle-swap/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tripId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Vehicles that could take this trip
+         * @description Dispatcher only. Every vehicle at the depot, with why it cannot when it cannot.
+         */
+        get: operations["listVehicleSwapCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/trips/{tripId}/vehicle-swap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tripId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move a trip at the dock onto another vehicle
+         * @description Dispatcher only. Only while the trip is PLANNED or LOADING. Clears the trip's checks and counts for the reload (kept on the swap), and tells the stores on the trip.
+         */
+        post: operations["swapTripVehicle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/trips/{tripId}/vehicle-swap/{swapId}/steps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tripId: string;
+                swapId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record a step of a vehicle swap at the dock
+         * @description Each step is recorded once; a repeat returns the swap unchanged.
+         */
+        post: operations["recordVehicleSwapStep"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dock/shift": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The dock's shift for one day
+         * @description Bays, each vehicle's load timing, units per 15 minutes, the last seven nights and the handover note, for the caller's depot. Loader or dispatcher. Gives the day's trips their bays on first read.
+         */
+        get: operations["getDockShift"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dock/handover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Write the shift handover note
+         * @description One note per depot per day; the latest edit wins.
+         */
+        put: operations["saveDockHandover"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/drivers/me/vehicle": {
         parameters: {
             query?: never;
@@ -1201,6 +1331,7 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Email and password for every role; staff ID and PIN for the loader's shared dock tablet (additive). Exactly one pair. */
         SignInRequest: {
             /**
              * Format: email
@@ -1209,6 +1340,11 @@ export interface components {
             email: string;
             /** @example waypoint */
             password: string;
+        } | {
+            /** @example LDR-0142 */
+            staffId: string;
+            /** @example 4826 */
+            pin: string;
         };
         /** @enum {string} */
         Role: "DISPATCHER" | "LOADER" | "DRIVER" | "STORE_MANAGER";
@@ -1833,6 +1969,35 @@ export interface components {
             /** @example 600 */
             ageSeconds: number;
         };
+        /** @description The dispatcher moved this trip to another vehicle while it was at the dock. The trip's checks and counts were cleared for the reload; the dock records each step as it works it. */
+        VehicleSwap: {
+            id: string;
+            /** @example VEH029 */
+            fromVehicleId: string;
+            /** @example VEH031 */
+            toVehicleId: string;
+            /** @example Brake fault */
+            reason: string;
+            previousDepartAt: components["schemas"]["ClockTime"];
+            newDepartAt: components["schemas"]["ClockTime"];
+            /**
+             * @description Units that were on the old vehicle and must come off.
+             * @example 6
+             */
+            unloadedUnits: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            unloadedAt: string | null;
+            unloadedByName: string | null;
+            /** Format: date-time */
+            arrivedAt: string | null;
+            arrivedByName: string | null;
+            /** Format: date-time */
+            acknowledgedAt: string | null;
+            /** @description Only on the create response. */
+            storesNotified?: number;
+        };
         Trip: {
             /** @example clx0trp1a2b3c4d5e6f7g8h */
             id: string;
@@ -1868,6 +2033,28 @@ export interface components {
              * @example Peliyagoda
              */
             depotCode?: string;
+            /**
+             * @description The dock bay this trip loads at. Given the first time the dock reads a published day and never moved after. Present on the loading endpoints. Additive.
+             * @example 3
+             */
+            dockBay?: number | null;
+            /**
+             * Format: date-time
+             * @description The first load check or count in progress on this trip. Additive.
+             */
+            loadStartedAt?: string | null;
+            /**
+             * Format: date-time
+             * @description When the loader marked the vehicle ready (the seal). Additive.
+             */
+            sealedAt?: string | null;
+            /**
+             * @description Units on board so far: checked orders count their check, unchecked orders their count in progress. Additive.
+             * @example 42
+             */
+            loadedUnits?: number;
+            /** @description The latest vehicle swap on this trip, if any. Additive. */
+            swap?: null | components["schemas"]["VehicleSwap"];
         };
         /** @description One vehicle's day against its limits, as the allocator measured it when the plan was built. These are the bars on the board: trips used of two, minutes used of each wave's budget, fuel committed of the weekly quota. */
         VehicleMeter: {
@@ -2096,6 +2283,16 @@ export interface components {
             /** @description Newest first. */
             events: components["schemas"]["HistoryEvent"][];
         };
+        /**
+         * @description Units per product sku. They add up to the line's units.
+         * @example {
+         *       "FA001": 8,
+         *       "FA003": 5
+         *     }
+         */
+        ItemCounts: {
+            [key: string]: number;
+        };
         /** @description Stops are returned in REVERSE delivery order. The driver unloads from the back, so the loader must load the last stop first. This ordering is part of the contract, not a client concern. */
         LoadList: {
             /** @example clx0trp1a2b3c4d5e6f7g8h */
@@ -2121,6 +2318,21 @@ export interface components {
                 loadedUnits?: number | null;
                 /** @enum {string|null} */
                 condition?: "OK" | "SHORT" | "DAMAGED" | "MISSING" | null;
+                /**
+                 * Format: date-time
+                 * @description When the check landed. Additive.
+                 */
+                checkedAt?: string | null;
+                /** @description The per-item counts the check carried, if any. Additive. */
+                itemCounts?: null | components["schemas"]["ItemCounts"];
+                /** @description A count in progress on a line not yet checked. Additive. */
+                progress?: null | {
+                    loadedUnits: number;
+                    itemCounts: null | components["schemas"]["ItemCounts"];
+                    updatedByName: string;
+                    /** Format: date-time */
+                    updatedAt: string;
+                };
                 /** @description The shortfall raised for this line and what became of it. A line the dispatcher sent short keeps condition SHORT; this says the dock is no longer waiting on it. Additive. */
                 shortfall?: null | {
                     id: string;
@@ -2129,6 +2341,12 @@ export interface components {
                     blocksDeparture: boolean;
                     /** @enum {string|null} */
                     resolution?: "SEND_SHORT" | "HOLD_ORDER" | "MOVE_TO_TRIP_2" | "CANCEL_LINE" | null;
+                    /** @description Additive. */
+                    reasonCode?: string | null;
+                    /** @description The product reported, if one was. Additive. */
+                    productSku?: string | null;
+                    /** @description A photo was attached. Additive. */
+                    hasPhoto?: boolean;
                 };
             }[];
         };
@@ -2152,6 +2370,14 @@ export interface components {
              * @example null
              */
             clientRequestId?: string | null;
+            /** @description Per-item counts that add up to loadedUnits. Additive. */
+            itemCounts?: components["schemas"]["ItemCounts"];
+            /** @description The one product a report is about. Additive. */
+            productSku?: string | null;
+            /** @description A photo of the problem as a data URL (jpeg, png or webp). Additive. */
+            photoData?: string | null;
+            /** @description Whether the shortfall holds the vehicle at the dock until the dispatcher decides. Defaults to true. False lets the vehicle be sealed and leave with the line short. Additive. */
+            holdSealing?: boolean;
         };
         LoadCheck: {
             /** @example clx0trp1a2b3c4d5e6f7g8h */
@@ -2179,6 +2405,129 @@ export interface components {
              * @example 2026-09-30T03:05:00Z
              */
             releasedAt?: string;
+        };
+        LoadProgressRequest: {
+            /** @example 18 */
+            loadedUnits: number;
+            itemCounts?: components["schemas"]["ItemCounts"];
+            /** @example Ranjith Silva */
+            updatedByName: string;
+        };
+        /** @description A count in progress on an order not yet checked. It shows on progress bars but never satisfies the ready gate. */
+        LoadProgress: {
+            tripId: string;
+            orderId: string;
+            loadedUnits: number;
+            itemCounts: null | components["schemas"]["ItemCounts"];
+            updatedByName: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        VehicleSwapCandidate: {
+            vehicleId: string;
+            /** @enum {string} */
+            type: "truck" | "van";
+            /** @enum {string} */
+            temp: "reefer" | "ambient";
+            weightCapKg: number;
+            volumeCapM3: number;
+            available: boolean;
+            /**
+             * @description Why it cannot take the trip.
+             * @example Too small for this load
+             */
+            reason: string | null;
+        };
+        VehicleSwapRequest: {
+            /** @example VEH031 */
+            toVehicleId: string;
+            /** @example Brake fault */
+            reason: string;
+            newDepartAt?: components["schemas"]["ClockTime"] | null;
+            /** @description Also mark the old vehicle in the workshop for the rest of the day. */
+            outOfService?: boolean;
+        };
+        VehicleSwapStepRequest: {
+            /** @enum {string} */
+            step: "UNLOADED" | "ARRIVED" | "ACKNOWLEDGED";
+            /** @example Ranjith Silva */
+            byName: string;
+        };
+        BayTrip: {
+            tripId: string;
+            vehicleId: string;
+            tripNo: number;
+            plannedDepartAt: string | null;
+            loadedUnits: number;
+            expectedUnits: number;
+        };
+        DockHandover: {
+            body: string;
+            authorName: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        DockShift: {
+            date: components["schemas"]["DateOnly"];
+            depotCode: string;
+            /** @example 6 */
+            dockBays: number;
+            /**
+             * @description The dock's target from first box to sealed door, per vehicle.
+             * @example 45
+             */
+            loadTargetMinutes: number;
+            /** @description The Colombo clock now when the day is today; null otherwise. */
+            nowClock: string | null;
+            /** @example Nimal Perera */
+            dispatcherName: string | null;
+            bays: {
+                bay: number;
+                /** @description The vehicle loading at this bay now. */
+                current: null | components["schemas"]["BayTrip"];
+                /** @description The next vehicle due at this bay. */
+                next: null | components["schemas"]["BayTrip"];
+            }[];
+            trips: {
+                tripId: string;
+                vehicleId: string;
+                tripNo: number;
+                status: components["schemas"]["TripStatus"];
+                plannedDepartAt: string | null;
+                dockBay: number | null;
+                /** Format: date-time */
+                loadStartedAt: string | null;
+                /** Format: date-time */
+                sealedAt: string | null;
+                /** @description Sealed minus started. */
+                loadMinutes: number | null;
+                /** @description Sealed at or before the planned departure. */
+                sealedOnTime: boolean | null;
+                lateMinutes: number | null;
+                loadedUnits: number;
+                expectedUnits: number;
+                /** @description Minutes behind the dock's loading plan (a straight line from loadTargetMinutes before departure to departure). Only on today. */
+                minutesBehind: number | null;
+            }[];
+            averageLoadMinutes: number | null;
+            /** @description Units checked onto vehicles per 15 minutes, first to last check of the day. */
+            unitsPerQuarterHour: {
+                start: components["schemas"]["ClockTime"];
+                units: number;
+            }[];
+            /** @description The last seven published days up to this one, oldest first. */
+            history: {
+                date: components["schemas"]["DateOnly"];
+                vehicles: number;
+                sealed: number;
+                sealedOnTime: number;
+            }[];
+            handover: null | components["schemas"]["DockHandover"];
+        };
+        DockHandoverRequest: {
+            date: components["schemas"]["DateOnly"];
+            body: string;
+            authorName: string;
         };
         /** @enum {string} */
         StopStatus: "PENDING" | "ARRIVED" | "UNLOADING" | "DONE" | "SKIPPED" | "FAILED";
@@ -5290,6 +5639,167 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    recordLoadProgress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tripId: string;
+                orderId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoadProgressRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoadProgress"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listVehicleSwapCandidates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tripId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Candidates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VehicleSwapCandidate"][];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    swapTripVehicle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tripId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VehicleSwapRequest"];
+            };
+        };
+        responses: {
+            /** @description Swapped. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VehicleSwap"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    recordVehicleSwapStep: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tripId: string;
+                swapId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VehicleSwapStepRequest"];
+            };
+        };
+        responses: {
+            /** @description Recorded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VehicleSwap"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getDockShift: {
+        parameters: {
+            query: {
+                /** @description Operating date (Asia/Colombo). */
+                date: components["parameters"]["Date"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The shift. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DockShift"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    saveDockHandover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DockHandoverRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DockHandover"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     chooseVehicle: {

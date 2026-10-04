@@ -137,6 +137,12 @@ paths:
   /trips/{tripId}/load-list:                  { $ref: "./paths/trips.yaml#/loadList" }
   /trips/{tripId}/load-checks/{orderId}:      { $ref: "./paths/trips.yaml#/loadCheck" }
   /trips/{tripId}/readiness:                  { $ref: "./paths/trips.yaml#/readiness" }
+  /trips/{tripId}/load-progress/{orderId}:    { $ref: "./paths/trips.yaml#/loadProgress" }
+  /trips/{tripId}/vehicle-swap/candidates:    { $ref: "./paths/trips.yaml#/vehicleSwapCandidates" }
+  /trips/{tripId}/vehicle-swap:               { $ref: "./paths/trips.yaml#/vehicleSwap" }
+  /trips/{tripId}/vehicle-swap/{swapId}/steps: { $ref: "./paths/trips.yaml#/vehicleSwapSteps" }
+  /dock/shift:                                { $ref: "./paths/dock.yaml#/shift" }
+  /dock/handover:                             { $ref: "./paths/dock.yaml#/handover" }
   /drivers/me/vehicle:                        { $ref: "./paths/driver.yaml#/vehicle" }
   /drivers/me/run:                            { $ref: "./paths/driver.yaml#/run" }
   /stops/{stopId}/events:                     { $ref: "./paths/stops.yaml#/events" }

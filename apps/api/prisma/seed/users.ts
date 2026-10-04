@@ -20,12 +20,18 @@ export const DEMO_PASSWORD = "waypoint";
 
 export const STORE_ANCHOR_OUTLET = "OUT074";
 
+/** The loader signs in on the shared dock tablet with these instead. */
+export const DEMO_LOADER_STAFF_ID = "LDR-0142";
+export const DEMO_LOADER_PIN = "4826";
+
 export interface SeedUser {
   email: string;
   name: string;
   role: Role;
   depotCode?: string;
   outletId?: string;
+  /** Loaders only: the badge number the dock tablet signs in with. */
+  staffId?: string;
   blurb: string;
 }
 
@@ -42,6 +48,7 @@ export const SEED_USERS: SeedUser[] = [
     name: "Ranjith Silva",
     role: "LOADER",
     depotCode: "Peliyagoda",
+    staffId: DEMO_LOADER_STAFF_ID,
     blurb: "Loads to the stop sequence and flags what is short.",
   },
   {
@@ -62,6 +69,7 @@ export const SEED_USERS: SeedUser[] = [
 
 export async function seedUsers(prisma: PrismaClient): Promise<number> {
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
+  const pinHash = await bcrypt.hash(DEMO_LOADER_PIN, 10);
 
   for (const u of SEED_USERS) {
     await prisma.user.upsert({
@@ -72,6 +80,8 @@ export async function seedUsers(prisma: PrismaClient): Promise<number> {
         depotCode: u.depotCode ?? null,
         outletId: u.outletId ?? null,
         passwordHash,
+        staffId: u.staffId ?? null,
+        pinHash: u.staffId ? pinHash : null,
       },
       create: {
         email: u.email,
@@ -80,6 +90,8 @@ export async function seedUsers(prisma: PrismaClient): Promise<number> {
         depotCode: u.depotCode ?? null,
         outletId: u.outletId ?? null,
         passwordHash,
+        staffId: u.staffId ?? null,
+        pinHash: u.staffId ? pinHash : null,
       },
     });
   }
@@ -95,4 +107,5 @@ export function printAccounts(): void {
       `         ${u.email.padEnd(width)}  ${DEMO_PASSWORD.padEnd(10)}  ${u.role}`,
     );
   }
+  console.log(`[seed] The loader's dock tablet: staff ID ${DEMO_LOADER_STAFF_ID}, PIN ${DEMO_LOADER_PIN}.`);
 }

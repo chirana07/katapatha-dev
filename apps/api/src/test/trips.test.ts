@@ -18,12 +18,23 @@ import tripRoutes from "../routes/trips.js";
 vi.mock("../lib/db.js", () => ({
   prisma: {
     trip: { findMany: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
-    loadCheck: { upsert: vi.fn() },
+    loadCheck: { upsert: vi.fn(), findUnique: vi.fn() },
+    loadProgress: { deleteMany: vi.fn(), upsert: vi.fn() },
     shortfall: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     chillerReading: { findMany: vi.fn() },
     auditEvent: { createMany: vi.fn() },
     $transaction: vi.fn(),
   },
+}));
+
+// The dock's extras (bays, units on board, swaps) have their own tests in
+// dock.test.ts; here they are stubbed so the query-shape assertions below stay
+// about the trip queries.
+vi.mock("../services/dock.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/dock.js")>()),
+  ensureBaysForDate: vi.fn(async () => undefined),
+  loadedUnitsByTrip: vi.fn(async () => new Map()),
+  latestSwaps: vi.fn(async () => new Map()),
 }));
 
 vi.mock("../lib/authorization.js", () => ({
@@ -215,7 +226,8 @@ describe("the loader's trip routes", () => {
         { seq: 2, outletId: "OUT200", orders: [{ order: { id: "ORD2", ref: "ORD-2", units: 20 } }] },
         { seq: 1, outletId: "OUT100", orders: [{ order: { id: "ORD1", ref: "ORD-1", units: 10 } }] },
       ],
-      loadChecks: [{ orderId: "ORD2", loadedUnits: 18, condition: "SHORT" as const }],
+      loadChecks: [{ orderId: "ORD2", loadedUnits: 18, condition: "SHORT" as const, checkedAt: new Date("2026-04-09T01:00:00Z"), itemCounts: null }],
+      loadProgress: [] as Array<{ orderId: string; loadedUnits: number; itemCounts: unknown; updatedByName: string; updatedAt: Date }>,
       shortfalls: [] as Array<{
         id: string; orderId: string; status: "OPEN" | "RESOLVED"; blocksDeparture: boolean; resolution: string | null;
       }>,
@@ -278,10 +290,10 @@ describe("the loader's trip routes", () => {
 
       const lines = response.json().lines as Array<{ orderId: string; shortfall: unknown }>;
       expect(lines.find((l) => l.orderId === "ORD3")!.shortfall).toEqual({
-        id: "SF3", status: "OPEN", blocksDeparture: true, resolution: null,
+        id: "SF3", status: "OPEN", blocksDeparture: true, resolution: null, hasPhoto: false,
       });
       expect(lines.find((l) => l.orderId === "ORD2")!.shortfall).toEqual({
-        id: "SF2", status: "RESOLVED", blocksDeparture: false, resolution: "SEND_SHORT",
+        id: "SF2", status: "RESOLVED", blocksDeparture: false, resolution: "SEND_SHORT", hasPhoto: false,
       });
       expect(lines.find((l) => l.orderId === "ORD1")!.shortfall).toBeNull();
     });
