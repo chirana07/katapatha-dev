@@ -5,6 +5,7 @@ export const HOME_FOR_ROLE: Record<Role, string> = {
   LOADER: "/loader",
   DRIVER: "/driver",
   STORE_MANAGER: "/store",
+  ADMIN: "/admin",
 };
 
 export const PREFIX_FOR_ROLE: Record<Role, string> = {
@@ -12,6 +13,7 @@ export const PREFIX_FOR_ROLE: Record<Role, string> = {
   LOADER: "/loader",
   DRIVER: "/driver",
   STORE_MANAGER: "/store",
+  ADMIN: "/admin",
 };
 
 /** Accept only an internal destination owned by the signed-in role. */

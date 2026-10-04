@@ -15,7 +15,7 @@ export const metadata = {
  *   "Temporary usernames, passwords, challenge notes, and prototype
  *    instructions belong on the development-only /access page."
  *
- * The page returns 404 in production. The accounts shown here are the four
+ * The page returns 404 in production. The accounts shown here are the
  * seed users created by apps/api/prisma/seed/users.ts; the shared password
  * `waypoint` matches the seed and nothing else.
  */
@@ -57,6 +57,15 @@ const ACCOUNTS = [
     does: "Arrive, unload, complete with POD, report problems.",
     home: "/driver",
     accent: "border-indigo-200",
+  },
+  {
+    role: "Admin",
+    email: "asha@waypoint.lk",
+    scope: "Every depot",
+    device: "Desktop",
+    does: "Add people, outlets and vehicles; compare depots; read the decision log.",
+    home: "/admin",
+    accent: "border-rose-200",
   },
 ] as const;
 

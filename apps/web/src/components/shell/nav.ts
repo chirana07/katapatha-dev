@@ -85,6 +85,19 @@ export const NAV: Record<Role, RoleNav> = {
       { label: "Report an issue", href: "/store/issues", icon: "issue", match: /^\/store\/issues/ },
     ],
   },
+  // Waypoint-wide: the admin keeps the records every other workspace reads.
+  ADMIN: {
+    title: "Admin",
+    home: "/admin",
+    fallbackInitials: "AD",
+    items: [
+      { label: "Overview", href: "/admin", icon: "dashboard", match: /^\/admin$/ },
+      { label: "Users", href: "/admin/users", icon: "people", match: /^\/admin\/users/ },
+      { label: "Outlets", href: "/admin/outlets", icon: "outlets", match: /^\/admin\/outlets/ },
+      { label: "Vehicles", href: "/admin/vehicles", icon: "vehicles", match: /^\/admin\/vehicles/ },
+      { label: "Activity", href: "/admin/activity", icon: "history", match: /^\/admin\/activity/ },
+    ],
+  },
   // The driver has no rail. DESIGN.md: phone is "one column, no page-wide
   // horizontal scroll, compact header or bottom navigation", and the designs
   // give the driver a header plus a pinned thumb bar instead.

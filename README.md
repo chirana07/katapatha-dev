@@ -34,7 +34,7 @@ pnpm mock                       # Prism mock on :4010 (optional, see below)
 pnpm --filter @katapatha/mobile start
 ```
 
-Seeded accounts — password `waypoint` for all four:
+Seeded accounts — password `waypoint` for all five:
 
 | Email | Role |
 |---|---|
@@ -42,6 +42,7 @@ Seeded accounts — password `waypoint` for all four:
 | ranjith@waypoint.lk | LOADER |
 | sunil@waypoint.lk | DRIVER |
 | fathima@waypoint.lk | STORE_MANAGER |
+| asha@waypoint.lk | ADMIN |
 
 ## Check it
 

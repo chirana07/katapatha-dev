@@ -27,7 +27,10 @@ Ulid:
 
 Role:
   type: string
-  enum: [DISPATCHER, LOADER, DRIVER, STORE_MANAGER]
+  description: >
+    The four operating roles, plus ADMIN, which is Waypoint-wide and keeps the
+    accounts, outlets and vehicles the others work with.
+  enum: [DISPATCHER, LOADER, DRIVER, STORE_MANAGER, ADMIN]
 
 Brand:
   type: string

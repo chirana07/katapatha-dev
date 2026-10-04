@@ -1,0 +1,264 @@
+# Owner: ADMIN slice
+#
+# Admin only, Waypoint-wide. Every write is recorded in the decision log.
+# Nothing is deleted: accounts are disabled, outlets and vehicles are kept.
+
+directory:
+  get:
+    operationId: getAdminDirectory
+    summary: Depots and districts, for the admin's forms
+    tags: [admin]
+    responses:
+      "200":
+        description: The directory.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/admin.yaml#/AdminDirectory" }
+            example:
+              depots: [{ code: Kandy, name: "Kandy depot" }, { code: Peliyagoda, name: "Peliyagoda depot" }]
+              districts: [{ name: Colombo, depotCode: Peliyagoda }, { name: Kandy, depotCode: Kandy }]
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+
+overview:
+  get:
+    operationId: getAdminOverview
+    summary: Waypoint-wide overview, one row per depot
+    description: >
+      Without `from`/`to` the range is the seven days ending today in
+      Asia/Colombo. At most 366 days.
+    tags: [admin]
+    parameters:
+      - { name: from, in: query, required: false, schema: { $ref: "../components/schemas/common.yaml#/DateOnly" } }
+      - { name: to, in: query, required: false, schema: { $ref: "../components/schemas/common.yaml#/DateOnly" } }
+    responses:
+      "200":
+        description: The overview.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/admin.yaml#/AdminOverview" }
+            example:
+              from: "2026-09-28"
+              to: "2026-10-04"
+              totals:
+                users: 5
+                activeUsers: 5
+                usersByRole: [{ role: DISPATCHER, count: 1 }, { role: LOADER, count: 1 }, { role: DRIVER, count: 1 }, { role: STORE_MANAGER, count: 1 }, { role: ADMIN, count: 1 }]
+                outlets: 120
+                vehicles: 14
+              depots:
+                - { depotCode: Peliyagoda, name: "Peliyagoda depot", outlets: 84, vehicles: 9, reefers: 4, activeUsers: 4, onTimePct: 91.2, stops: 340, orders: 512, delivered: 480, deferred: 14, utilisationPct: 78, discrepancies: 6 }
+                - { depotCode: Kandy, name: "Kandy depot", outlets: 36, vehicles: 5, reefers: 2, activeUsers: 0, onTimePct: null, stops: 0, orders: 140, delivered: 131, deferred: 3, utilisationPct: null, discrepancies: null }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+activity:
+  get:
+    operationId: getAdminActivity
+    summary: The newest entries in the decision log, Waypoint-wide
+    tags: [admin]
+    parameters:
+      - { name: limit, in: query, required: false, schema: { type: string, pattern: '^[0-9]{1,3}$' }, description: "1 to 200, default 50." }
+      - { name: entityType, in: query, required: false, schema: { type: string, maxLength: 40 } }
+    responses:
+      "200":
+        description: Entries, newest first.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/admin.yaml#/AdminActivityEntry" }
+            example:
+              - { id: "clx0aud1a2b3c4d5e6f7g8h9", at: "2026-10-04T03:12:00.000Z", actorName: "Asha Wijesinghe", actorRole: ADMIN, action: "user.create", entityType: User, entityId: "clx0usr5a2b3c4d5e6f7g8h9", note: null }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+
+users:
+  get:
+    operationId: listAdminUsers
+    summary: Every account, active and disabled
+    tags: [admin]
+    responses:
+      "200":
+        description: Accounts, by role then name.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/admin.yaml#/AdminUser" }
+            example:
+              - { id: "clx0usr1a2b3c4d5e6f7g8h9", email: "nimal@waypoint.lk", name: "Nimal Perera", role: DISPATCHER, depotCode: Peliyagoda, outletId: null, active: true, createdAt: "2026-09-28T02:00:00.000Z", lastSignInAt: "2026-10-04T01:00:00.000Z" }
+              - { id: "clx0usr4a2b3c4d5e6f7g8h9", email: "fathima@waypoint.lk", name: "Fathima Rizvi", role: STORE_MANAGER, depotCode: null, outletId: OUT074, active: true, createdAt: "2026-09-28T02:00:00.000Z", lastSignInAt: null }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+  post:
+    operationId: createAdminUser
+    summary: Add an account
+    tags: [admin]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/admin.yaml#/CreateUserRequest" }
+    responses:
+      "201":
+        description: The account.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/admin.yaml#/AdminUser" }
+            example: { id: "clx0usr5a2b3c4d5e6f7g8h9", email: "kamal@waypoint.lk", name: "Kamal Jayasuriya", role: DRIVER, depotCode: Peliyagoda, outletId: null, active: true, createdAt: "2026-10-04T03:12:00.000Z", lastSignInAt: null }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "409": { $ref: "../components/responses/common.yaml#/Conflict" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+user:
+  parameters:
+    - { name: userId, in: path, required: true, schema: { type: string } }
+  patch:
+    operationId: updateAdminUser
+    summary: Change, disable, re-enable or reset the password of an account
+    tags: [admin]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/admin.yaml#/UpdateUserRequest" }
+    responses:
+      "200":
+        description: The account.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/admin.yaml#/AdminUser" }
+            example: { id: "clx0usr5a2b3c4d5e6f7g8h9", email: "kamal@waypoint.lk", name: "Kamal Jayasuriya", role: DRIVER, depotCode: Peliyagoda, outletId: null, active: false, createdAt: "2026-10-04T03:12:00.000Z", lastSignInAt: null }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+outlets:
+  get:
+    operationId: listAdminOutlets
+    summary: Every outlet, at every depot
+    tags: [admin]
+    responses:
+      "200":
+        description: Outlets by id.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/admin.yaml#/AdminOutlet" }
+            example:
+              - { id: OUT010, displayName: null, brand: Fresh, districtName: Colombo, depotCode: Peliyagoda, dockType: rear_dock, parkingConstraint: normal, windowOpen: "05:00", windowClose: "08:30", mallWindowOpen: null, mallWindowClose: null, lat: 6.93, lng: 79.86, geoSource: SYNTHETIC, managers: 0 }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+  post:
+    operationId: createAdminOutlet
+    summary: Add an outlet
+    tags: [admin]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/admin.yaml#/CreateOutletRequest" }
+    responses:
+      "201":
+        description: The outlet.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/admin.yaml#/AdminOutlet" }
+            example: { id: OUT200, displayName: "Fresh Wattala", brand: Fresh, districtName: Gampaha, depotCode: Peliyagoda, dockType: street, parkingConstraint: van_only, windowOpen: "05:30", windowClose: "09:00", mallWindowOpen: null, mallWindowClose: null, lat: 7.08, lng: 79.99, geoSource: SYNTHETIC, managers: 0 }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "409": { $ref: "../components/responses/common.yaml#/Conflict" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+outlet:
+  parameters:
+    - { name: outletId, in: path, required: true, schema: { type: string } }
+  patch:
+    operationId: updateAdminOutlet
+    summary: Change an outlet's name, dock and windows
+    tags: [admin]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/admin.yaml#/UpdateOutletRequest" }
+    responses:
+      "200":
+        description: The outlet.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/admin.yaml#/AdminOutlet" }
+            example: { id: OUT010, displayName: "Fresh Kollupitiya", brand: Fresh, districtName: Colombo, depotCode: Peliyagoda, dockType: rear_dock, parkingConstraint: normal, windowOpen: "05:00", windowClose: "08:00", mallWindowOpen: null, mallWindowClose: null, lat: 6.93, lng: 79.86, geoSource: SYNTHETIC, managers: 0 }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+vehicles:
+  get:
+    operationId: listAdminVehicles
+    summary: Every vehicle, at every depot
+    tags: [admin]
+    responses:
+      "200":
+        description: Vehicles by id.
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "../components/schemas/admin.yaml#/AdminVehicle" }
+            example:
+              - { id: VEH101, type: truck, temp: reefer, weightCapKg: 5000, volumeCapM3: 30, fuelType: diesel, kmPerL: 6.5, weeklyFuelQuotaL: 420, depotCode: Peliyagoda, trips: 12 }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+  post:
+    operationId: createAdminVehicle
+    summary: Add a vehicle to a depot's fleet
+    description: It is a candidate for the depot's next plan from the moment it is saved.
+    tags: [admin]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/admin.yaml#/CreateVehicleRequest" }
+    responses:
+      "201":
+        description: The vehicle.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/admin.yaml#/AdminVehicle" }
+            example: { id: VEH120, type: van, temp: ambient, weightCapKg: 1500, volumeCapM3: 8, fuelType: diesel, kmPerL: 11, weeklyFuelQuotaL: 200, depotCode: Kandy, trips: 0 }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "409": { $ref: "../components/responses/common.yaml#/Conflict" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }
+
+vehicle:
+  parameters:
+    - { name: vehicleId, in: path, required: true, schema: { type: string } }
+  patch:
+    operationId: updateAdminVehicle
+    summary: Change a vehicle's type, temperature, capacity or fuel figures
+    description: Plans already built keep the figures they were built with.
+    tags: [admin]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "../components/schemas/admin.yaml#/UpdateVehicleRequest" }
+    responses:
+      "200":
+        description: The vehicle.
+        content:
+          application/json:
+            schema: { $ref: "../components/schemas/admin.yaml#/AdminVehicle" }
+            example: { id: VEH101, type: truck, temp: reefer, weightCapKg: 5200, volumeCapM3: 30, fuelType: diesel, kmPerL: 6.5, weeklyFuelQuotaL: 450, depotCode: Peliyagoda, trips: 12 }
+      "401": { $ref: "../components/responses/common.yaml#/Unauthorized" }
+      "403": { $ref: "../components/responses/common.yaml#/Forbidden" }
+      "404": { $ref: "../components/responses/common.yaml#/NotFound" }
+      "422": { $ref: "../components/responses/common.yaml#/ValidationFailed" }

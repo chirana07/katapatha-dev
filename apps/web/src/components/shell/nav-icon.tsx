@@ -24,9 +24,25 @@ export type IconKind =
   | "place"
   | "history"
   | "issue"
+  | "people"
+  | "outlets"
   | "sign-out";
 
 const PATHS: Record<IconKind, React.ReactNode> = {
+  people: (
+    <>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20c.6-3.6 3.3-5.5 6.5-5.5s5.9 1.9 6.5 5.5" />
+      <path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.5 3.5 5.2" />
+    </>
+  ),
+  outlets: (
+    <>
+      <path d="M4 10v10h16V10" />
+      <path d="M3 10 5 4h14l2 6c0 1.4-1.1 2.5-2.5 2.5S16 11.4 16 10c0 1.4-1.1 2.5-2.5 2.5h-3C9.1 12.5 8 11.4 8 10c0 1.4-1.1 2.5-2.5 2.5S3 11.4 3 10Z" />
+      <path d="M10 20v-4h4v4" />
+    </>
+  ),
   dashboard: (
     <>
       <rect x="3" y="3" width="7" height="9" rx="1.5" />

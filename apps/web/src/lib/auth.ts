@@ -90,5 +90,7 @@ export function scopeLabel(user: SessionUser): string {
       return user.outletId ?? "No outlet assigned";
     case "DRIVER":
       return user.defaultVehicleId ?? "No vehicle claimed";
+    case "ADMIN":
+      return "All depots";
   }
 }

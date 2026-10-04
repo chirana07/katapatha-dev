@@ -14,6 +14,9 @@ model User {
   outletId         String?
   outlet           Outlet?  @relation(fields: [outletId], references: [id])
   defaultVehicleId String?
+  /// An account is disabled, never deleted: audit events and decisions point
+  /// at it. A disabled account cannot sign in and its sessions stop working.
+  active           Boolean  @default(true)
   createdAt        DateTime @default(now())
 
   sessions      Session[]

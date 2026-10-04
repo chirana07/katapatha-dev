@@ -100,6 +100,10 @@
     {
       "name": "capacity",
       "description": "Capacity actions proposed from the demand forecast."
+    },
+    {
+      "name": "admin",
+      "description": "Waypoint-wide accounts, outlets, vehicles and overview, kept by the admin."
     }
   ],
   "paths": {
@@ -4326,6 +4330,742 @@
         }
       }
     },
+    "/admin/directory": {
+      "get": {
+        "operationId": "getAdminDirectory",
+        "summary": "Depots and districts, for the admin's forms",
+        "tags": [
+          "admin"
+        ],
+        "responses": {
+          "200": {
+            "description": "The directory.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminDirectory"
+                },
+                "example": {
+                  "depots": [
+                    {
+                      "code": "Kandy",
+                      "name": "Kandy depot"
+                    },
+                    {
+                      "code": "Peliyagoda",
+                      "name": "Peliyagoda depot"
+                    }
+                  ],
+                  "districts": [
+                    {
+                      "name": "Colombo",
+                      "depotCode": "Peliyagoda"
+                    },
+                    {
+                      "name": "Kandy",
+                      "depotCode": "Kandy"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/admin/overview": {
+      "get": {
+        "operationId": "getAdminOverview",
+        "summary": "Waypoint-wide overview, one row per depot",
+        "description": "Without `from`/`to` the range is the seven days ending today in Asia/Colombo. At most 366 days.\n",
+        "tags": [
+          "admin"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DateOnly"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DateOnly"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The overview.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOverview"
+                },
+                "example": {
+                  "from": "2026-09-28",
+                  "to": "2026-10-04",
+                  "totals": {
+                    "users": 5,
+                    "activeUsers": 5,
+                    "usersByRole": [
+                      {
+                        "role": "DISPATCHER",
+                        "count": 1
+                      },
+                      {
+                        "role": "LOADER",
+                        "count": 1
+                      },
+                      {
+                        "role": "DRIVER",
+                        "count": 1
+                      },
+                      {
+                        "role": "STORE_MANAGER",
+                        "count": 1
+                      },
+                      {
+                        "role": "ADMIN",
+                        "count": 1
+                      }
+                    ],
+                    "outlets": 120,
+                    "vehicles": 14
+                  },
+                  "depots": [
+                    {
+                      "depotCode": "Peliyagoda",
+                      "name": "Peliyagoda depot",
+                      "outlets": 84,
+                      "vehicles": 9,
+                      "reefers": 4,
+                      "activeUsers": 4,
+                      "onTimePct": 91.2,
+                      "stops": 340,
+                      "orders": 512,
+                      "delivered": 480,
+                      "deferred": 14,
+                      "utilisationPct": 78,
+                      "discrepancies": 6
+                    },
+                    {
+                      "depotCode": "Kandy",
+                      "name": "Kandy depot",
+                      "outlets": 36,
+                      "vehicles": 5,
+                      "reefers": 2,
+                      "activeUsers": 0,
+                      "onTimePct": null,
+                      "stops": 0,
+                      "orders": 140,
+                      "delivered": 131,
+                      "deferred": 3,
+                      "utilisationPct": null,
+                      "discrepancies": null
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/admin/activity": {
+      "get": {
+        "operationId": "getAdminActivity",
+        "summary": "The newest entries in the decision log, Waypoint-wide",
+        "tags": [
+          "admin"
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{1,3}$"
+            },
+            "description": "1 to 200, default 50."
+          },
+          {
+            "name": "entityType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 40
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Entries, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminActivityEntry"
+                  }
+                },
+                "example": [
+                  {
+                    "id": "clx0aud1a2b3c4d5e6f7g8h9",
+                    "at": "2026-10-04T03:12:00.000Z",
+                    "actorName": "Asha Wijesinghe",
+                    "actorRole": "ADMIN",
+                    "action": "user.create",
+                    "entityType": "User",
+                    "entityId": "clx0usr5a2b3c4d5e6f7g8h9",
+                    "note": null
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/admin/users": {
+      "get": {
+        "operationId": "listAdminUsers",
+        "summary": "Every account, active and disabled",
+        "tags": [
+          "admin"
+        ],
+        "responses": {
+          "200": {
+            "description": "Accounts, by role then name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminUser"
+                  }
+                },
+                "example": [
+                  {
+                    "id": "clx0usr1a2b3c4d5e6f7g8h9",
+                    "email": "nimal@waypoint.lk",
+                    "name": "Nimal Perera",
+                    "role": "DISPATCHER",
+                    "depotCode": "Peliyagoda",
+                    "outletId": null,
+                    "active": true,
+                    "createdAt": "2026-09-28T02:00:00.000Z",
+                    "lastSignInAt": "2026-10-04T01:00:00.000Z"
+                  },
+                  {
+                    "id": "clx0usr4a2b3c4d5e6f7g8h9",
+                    "email": "fathima@waypoint.lk",
+                    "name": "Fathima Rizvi",
+                    "role": "STORE_MANAGER",
+                    "depotCode": null,
+                    "outletId": "OUT074",
+                    "active": true,
+                    "createdAt": "2026-09-28T02:00:00.000Z",
+                    "lastSignInAt": null
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAdminUser",
+        "summary": "Add an account",
+        "tags": [
+          "admin"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUser"
+                },
+                "example": {
+                  "id": "clx0usr5a2b3c4d5e6f7g8h9",
+                  "email": "kamal@waypoint.lk",
+                  "name": "Kamal Jayasuriya",
+                  "role": "DRIVER",
+                  "depotCode": "Peliyagoda",
+                  "outletId": null,
+                  "active": true,
+                  "createdAt": "2026-10-04T03:12:00.000Z",
+                  "lastSignInAt": null
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/admin/users/{userId}": {
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "patch": {
+        "operationId": "updateAdminUser",
+        "summary": "Change, disable, re-enable or reset the password of an account",
+        "tags": [
+          "admin"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUser"
+                },
+                "example": {
+                  "id": "clx0usr5a2b3c4d5e6f7g8h9",
+                  "email": "kamal@waypoint.lk",
+                  "name": "Kamal Jayasuriya",
+                  "role": "DRIVER",
+                  "depotCode": "Peliyagoda",
+                  "outletId": null,
+                  "active": false,
+                  "createdAt": "2026-10-04T03:12:00.000Z",
+                  "lastSignInAt": null
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/admin/outlets": {
+      "get": {
+        "operationId": "listAdminOutlets",
+        "summary": "Every outlet, at every depot",
+        "tags": [
+          "admin"
+        ],
+        "responses": {
+          "200": {
+            "description": "Outlets by id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminOutlet"
+                  }
+                },
+                "example": [
+                  {
+                    "id": "OUT010",
+                    "displayName": null,
+                    "brand": "Fresh",
+                    "districtName": "Colombo",
+                    "depotCode": "Peliyagoda",
+                    "dockType": "rear_dock",
+                    "parkingConstraint": "normal",
+                    "windowOpen": "05:00",
+                    "windowClose": "08:30",
+                    "mallWindowOpen": null,
+                    "mallWindowClose": null,
+                    "lat": 6.93,
+                    "lng": 79.86,
+                    "geoSource": "SYNTHETIC",
+                    "managers": 0
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAdminOutlet",
+        "summary": "Add an outlet",
+        "tags": [
+          "admin"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOutletRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The outlet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOutlet"
+                },
+                "example": {
+                  "id": "OUT200",
+                  "displayName": "Fresh Wattala",
+                  "brand": "Fresh",
+                  "districtName": "Gampaha",
+                  "depotCode": "Peliyagoda",
+                  "dockType": "street",
+                  "parkingConstraint": "van_only",
+                  "windowOpen": "05:30",
+                  "windowClose": "09:00",
+                  "mallWindowOpen": null,
+                  "mallWindowClose": null,
+                  "lat": 7.08,
+                  "lng": 79.99,
+                  "geoSource": "SYNTHETIC",
+                  "managers": 0
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/admin/outlets/{outletId}": {
+      "parameters": [
+        {
+          "name": "outletId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "patch": {
+        "operationId": "updateAdminOutlet",
+        "summary": "Change an outlet's name, dock and windows",
+        "tags": [
+          "admin"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateOutletRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The outlet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOutlet"
+                },
+                "example": {
+                  "id": "OUT010",
+                  "displayName": "Fresh Kollupitiya",
+                  "brand": "Fresh",
+                  "districtName": "Colombo",
+                  "depotCode": "Peliyagoda",
+                  "dockType": "rear_dock",
+                  "parkingConstraint": "normal",
+                  "windowOpen": "05:00",
+                  "windowClose": "08:00",
+                  "mallWindowOpen": null,
+                  "mallWindowClose": null,
+                  "lat": 6.93,
+                  "lng": 79.86,
+                  "geoSource": "SYNTHETIC",
+                  "managers": 0
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/admin/vehicles": {
+      "get": {
+        "operationId": "listAdminVehicles",
+        "summary": "Every vehicle, at every depot",
+        "tags": [
+          "admin"
+        ],
+        "responses": {
+          "200": {
+            "description": "Vehicles by id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminVehicle"
+                  }
+                },
+                "example": [
+                  {
+                    "id": "VEH101",
+                    "type": "truck",
+                    "temp": "reefer",
+                    "weightCapKg": 5000,
+                    "volumeCapM3": 30,
+                    "fuelType": "diesel",
+                    "kmPerL": 6.5,
+                    "weeklyFuelQuotaL": 420,
+                    "depotCode": "Peliyagoda",
+                    "trips": 12
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAdminVehicle",
+        "summary": "Add a vehicle to a depot's fleet",
+        "description": "It is a candidate for the depot's next plan from the moment it is saved.",
+        "tags": [
+          "admin"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateVehicleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The vehicle.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminVehicle"
+                },
+                "example": {
+                  "id": "VEH120",
+                  "type": "van",
+                  "temp": "ambient",
+                  "weightCapKg": 1500,
+                  "volumeCapM3": 8,
+                  "fuelType": "diesel",
+                  "kmPerL": 11,
+                  "weeklyFuelQuotaL": 200,
+                  "depotCode": "Kandy",
+                  "trips": 0
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/admin/vehicles/{vehicleId}": {
+      "parameters": [
+        {
+          "name": "vehicleId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "patch": {
+        "operationId": "updateAdminVehicle",
+        "summary": "Change a vehicle's type, temperature, capacity or fuel figures",
+        "description": "Plans already built keep the figures they were built with.",
+        "tags": [
+          "admin"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateVehicleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The vehicle.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminVehicle"
+                },
+                "example": {
+                  "id": "VEH101",
+                  "type": "truck",
+                  "temp": "reefer",
+                  "weightCapKg": 5200,
+                  "volumeCapM3": 30,
+                  "fuelType": "diesel",
+                  "kmPerL": 6.5,
+                  "weeklyFuelQuotaL": 450,
+                  "depotCode": "Peliyagoda",
+                  "trips": 12
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
     "/reports/overview": {
       "get": {
         "operationId": "getReportsOverview",
@@ -5897,11 +6637,13 @@
       },
       "Role": {
         "type": "string",
+        "description": "The four operating roles, plus ADMIN, which is Waypoint-wide and keeps the accounts, outlets and vehicles the others work with.\n",
         "enum": [
           "DISPATCHER",
           "LOADER",
           "DRIVER",
-          "STORE_MANAGER"
+          "STORE_MANAGER",
+          "ADMIN"
         ]
       },
       "SessionUser": {
@@ -11695,6 +12437,837 @@
             "examples": [
               1
             ]
+          }
+        }
+      },
+      "AdminDirectory": {
+        "type": "object",
+        "description": "What the admin's forms choose from.",
+        "required": [
+          "depots",
+          "districts"
+        ],
+        "properties": {
+          "depots": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "code",
+                "name"
+              ],
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "districts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "depotCode"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "depotCode": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "AdminDepotRow": {
+        "type": "object",
+        "required": [
+          "depotCode",
+          "name",
+          "outlets",
+          "vehicles",
+          "reefers",
+          "activeUsers",
+          "onTimePct",
+          "stops",
+          "orders",
+          "delivered",
+          "deferred",
+          "utilisationPct",
+          "discrepancies"
+        ],
+        "properties": {
+          "depotCode": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "outlets": {
+            "type": "integer"
+          },
+          "vehicles": {
+            "type": "integer"
+          },
+          "reefers": {
+            "type": "integer"
+          },
+          "activeUsers": {
+            "type": "integer"
+          },
+          "onTimePct": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "stops": {
+            "type": "integer",
+            "description": "Arrivals the on-time figure is computed over."
+          },
+          "orders": {
+            "type": "integer",
+            "description": "Orders planned in the range, live and historical."
+          },
+          "delivered": {
+            "type": "integer"
+          },
+          "deferred": {
+            "type": "integer"
+          },
+          "utilisationPct": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "discrepancies": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "AdminOverview": {
+        "type": "object",
+        "description": "Waypoint-wide, one row per depot over the same date range. Performance figures are computed exactly as the dispatcher's depot reports compute them, and are null with the same meaning (nothing recorded to compute from).\n",
+        "required": [
+          "from",
+          "to",
+          "totals",
+          "depots"
+        ],
+        "properties": {
+          "from": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "to": {
+            "$ref": "#/components/schemas/DateOnly"
+          },
+          "totals": {
+            "type": "object",
+            "required": [
+              "users",
+              "activeUsers",
+              "usersByRole",
+              "outlets",
+              "vehicles"
+            ],
+            "properties": {
+              "users": {
+                "type": "integer"
+              },
+              "activeUsers": {
+                "type": "integer"
+              },
+              "usersByRole": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "role",
+                    "count"
+                  ],
+                  "properties": {
+                    "role": {
+                      "$ref": "#/components/schemas/Role"
+                    },
+                    "count": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              },
+              "outlets": {
+                "type": "integer"
+              },
+              "vehicles": {
+                "type": "integer"
+              }
+            }
+          },
+          "depots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminDepotRow"
+            }
+          }
+        }
+      },
+      "AdminActivityEntry": {
+        "type": "object",
+        "required": [
+          "id",
+          "at",
+          "actorName",
+          "actorRole",
+          "action",
+          "entityType",
+          "entityId",
+          "note"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "actorName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "actorRole": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Role"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "action": {
+            "type": "string",
+            "examples": [
+              "user.create"
+            ]
+          },
+          "entityType": {
+            "type": "string",
+            "examples": [
+              "User"
+            ]
+          },
+          "entityId": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AdminUser": {
+        "type": "object",
+        "description": "An account as the admin manages it. No password or hash is ever returned. `depotCode` is set for dispatchers, loaders and drivers; `outletId` for store managers; neither for an admin.\n",
+        "required": [
+          "id",
+          "email",
+          "name",
+          "role",
+          "depotCode",
+          "outletId",
+          "active",
+          "createdAt",
+          "lastSignInAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "clx0usr1a2b3c4d5e6f7g8h9"
+            ]
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "examples": [
+              "nimal@waypoint.lk"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "examples": [
+              "Nimal Perera"
+            ]
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "depotCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "Peliyagoda"
+            ]
+          },
+          "outletId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              null
+            ]
+          },
+          "active": {
+            "type": "boolean",
+            "examples": [
+              true
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastSignInAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the newest session still on record was opened. Null if none."
+          }
+        }
+      },
+      "CreateUserRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "email",
+          "name",
+          "role",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 160
+          },
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200
+          },
+          "depotCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required for DISPATCHER, LOADER and DRIVER."
+          },
+          "outletId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required for STORE_MANAGER."
+          }
+        }
+      },
+      "UpdateUserRequest": {
+        "type": "object",
+        "description": "Any subset. The email cannot change. Setting `password` or `active: false` signs the account out everywhere. An admin cannot disable or demote their own account.\n",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200
+          },
+          "depotCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outletId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "active": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AdminOutlet": {
+        "type": "object",
+        "required": [
+          "id",
+          "displayName",
+          "brand",
+          "districtName",
+          "depotCode",
+          "dockType",
+          "parkingConstraint",
+          "windowOpen",
+          "windowClose",
+          "mallWindowOpen",
+          "mallWindowClose",
+          "lat",
+          "lng",
+          "geoSource",
+          "managers"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "OUT074"
+            ]
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "Fresh Puttalam"
+            ]
+          },
+          "brand": {
+            "$ref": "#/components/schemas/Brand"
+          },
+          "districtName": {
+            "type": "string",
+            "examples": [
+              "Puttalam"
+            ]
+          },
+          "depotCode": {
+            "type": "string",
+            "examples": [
+              "Peliyagoda"
+            ]
+          },
+          "dockType": {
+            "type": "string",
+            "enum": [
+              "rear_dock",
+              "street",
+              "mall_bay"
+            ]
+          },
+          "parkingConstraint": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "van_only",
+              "mall_dock"
+            ]
+          },
+          "windowOpen": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "windowClose": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "mallWindowOpen": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClockTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mallWindowClose": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClockTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lat": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "lng": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "geoSource": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "SYNTHETIC",
+              "CSV",
+              "DISPATCHER",
+              null
+            ]
+          },
+          "managers": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Active store-manager accounts bound to this outlet."
+          }
+        }
+      },
+      "CreateOutletRequest": {
+        "type": "object",
+        "description": "The depot follows from the district (the mapping is 1:1). Without a position the outlet is placed near its district centre, marked SYNTHETIC, until someone sets the real one. Both mall-window times or neither.\n",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "brand",
+          "districtName",
+          "dockType",
+          "parkingConstraint",
+          "windowOpen",
+          "windowClose"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Z0-9][A-Z0-9_-]{1,31}$"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 120
+          },
+          "brand": {
+            "$ref": "#/components/schemas/Brand"
+          },
+          "districtName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dockType": {
+            "type": "string",
+            "enum": [
+              "rear_dock",
+              "street",
+              "mall_bay"
+            ]
+          },
+          "parkingConstraint": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "van_only",
+              "mall_dock"
+            ]
+          },
+          "windowOpen": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "windowClose": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "mallWindowOpen": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClockTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mallWindowClose": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClockTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lat": {
+            "type": "number",
+            "minimum": 5.8,
+            "maximum": 9.9
+          },
+          "lng": {
+            "type": "number",
+            "minimum": 79.5,
+            "maximum": 82
+          }
+        }
+      },
+      "UpdateOutletRequest": {
+        "type": "object",
+        "description": "The id, brand and district cannot change: orders, plans and the depot assignment hang on them. Positions are moved on the dispatcher's map.\n",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 120
+          },
+          "dockType": {
+            "type": "string",
+            "enum": [
+              "rear_dock",
+              "street",
+              "mall_bay"
+            ]
+          },
+          "parkingConstraint": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "van_only",
+              "mall_dock"
+            ]
+          },
+          "windowOpen": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "windowClose": {
+            "$ref": "#/components/schemas/ClockTime"
+          },
+          "mallWindowOpen": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClockTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mallWindowClose": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClockTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "AdminVehicle": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "temp",
+          "weightCapKg",
+          "volumeCapM3",
+          "fuelType",
+          "kmPerL",
+          "weeklyFuelQuotaL",
+          "depotCode",
+          "trips"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "VEH101"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "truck",
+              "van"
+            ]
+          },
+          "temp": {
+            "$ref": "#/components/schemas/VehicleTemp"
+          },
+          "weightCapKg": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "volumeCapM3": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "fuelType": {
+            "type": "string",
+            "examples": [
+              "diesel"
+            ]
+          },
+          "kmPerL": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "weeklyFuelQuotaL": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "depotCode": {
+            "type": "string",
+            "examples": [
+              "Peliyagoda"
+            ]
+          },
+          "trips": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Trips ever planned on this vehicle."
+          }
+        }
+      },
+      "CreateVehicleRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "type",
+          "temp",
+          "weightCapKg",
+          "volumeCapM3",
+          "fuelType",
+          "kmPerL",
+          "weeklyFuelQuotaL",
+          "depotCode"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Z0-9][A-Z0-9_-]{1,31}$"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "truck",
+              "van"
+            ]
+          },
+          "temp": {
+            "$ref": "#/components/schemas/VehicleTemp"
+          },
+          "weightCapKg": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 40000
+          },
+          "volumeCapM3": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 120
+          },
+          "fuelType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 24
+          },
+          "kmPerL": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 50
+          },
+          "weeklyFuelQuotaL": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "depotCode": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "UpdateVehicleRequest": {
+        "type": "object",
+        "description": "The id and depot cannot change; plans and fuel ledgers hang on them.",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "truck",
+              "van"
+            ]
+          },
+          "temp": {
+            "$ref": "#/components/schemas/VehicleTemp"
+          },
+          "weightCapKg": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 40000
+          },
+          "volumeCapM3": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 120
+          },
+          "fuelType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 24
+          },
+          "kmPerL": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 50
+          },
+          "weeklyFuelQuotaL": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
           }
         }
       },

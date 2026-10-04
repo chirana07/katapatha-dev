@@ -56,11 +56,14 @@ enum Wave {
   DAYTIME
 }
 
+/// ADMIN is Waypoint-wide: it keeps the people, outlets and vehicles the four
+/// operating roles work with, and is scoped to no depot or outlet.
 enum Role {
   DISPATCHER
   LOADER
   DRIVER
   STORE_MANAGER
+  ADMIN
 }
 
 enum VehicleStatus {

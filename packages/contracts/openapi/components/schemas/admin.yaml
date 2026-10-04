@@ -1,0 +1,238 @@
+# Owner: ADMIN slice
+#
+# The administrator's records: accounts, outlets and vehicles, and the
+# Waypoint-wide overview. An admin is scoped to no depot or outlet.
+#
+# Nothing here is deleted. Accounts are disabled (audit events point at them);
+# outlets and vehicles are kept because orders, plans and history point at them.
+
+AdminUser:
+  type: object
+  description: >
+    An account as the admin manages it. No password or hash is ever returned.
+    `depotCode` is set for dispatchers, loaders and drivers; `outletId` for
+    store managers; neither for an admin.
+  required: [id, email, name, role, depotCode, outletId, active, createdAt, lastSignInAt]
+  properties:
+    id: { type: string, examples: ["clx0usr1a2b3c4d5e6f7g8h9"] }
+    email: { type: string, format: email, examples: ["nimal@waypoint.lk"] }
+    name: { type: string, examples: ["Nimal Perera"] }
+    role: { $ref: "./common.yaml#/Role" }
+    depotCode: { type: [string, "null"], examples: ["Peliyagoda"] }
+    outletId: { type: [string, "null"], examples: [null] }
+    active: { type: boolean, examples: [true] }
+    createdAt: { type: string, format: date-time }
+    lastSignInAt:
+      type: [string, "null"]
+      format: date-time
+      description: When the newest session still on record was opened. Null if none.
+
+CreateUserRequest:
+  type: object
+  additionalProperties: false
+  required: [email, name, role, password]
+  properties:
+    email: { type: string, format: email, maxLength: 160 }
+    name: { type: string, minLength: 2, maxLength: 120 }
+    role: { $ref: "./common.yaml#/Role" }
+    password: { type: string, minLength: 8, maxLength: 200 }
+    depotCode: { type: [string, "null"], description: "Required for DISPATCHER, LOADER and DRIVER." }
+    outletId: { type: [string, "null"], description: "Required for STORE_MANAGER." }
+
+UpdateUserRequest:
+  type: object
+  description: >
+    Any subset. The email cannot change. Setting `password` or `active: false`
+    signs the account out everywhere. An admin cannot disable or demote their
+    own account.
+  additionalProperties: false
+  minProperties: 1
+  properties:
+    name: { type: string, minLength: 2, maxLength: 120 }
+    role: { $ref: "./common.yaml#/Role" }
+    password: { type: string, minLength: 8, maxLength: 200 }
+    depotCode: { type: [string, "null"] }
+    outletId: { type: [string, "null"] }
+    active: { type: boolean }
+
+AdminOutlet:
+  type: object
+  required: [id, displayName, brand, districtName, depotCode, dockType, parkingConstraint, windowOpen, windowClose, mallWindowOpen, mallWindowClose, lat, lng, geoSource, managers]
+  properties:
+    id: { type: string, examples: ["OUT074"] }
+    displayName: { type: [string, "null"], examples: ["Fresh Puttalam"] }
+    brand: { $ref: "./common.yaml#/Brand" }
+    districtName: { type: string, examples: ["Puttalam"] }
+    depotCode: { type: string, examples: ["Peliyagoda"] }
+    dockType: { type: string, enum: [rear_dock, street, mall_bay] }
+    parkingConstraint: { type: string, enum: [normal, van_only, mall_dock] }
+    windowOpen: { $ref: "./common.yaml#/ClockTime" }
+    windowClose: { $ref: "./common.yaml#/ClockTime" }
+    mallWindowOpen: { oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }] }
+    mallWindowClose: { oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }] }
+    lat: { type: [number, "null"] }
+    lng: { type: [number, "null"] }
+    geoSource: { type: [string, "null"], enum: [SYNTHETIC, CSV, DISPATCHER, null] }
+    managers: { type: integer, minimum: 0, description: "Active store-manager accounts bound to this outlet." }
+
+CreateOutletRequest:
+  type: object
+  description: >
+    The depot follows from the district (the mapping is 1:1). Without a
+    position the outlet is placed near its district centre, marked SYNTHETIC,
+    until someone sets the real one. Both mall-window times or neither.
+  additionalProperties: false
+  required: [id, brand, districtName, dockType, parkingConstraint, windowOpen, windowClose]
+  properties:
+    id: { type: string, pattern: '^[A-Z0-9][A-Z0-9_-]{1,31}$' }
+    displayName: { type: [string, "null"], maxLength: 120 }
+    brand: { $ref: "./common.yaml#/Brand" }
+    districtName: { type: string, minLength: 1 }
+    dockType: { type: string, enum: [rear_dock, street, mall_bay] }
+    parkingConstraint: { type: string, enum: [normal, van_only, mall_dock] }
+    windowOpen: { $ref: "./common.yaml#/ClockTime" }
+    windowClose: { $ref: "./common.yaml#/ClockTime" }
+    mallWindowOpen: { oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }] }
+    mallWindowClose: { oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }] }
+    lat: { type: number, minimum: 5.8, maximum: 9.9 }
+    lng: { type: number, minimum: 79.5, maximum: 82.0 }
+
+UpdateOutletRequest:
+  type: object
+  description: >
+    The id, brand and district cannot change: orders, plans and the depot
+    assignment hang on them. Positions are moved on the dispatcher's map.
+  additionalProperties: false
+  minProperties: 1
+  properties:
+    displayName: { type: [string, "null"], maxLength: 120 }
+    dockType: { type: string, enum: [rear_dock, street, mall_bay] }
+    parkingConstraint: { type: string, enum: [normal, van_only, mall_dock] }
+    windowOpen: { $ref: "./common.yaml#/ClockTime" }
+    windowClose: { $ref: "./common.yaml#/ClockTime" }
+    mallWindowOpen: { oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }] }
+    mallWindowClose: { oneOf: [{ $ref: "./common.yaml#/ClockTime" }, { type: "null" }] }
+
+AdminVehicle:
+  type: object
+  required: [id, type, temp, weightCapKg, volumeCapM3, fuelType, kmPerL, weeklyFuelQuotaL, depotCode, trips]
+  properties:
+    id: { type: string, examples: ["VEH101"] }
+    type: { type: string, enum: [truck, van] }
+    temp: { $ref: "./common.yaml#/VehicleTemp" }
+    weightCapKg: { type: integer, minimum: 1 }
+    volumeCapM3: { type: number, exclusiveMinimum: 0 }
+    fuelType: { type: string, examples: ["diesel"] }
+    kmPerL: { type: number, exclusiveMinimum: 0 }
+    weeklyFuelQuotaL: { type: integer, minimum: 0 }
+    depotCode: { type: string, examples: ["Peliyagoda"] }
+    trips: { type: integer, minimum: 0, description: "Trips ever planned on this vehicle." }
+
+CreateVehicleRequest:
+  type: object
+  additionalProperties: false
+  required: [id, type, temp, weightCapKg, volumeCapM3, fuelType, kmPerL, weeklyFuelQuotaL, depotCode]
+  properties:
+    id: { type: string, pattern: '^[A-Z0-9][A-Z0-9_-]{1,31}$' }
+    type: { type: string, enum: [truck, van] }
+    temp: { $ref: "./common.yaml#/VehicleTemp" }
+    weightCapKg: { type: integer, minimum: 1, maximum: 40000 }
+    volumeCapM3: { type: number, exclusiveMinimum: 0, maximum: 120 }
+    fuelType: { type: string, minLength: 1, maxLength: 24 }
+    kmPerL: { type: number, exclusiveMinimum: 0, maximum: 50 }
+    weeklyFuelQuotaL: { type: integer, minimum: 0, maximum: 10000 }
+    depotCode: { type: string, minLength: 1 }
+
+UpdateVehicleRequest:
+  type: object
+  description: The id and depot cannot change; plans and fuel ledgers hang on them.
+  additionalProperties: false
+  minProperties: 1
+  properties:
+    type: { type: string, enum: [truck, van] }
+    temp: { $ref: "./common.yaml#/VehicleTemp" }
+    weightCapKg: { type: integer, minimum: 1, maximum: 40000 }
+    volumeCapM3: { type: number, exclusiveMinimum: 0, maximum: 120 }
+    fuelType: { type: string, minLength: 1, maxLength: 24 }
+    kmPerL: { type: number, exclusiveMinimum: 0, maximum: 50 }
+    weeklyFuelQuotaL: { type: integer, minimum: 0, maximum: 10000 }
+
+AdminDirectory:
+  type: object
+  description: What the admin's forms choose from.
+  required: [depots, districts]
+  properties:
+    depots:
+      type: array
+      items:
+        type: object
+        required: [code, name]
+        properties: { code: { type: string }, name: { type: string } }
+    districts:
+      type: array
+      items:
+        type: object
+        required: [name, depotCode]
+        properties: { name: { type: string }, depotCode: { type: string } }
+
+AdminOverview:
+  type: object
+  description: >
+    Waypoint-wide, one row per depot over the same date range. Performance
+    figures are computed exactly as the dispatcher's depot reports compute them,
+    and are null with the same meaning (nothing recorded to compute from).
+  required: [from, to, totals, depots]
+  properties:
+    from: { $ref: "./common.yaml#/DateOnly" }
+    to: { $ref: "./common.yaml#/DateOnly" }
+    totals:
+      type: object
+      required: [users, activeUsers, usersByRole, outlets, vehicles]
+      properties:
+        users: { type: integer }
+        activeUsers: { type: integer }
+        usersByRole:
+          type: array
+          items:
+            type: object
+            required: [role, count]
+            properties: { role: { $ref: "./common.yaml#/Role" }, count: { type: integer } }
+        outlets: { type: integer }
+        vehicles: { type: integer }
+    depots:
+      type: array
+      items: { $ref: "#/AdminDepotRow" }
+
+AdminDepotRow:
+  type: object
+  required: [depotCode, name, outlets, vehicles, reefers, activeUsers, onTimePct, stops, orders, delivered, deferred, utilisationPct, discrepancies]
+  properties:
+    depotCode: { type: string }
+    name: { type: string }
+    outlets: { type: integer }
+    vehicles: { type: integer }
+    reefers: { type: integer }
+    activeUsers: { type: integer }
+    onTimePct: { type: [number, "null"] }
+    stops: { type: integer, description: "Arrivals the on-time figure is computed over." }
+    orders: { type: integer, description: "Orders planned in the range, live and historical." }
+    delivered: { type: integer }
+    deferred: { type: integer }
+    utilisationPct: { type: [number, "null"] }
+    discrepancies: { type: [integer, "null"] }
+
+AdminActivityEntry:
+  type: object
+  required: [id, at, actorName, actorRole, action, entityType, entityId, note]
+  properties:
+    id: { type: string }
+    at: { type: string, format: date-time }
+    actorName: { type: [string, "null"] }
+    actorRole:
+      oneOf:
+        - { $ref: "./common.yaml#/Role" }
+        - { type: "null" }
+    action: { type: string, examples: ["user.create"] }
+    entityType: { type: string, examples: ["User"] }
+    entityId: { type: string }
+    note: { type: [string, "null"] }

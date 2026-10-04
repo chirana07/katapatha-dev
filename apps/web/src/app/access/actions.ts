@@ -15,6 +15,7 @@ const ALLOWED_EMAILS = new Set([
   "nimal@waypoint.lk",
   "ranjith@waypoint.lk",
   "sunil@waypoint.lk",
+  "asha@waypoint.lk",
 ]);
 
 const SAFE_HOMES = new Set(["/store", "/dispatcher", "/loader", "/driver"]);

@@ -67,7 +67,9 @@ export async function verifyCredentials(
     return null;
   }
   const ok = await bcrypt.compare(password, user.passwordHash);
-  return ok ? user : null;
+  // A disabled account is refused after the hash, with the same answer as a
+  // wrong password, so neither the timing nor the message says it exists.
+  return ok && user.active ? user : null;
 }
 
 /**
@@ -112,6 +114,8 @@ export async function getSessionByToken(
     await prisma.session.deleteMany({ where: { token: hashSessionToken(token) } });
     return null;
   }
+  // Disabling an account also deletes its sessions; this covers the moment between.
+  if (!session.user.active) return null;
 
   return toSessionUser(session.user);
 }
