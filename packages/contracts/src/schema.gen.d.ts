@@ -79,6 +79,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/reference/outlets/{outletId}/location": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                outletId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Correct where an outlet is
+         * @description Dispatcher only, for an outlet at their own depot. The position must be in Sri Lanka and is snapped to the nearest road unless `snap` is false. It is recorded as the dispatcher's, so a re-seed never overwrites it. Plans already built keep their routes; re-run the allocator to use the new position.
+         */
+        patch: operations["setOutletLocation"];
+        trace?: never;
+    };
     "/reference/vehicles": {
         parameters: {
             query?: never;
@@ -170,7 +192,7 @@ export interface paths {
         };
         /**
          * How big one order can be for the signed-in store
-         * @description Per temperature: the outlet's unit-size estimate and the most units one order can hold on the roomiest vehicle allowed to carry it (reefers for chilled, vans for a van-only outlet). The whole depot fleet counts, workshop or not. Store manager only.
+         * @description Per temperature: the outlet's unit-size estimate and the most units one order can hold on the roomiest vehicle allowed to carry it (reefers for chilled and frozen, vans for a van-only outlet). The whole depot fleet counts, workshop or not. Store manager only.
          */
         get: operations["getOrderLimits"];
         put?: never;
@@ -326,7 +348,7 @@ export interface paths {
         put?: never;
         /**
          * Close the order queue for the day
-         * @description OPEN to CLOSED, writing a queue snapshot. Replaying returns 200 with the current state rather than an error — closing twice is not a mistake worth blocking a dispatcher for.
+         * @description OPEN to CLOSED, writing a queue snapshot. Closing also settles the allocator's fairness inputs for the orders stores placed: how many operating days since each outlet was last served, and whether it was passed over on the previous run. Replaying returns 200 with the current state rather than an error — closing twice is not a mistake worth blocking a dispatcher for.
          */
         post: operations["closeOrderQueue"];
         delete?: never;
@@ -386,7 +408,7 @@ export interface paths {
         put?: never;
         /**
          * Run the allocator and produce a draft plan
-         * @description Also the re-run path: an existing DRAFT for the day is replaced, so re-running is free and leaves no trail of half-plans. Requires the planning day to be CLOSED or PLANNING: an OPEN queue answers 409 `QUEUE_OPEN`, and a day whose plan is already published answers 409 `ALREADY_PUBLISHED` rather than putting a second draft beside the live plan. No planning day answers 404 `NO_PLANNING_DAY`.
+         * @description Also the re-run path: an existing DRAFT for the day is replaced, so re-running is free and leaves no trail of half-plans. Requires the planning day to be CLOSED or PLANNING: an OPEN queue answers 409 `QUEUE_OPEN`, and a day whose plan is already published answers 409 `ALREADY_PUBLISHED` rather than putting a second draft beside the live plan. A day the depot does not operate answers 409 `NON_OPERATING_DAY`. No planning day answers 404 `NO_PLANNING_DAY`.
          */
         post: operations["createPlan"];
         delete?: never;
@@ -494,7 +516,7 @@ export interface paths {
         put?: never;
         /**
          * Publish the plan
-         * @description An atomic one-time claim. Publishing commits fuel, notifies deferred outlets, and moves served orders to PLANNED. A second attempt is a 409, not a silent success.
+         * @description An atomic one-time claim. Publishing commits the plan's fuel to each vehicle's weekly ledger, notifies deferred outlets, and moves served orders to PLANNED. A deferral a later day can fix also queues a follow-up order, the whole order and its contents, for the next operating day; one that cannot (an order too large for any vehicle) does not. A second attempt is a 409, not a silent success.
          */
         post: operations["publishPlan"];
         delete?: never;
@@ -1125,6 +1147,177 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/directory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Depots and districts, for the admin's forms */
+        get: operations["getAdminDirectory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Waypoint-wide overview, one row per depot
+         * @description Without `from`/`to` the range is the seven days ending today in Asia/Colombo. At most 366 days.
+         */
+        get: operations["getAdminOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The newest entries in the decision log, Waypoint-wide */
+        get: operations["getAdminActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every account, active and disabled */
+        get: operations["listAdminUsers"];
+        put?: never;
+        /** Add an account */
+        post: operations["createAdminUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change, disable, re-enable or reset the password of an account */
+        patch: operations["updateAdminUser"];
+        trace?: never;
+    };
+    "/admin/outlets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every outlet, at every depot */
+        get: operations["listAdminOutlets"];
+        put?: never;
+        /** Add an outlet */
+        post: operations["createAdminOutlet"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/outlets/{outletId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                outletId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change an outlet's name, dock and windows */
+        patch: operations["updateAdminOutlet"];
+        trace?: never;
+    };
+    "/admin/vehicles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every vehicle, at every depot */
+        get: operations["listAdminVehicles"];
+        put?: never;
+        /**
+         * Add a vehicle to a depot's fleet
+         * @description It is a candidate for the depot's next plan from the moment it is saved.
+         */
+        post: operations["createAdminVehicle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/vehicles/{vehicleId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vehicleId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change a vehicle's type, temperature, capacity or fuel figures
+         * @description Plans already built keep the figures they were built with.
+         */
+        patch: operations["updateAdminVehicle"];
+        trace?: never;
+    };
     "/reports/overview": {
         parameters: {
             query?: never;
@@ -1346,8 +1539,11 @@ export interface components {
             /** @example 4826 */
             pin: string;
         };
-        /** @enum {string} */
-        Role: "DISPATCHER" | "LOADER" | "DRIVER" | "STORE_MANAGER";
+        /**
+         * @description The four operating roles, plus ADMIN, which is Waypoint-wide and keeps the accounts, outlets and vehicles the others work with.
+         * @enum {string}
+         */
+        Role: "DISPATCHER" | "LOADER" | "DRIVER" | "STORE_MANAGER" | "ADMIN";
         SessionUser: {
             /** @example clx0a1b2c3d4e5f6g7h8i9j0 */
             id: string;
@@ -1413,9 +1609,42 @@ export interface components {
             windowClose: components["schemas"]["ClockTime"];
             mallWindowOpen?: components["schemas"]["ClockTime"] | null;
             mallWindowClose?: components["schemas"]["ClockTime"] | null;
+            /**
+             * @description Where the outlet is. Approximate until geoSource is CSV or DISPATCHER.
+             * @example 6.94131
+             */
+            lat?: number | null;
+            /** @example 79.87615 */
+            lng?: number | null;
+            /**
+             * @description SYNTHETIC is a stand-in near the district centre, CSV came from the supplied locations file, DISPATCHER was placed by a person.
+             * @enum {string|null}
+             */
+            geoSource?: "SYNTHETIC" | "CSV" | "DISPATCHER" | null;
+            /** @description True once the position is on the nearest road. */
+            geoSnapped?: boolean;
+        };
+        OutletLocationRequest: {
+            /** @example 6.9302 */
+            lat: number;
+            /** @example 79.8605 */
+            lng: number;
+            /** @description Move the pin onto the nearest road. Defaults to true. */
+            snap?: boolean;
+        };
+        OutletLocation: {
+            /** @example OUT074 */
+            id: string;
+            lat: number;
+            lng: number;
+            /** @enum {string} */
+            geoSource: "SYNTHETIC" | "CSV" | "DISPATCHER";
+            geoSnapped: boolean;
+            /** @description Present when the pin is unusually far from its district. */
+            warning?: string;
         };
         /**
-         * @description What a VEHICLE can do. A reefer may carry either; ambient may not carry chilled. Conflating this with TempRequirement is the single most common way to break feasibility rule 2.
+         * @description What a VEHICLE can do. A reefer may carry any order; ambient may carry only ambient. Conflating this with TempRequirement is the single most common way to break feasibility rule 2.
          * @enum {string}
          */
         VehicleTemp: "reefer" | "ambient";
@@ -1499,10 +1728,10 @@ export interface components {
          */
         DateOnly: string;
         /**
-         * @description What an ORDER needs. Deliberately distinct from VehicleTemp.
+         * @description What an ORDER needs. Deliberately distinct from VehicleTemp. Chilled and frozen goods both need a refrigerated vehicle; frozen is not in the competition data.
          * @enum {string}
          */
-        TempRequirement: "chilled" | "ambient";
+        TempRequirement: "chilled" | "frozen" | "ambient";
         /** @enum {string} */
         OrderStatus: "DRAFT" | "PLACED" | "QUEUED" | "PLANNED" | "LOADED" | "IN_TRANSIT" | "DELIVERED" | "PART_DELIVERED" | "FAILED" | "DEFERRED" | "CANCELLED";
         /** @description One product's quantity within an order, as it was when the order was placed. Read-only context for the loader, driver and store: load checks and deliveries still count the order's `units`, not products. Absent or empty on orders that were placed as units only, and on the competition's orders. */
@@ -1594,6 +1823,7 @@ export interface components {
         };
         OrderLimits: {
             chilled: components["schemas"]["OrderLimit"];
+            frozen: components["schemas"]["OrderLimit"];
             ambient: components["schemas"]["OrderLimit"];
         };
         ReceiptRequest: {
@@ -3317,6 +3547,216 @@ export interface components {
             /** @example 1 */
             unreadCount: number;
         };
+        /** @description What the admin's forms choose from. */
+        AdminDirectory: {
+            depots: {
+                code: string;
+                name: string;
+            }[];
+            districts: {
+                name: string;
+                depotCode: string;
+            }[];
+        };
+        AdminDepotRow: {
+            depotCode: string;
+            name: string;
+            outlets: number;
+            vehicles: number;
+            reefers: number;
+            activeUsers: number;
+            onTimePct: number | null;
+            /** @description Arrivals the on-time figure is computed over. */
+            stops: number;
+            /** @description Orders planned in the range, live and historical. */
+            orders: number;
+            delivered: number;
+            deferred: number;
+            utilisationPct: number | null;
+            discrepancies: number | null;
+        };
+        /** @description Waypoint-wide, one row per depot over the same date range. Performance figures are computed exactly as the dispatcher's depot reports compute them, and are null with the same meaning (nothing recorded to compute from). */
+        AdminOverview: {
+            from: components["schemas"]["DateOnly"];
+            to: components["schemas"]["DateOnly"];
+            totals: {
+                users: number;
+                activeUsers: number;
+                usersByRole: {
+                    role: components["schemas"]["Role"];
+                    count: number;
+                }[];
+                outlets: number;
+                vehicles: number;
+            };
+            depots: components["schemas"]["AdminDepotRow"][];
+        };
+        AdminActivityEntry: {
+            id: string;
+            /** Format: date-time */
+            at: string;
+            actorName: string | null;
+            actorRole: components["schemas"]["Role"] | null;
+            /** @example user.create */
+            action: string;
+            /** @example User */
+            entityType: string;
+            entityId: string;
+            note: string | null;
+        };
+        /** @description An account as the admin manages it. No password or hash is ever returned. `depotCode` is set for dispatchers, loaders and drivers; `outletId` for store managers; neither for an admin. */
+        AdminUser: {
+            /** @example clx0usr1a2b3c4d5e6f7g8h9 */
+            id: string;
+            /**
+             * Format: email
+             * @example nimal@waypoint.lk
+             */
+            email: string;
+            /** @example Nimal Perera */
+            name: string;
+            role: components["schemas"]["Role"];
+            /** @example Peliyagoda */
+            depotCode: string | null;
+            /** @example null */
+            outletId: string | null;
+            /**
+             * @description The Waypoint staff ID printed on the person's badge. The web sign-in pages ask for it with a PIN, so an account without one can only sign in by email and password through the API. The PIN is never returned.
+             * @example DSP-0101
+             */
+            staffId: string | null;
+            /** @example true */
+            active: boolean;
+            /** Format: date-time */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @description When the newest session still on record was opened. Null if none.
+             */
+            lastSignInAt: string | null;
+        };
+        CreateUserRequest: {
+            /** Format: email */
+            email: string;
+            name: string;
+            role: components["schemas"]["Role"];
+            password: string;
+            /** @description Required for DISPATCHER, LOADER and DRIVER. */
+            depotCode?: string | null;
+            /** @description Required for STORE_MANAGER. */
+            outletId?: string | null;
+            /** @description Upper-cased on save. Give it with `pin`, or neither. */
+            staffId?: string;
+            /** @description 4 to 8 digits. Stored as a hash. */
+            pin?: string;
+        };
+        /** @description Any subset. The email cannot change. Setting `password` or `active: false` signs the account out everywhere. An admin cannot disable or demote their own account. */
+        UpdateUserRequest: {
+            name?: string;
+            role?: components["schemas"]["Role"];
+            password?: string;
+            depotCode?: string | null;
+            outletId?: string | null;
+            /** @description An account with no staff ID needs `pin` with it. */
+            staffId?: string;
+            /** @description Setting one signs the account out everywhere. */
+            pin?: string;
+            active?: boolean;
+        };
+        AdminOutlet: {
+            /** @example OUT074 */
+            id: string;
+            /** @example Fresh Puttalam */
+            displayName: string | null;
+            brand: components["schemas"]["Brand"];
+            /** @example Puttalam */
+            districtName: string;
+            /** @example Peliyagoda */
+            depotCode: string;
+            /** @enum {string} */
+            dockType: "rear_dock" | "street" | "mall_bay";
+            /** @enum {string} */
+            parkingConstraint: "normal" | "van_only" | "mall_dock";
+            windowOpen: components["schemas"]["ClockTime"];
+            windowClose: components["schemas"]["ClockTime"];
+            mallWindowOpen: components["schemas"]["ClockTime"] | null;
+            mallWindowClose: components["schemas"]["ClockTime"] | null;
+            lat: number | null;
+            lng: number | null;
+            /** @enum {string|null} */
+            geoSource: "SYNTHETIC" | "CSV" | "DISPATCHER" | null;
+            /** @description Active store-manager accounts bound to this outlet. */
+            managers: number;
+        };
+        /** @description The depot follows from the district (the mapping is 1:1). Without a position the outlet is placed near its district centre, marked SYNTHETIC, until someone sets the real one. Both mall-window times or neither. */
+        CreateOutletRequest: {
+            id: string;
+            displayName?: string | null;
+            brand: components["schemas"]["Brand"];
+            districtName: string;
+            /** @enum {string} */
+            dockType: "rear_dock" | "street" | "mall_bay";
+            /** @enum {string} */
+            parkingConstraint: "normal" | "van_only" | "mall_dock";
+            windowOpen: components["schemas"]["ClockTime"];
+            windowClose: components["schemas"]["ClockTime"];
+            mallWindowOpen?: components["schemas"]["ClockTime"] | null;
+            mallWindowClose?: components["schemas"]["ClockTime"] | null;
+            lat?: number;
+            lng?: number;
+        };
+        /** @description The id, brand and district cannot change: orders, plans and the depot assignment hang on them. Positions are moved on the dispatcher's map. */
+        UpdateOutletRequest: {
+            displayName?: string | null;
+            /** @enum {string} */
+            dockType?: "rear_dock" | "street" | "mall_bay";
+            /** @enum {string} */
+            parkingConstraint?: "normal" | "van_only" | "mall_dock";
+            windowOpen?: components["schemas"]["ClockTime"];
+            windowClose?: components["schemas"]["ClockTime"];
+            mallWindowOpen?: components["schemas"]["ClockTime"] | null;
+            mallWindowClose?: components["schemas"]["ClockTime"] | null;
+        };
+        AdminVehicle: {
+            /** @example VEH101 */
+            id: string;
+            /** @enum {string} */
+            type: "truck" | "van";
+            temp: components["schemas"]["VehicleTemp"];
+            weightCapKg: number;
+            volumeCapM3: number;
+            /** @example diesel */
+            fuelType: string;
+            kmPerL: number;
+            weeklyFuelQuotaL: number;
+            /** @example Peliyagoda */
+            depotCode: string;
+            /** @description Trips ever planned on this vehicle. */
+            trips: number;
+        };
+        CreateVehicleRequest: {
+            id: string;
+            /** @enum {string} */
+            type: "truck" | "van";
+            temp: components["schemas"]["VehicleTemp"];
+            weightCapKg: number;
+            volumeCapM3: number;
+            fuelType: string;
+            kmPerL: number;
+            weeklyFuelQuotaL: number;
+            depotCode: string;
+        };
+        /** @description The id and depot cannot change; plans and fuel ledgers hang on them. */
+        UpdateVehicleRequest: {
+            /** @enum {string} */
+            type?: "truck" | "van";
+            temp?: components["schemas"]["VehicleTemp"];
+            weightCapKg?: number;
+            volumeCapM3?: number;
+            fuelType?: string;
+            kmPerL?: number;
+            weeklyFuelQuotaL?: number;
+        };
         /** @description Where the analytics history behind the historical days came from. `synthetic` means generated for the development fixture and not competition data; a client must show that, not hide it. */
         HistorySource: {
             /** @enum {string} */
@@ -3782,33 +4222,6 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description The request was well formed but the operation is blocked by business rules. `details.violations` carries the reasons, so the client can render them beside the failed action instead of guessing. */
-        ValidationFailed: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                /**
-                 * @example {
-                 *       "error": {
-                 *         "code": "PLAN_HAS_BLOCKING_VIOLATIONS",
-                 *         "message": "Two trips exceed their volume capacity.",
-                 *         "details": {
-                 *           "violations": [
-                 *             {
-                 *               "code": "VOLUME_CAP_EXCEEDED",
-                 *               "severity": "error",
-                 *               "message": "Trip 2 on VEH043 exceeds its volume capacity by 0.8 m³.",
-                 *               "overridable": false
-                 *             }
-                 *           ]
-                 *         }
-                 *       }
-                 *     }
-                 */
-                "application/json": components["schemas"]["Error"];
-            };
-        };
         /** @description Authenticated but not permitted. Either the role is wrong, or the record is not owned by this depot, outlet or vehicle. */
         Forbidden: {
             headers: {
@@ -3837,6 +4250,33 @@ export interface components {
                  *       "error": {
                  *         "code": "NOT_FOUND",
                  *         "message": "No such order."
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description The request was well formed but the operation is blocked by business rules. `details.violations` carries the reasons, so the client can render them beside the failed action instead of guessing. */
+        ValidationFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "error": {
+                 *         "code": "PLAN_HAS_BLOCKING_VIOLATIONS",
+                 *         "message": "Two trips exceed their volume capacity.",
+                 *         "details": {
+                 *           "violations": [
+                 *             {
+                 *               "code": "VOLUME_CAP_EXCEEDED",
+                 *               "severity": "error",
+                 *               "message": "Trip 2 on VEH043 exceeds its volume capacity by 0.8 m³.",
+                 *               "overridable": false
+                 *             }
+                 *           ]
+                 *         }
                  *       }
                  *     }
                  */
@@ -4024,7 +4464,11 @@ export interface operations {
                      *         "windowOpen": "06:00",
                      *         "windowClose": "11:00",
                      *         "mallWindowOpen": null,
-                     *         "mallWindowClose": null
+                     *         "mallWindowClose": null,
+                     *         "lat": 6.94131,
+                     *         "lng": 79.87615,
+                     *         "geoSource": "SYNTHETIC",
+                     *         "geoSnapped": false
                      *       }
                      *     ]
                      */
@@ -4032,6 +4476,52 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    setOutletLocation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                outletId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "lat": 6.9302,
+                 *       "lng": 79.8605,
+                 *       "snap": true
+                 *     }
+                 */
+                "application/json": components["schemas"]["OutletLocationRequest"];
+            };
+        };
+        responses: {
+            /** @description The outlet's new position. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "OUT074",
+                     *       "lat": 6.9302,
+                     *       "lng": 79.8605,
+                     *       "geoSource": "DISPATCHER",
+                     *       "geoSnapped": true
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OutletLocation"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     listVehicles: {
@@ -4322,6 +4812,11 @@ export interface operations {
                     /**
                      * @example {
                      *       "chilled": {
+                     *         "m3PerUnit": 0.09,
+                     *         "kgPerUnit": 8,
+                     *         "maxUnitsPerOrder": 333
+                     *       },
+                     *       "frozen": {
                      *         "m3PerUnit": 0.09,
                      *         "kgPerUnit": 8,
                      *         "maxUnitsPerOrder": 333
@@ -7340,6 +7835,583 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
+        };
+    };
+    getAdminDirectory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The directory. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "depots": [
+                     *         {
+                     *           "code": "Kandy",
+                     *           "name": "Kandy depot"
+                     *         },
+                     *         {
+                     *           "code": "Peliyagoda",
+                     *           "name": "Peliyagoda depot"
+                     *         }
+                     *       ],
+                     *       "districts": [
+                     *         {
+                     *           "name": "Colombo",
+                     *           "depotCode": "Peliyagoda"
+                     *         },
+                     *         {
+                     *           "name": "Kandy",
+                     *           "depotCode": "Kandy"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AdminDirectory"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getAdminOverview: {
+        parameters: {
+            query?: {
+                from?: components["schemas"]["DateOnly"];
+                to?: components["schemas"]["DateOnly"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The overview. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "from": "2026-09-28",
+                     *       "to": "2026-10-04",
+                     *       "totals": {
+                     *         "users": 5,
+                     *         "activeUsers": 5,
+                     *         "usersByRole": [
+                     *           {
+                     *             "role": "DISPATCHER",
+                     *             "count": 1
+                     *           },
+                     *           {
+                     *             "role": "LOADER",
+                     *             "count": 1
+                     *           },
+                     *           {
+                     *             "role": "DRIVER",
+                     *             "count": 1
+                     *           },
+                     *           {
+                     *             "role": "STORE_MANAGER",
+                     *             "count": 1
+                     *           },
+                     *           {
+                     *             "role": "ADMIN",
+                     *             "count": 1
+                     *           }
+                     *         ],
+                     *         "outlets": 120,
+                     *         "vehicles": 14
+                     *       },
+                     *       "depots": [
+                     *         {
+                     *           "depotCode": "Peliyagoda",
+                     *           "name": "Peliyagoda depot",
+                     *           "outlets": 84,
+                     *           "vehicles": 9,
+                     *           "reefers": 4,
+                     *           "activeUsers": 4,
+                     *           "onTimePct": 91.2,
+                     *           "stops": 340,
+                     *           "orders": 512,
+                     *           "delivered": 480,
+                     *           "deferred": 14,
+                     *           "utilisationPct": 78,
+                     *           "discrepancies": 6
+                     *         },
+                     *         {
+                     *           "depotCode": "Kandy",
+                     *           "name": "Kandy depot",
+                     *           "outlets": 36,
+                     *           "vehicles": 5,
+                     *           "reefers": 2,
+                     *           "activeUsers": 0,
+                     *           "onTimePct": null,
+                     *           "stops": 0,
+                     *           "orders": 140,
+                     *           "delivered": 131,
+                     *           "deferred": 3,
+                     *           "utilisationPct": null,
+                     *           "discrepancies": null
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AdminOverview"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getAdminActivity: {
+        parameters: {
+            query?: {
+                /** @description 1 to 200, default 50. */
+                limit?: string;
+                entityType?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Entries, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example [
+                     *       {
+                     *         "id": "clx0aud1a2b3c4d5e6f7g8h9",
+                     *         "at": "2026-10-04T03:12:00.000Z",
+                     *         "actorName": "Asha Wijesinghe",
+                     *         "actorRole": "ADMIN",
+                     *         "action": "user.create",
+                     *         "entityType": "User",
+                     *         "entityId": "clx0usr5a2b3c4d5e6f7g8h9",
+                     *         "note": null
+                     *       }
+                     *     ]
+                     */
+                    "application/json": components["schemas"]["AdminActivityEntry"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listAdminUsers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accounts, by role then name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example [
+                     *       {
+                     *         "id": "clx0usr1a2b3c4d5e6f7g8h9",
+                     *         "email": "nimal@waypoint.lk",
+                     *         "name": "Nimal Perera",
+                     *         "role": "DISPATCHER",
+                     *         "depotCode": "Peliyagoda",
+                     *         "outletId": null,
+                     *         "staffId": "DSP-0101",
+                     *         "active": true,
+                     *         "createdAt": "2026-09-28T02:00:00.000Z",
+                     *         "lastSignInAt": "2026-10-04T01:00:00.000Z"
+                     *       },
+                     *       {
+                     *         "id": "clx0usr4a2b3c4d5e6f7g8h9",
+                     *         "email": "fathima@waypoint.lk",
+                     *         "name": "Fathima Rizvi",
+                     *         "role": "STORE_MANAGER",
+                     *         "depotCode": null,
+                     *         "outletId": "OUT074",
+                     *         "staffId": "STR-0074",
+                     *         "active": true,
+                     *         "createdAt": "2026-09-28T02:00:00.000Z",
+                     *         "lastSignInAt": null
+                     *       }
+                     *     ]
+                     */
+                    "application/json": components["schemas"]["AdminUser"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createAdminUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateUserRequest"];
+            };
+        };
+        responses: {
+            /** @description The account. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "clx0usr5a2b3c4d5e6f7g8h9",
+                     *       "email": "kamal@waypoint.lk",
+                     *       "name": "Kamal Jayasuriya",
+                     *       "role": "DRIVER",
+                     *       "depotCode": "Peliyagoda",
+                     *       "outletId": null,
+                     *       "staffId": "DRV-0310",
+                     *       "active": true,
+                     *       "createdAt": "2026-10-04T03:12:00.000Z",
+                     *       "lastSignInAt": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AdminUser"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    updateAdminUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateUserRequest"];
+            };
+        };
+        responses: {
+            /** @description The account. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "clx0usr5a2b3c4d5e6f7g8h9",
+                     *       "email": "kamal@waypoint.lk",
+                     *       "name": "Kamal Jayasuriya",
+                     *       "role": "DRIVER",
+                     *       "depotCode": "Peliyagoda",
+                     *       "outletId": null,
+                     *       "staffId": "DRV-0310",
+                     *       "active": false,
+                     *       "createdAt": "2026-10-04T03:12:00.000Z",
+                     *       "lastSignInAt": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AdminUser"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listAdminOutlets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Outlets by id. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example [
+                     *       {
+                     *         "id": "OUT010",
+                     *         "displayName": null,
+                     *         "brand": "Fresh",
+                     *         "districtName": "Colombo",
+                     *         "depotCode": "Peliyagoda",
+                     *         "dockType": "rear_dock",
+                     *         "parkingConstraint": "normal",
+                     *         "windowOpen": "05:00",
+                     *         "windowClose": "08:30",
+                     *         "mallWindowOpen": null,
+                     *         "mallWindowClose": null,
+                     *         "lat": 6.93,
+                     *         "lng": 79.86,
+                     *         "geoSource": "SYNTHETIC",
+                     *         "managers": 0
+                     *       }
+                     *     ]
+                     */
+                    "application/json": components["schemas"]["AdminOutlet"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createAdminOutlet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateOutletRequest"];
+            };
+        };
+        responses: {
+            /** @description The outlet. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "OUT200",
+                     *       "displayName": "Fresh Wattala",
+                     *       "brand": "Fresh",
+                     *       "districtName": "Gampaha",
+                     *       "depotCode": "Peliyagoda",
+                     *       "dockType": "street",
+                     *       "parkingConstraint": "van_only",
+                     *       "windowOpen": "05:30",
+                     *       "windowClose": "09:00",
+                     *       "mallWindowOpen": null,
+                     *       "mallWindowClose": null,
+                     *       "lat": 7.08,
+                     *       "lng": 79.99,
+                     *       "geoSource": "SYNTHETIC",
+                     *       "managers": 0
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AdminOutlet"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    updateAdminOutlet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                outletId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateOutletRequest"];
+            };
+        };
+        responses: {
+            /** @description The outlet. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "OUT010",
+                     *       "displayName": "Fresh Kollupitiya",
+                     *       "brand": "Fresh",
+                     *       "districtName": "Colombo",
+                     *       "depotCode": "Peliyagoda",
+                     *       "dockType": "rear_dock",
+                     *       "parkingConstraint": "normal",
+                     *       "windowOpen": "05:00",
+                     *       "windowClose": "08:00",
+                     *       "mallWindowOpen": null,
+                     *       "mallWindowClose": null,
+                     *       "lat": 6.93,
+                     *       "lng": 79.86,
+                     *       "geoSource": "SYNTHETIC",
+                     *       "managers": 0
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AdminOutlet"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listAdminVehicles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Vehicles by id. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example [
+                     *       {
+                     *         "id": "VEH101",
+                     *         "type": "truck",
+                     *         "temp": "reefer",
+                     *         "weightCapKg": 5000,
+                     *         "volumeCapM3": 30,
+                     *         "fuelType": "diesel",
+                     *         "kmPerL": 6.5,
+                     *         "weeklyFuelQuotaL": 420,
+                     *         "depotCode": "Peliyagoda",
+                     *         "trips": 12
+                     *       }
+                     *     ]
+                     */
+                    "application/json": components["schemas"]["AdminVehicle"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createAdminVehicle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateVehicleRequest"];
+            };
+        };
+        responses: {
+            /** @description The vehicle. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "VEH120",
+                     *       "type": "van",
+                     *       "temp": "ambient",
+                     *       "weightCapKg": 1500,
+                     *       "volumeCapM3": 8,
+                     *       "fuelType": "diesel",
+                     *       "kmPerL": 11,
+                     *       "weeklyFuelQuotaL": 200,
+                     *       "depotCode": "Kandy",
+                     *       "trips": 0
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AdminVehicle"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    updateAdminVehicle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vehicleId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateVehicleRequest"];
+            };
+        };
+        responses: {
+            /** @description The vehicle. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "VEH101",
+                     *       "type": "truck",
+                     *       "temp": "reefer",
+                     *       "weightCapKg": 5200,
+                     *       "volumeCapM3": 30,
+                     *       "fuelType": "diesel",
+                     *       "kmPerL": 6.5,
+                     *       "weeklyFuelQuotaL": 450,
+                     *       "depotCode": "Peliyagoda",
+                     *       "trips": 12
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AdminVehicle"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     getReportsOverview: {

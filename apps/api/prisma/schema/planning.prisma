@@ -152,6 +152,14 @@ model Trip {
   plannedMinutes    Float
   plannedDistanceKm Float
   plannedFuelL      Float
+  /// Encoded polyline (precision 6) of the road route, depot to depot.
+  routePolyline     String?
+  /// Wall-clock road minutes, depart to return, waiting included.
+  roadMinutes       Float?
+  /// "HH:MM" the vehicle is back at the depot.
+  returnAt          String?
+  /// "osrm" or "estimate".
+  travelSource      String?
   sumWeightKg       Float
   sumVolumeM3       Float
   status            TripStatus @default(PLANNED)
@@ -193,6 +201,12 @@ model TripStop {
   outlet           Outlet     @relation(fields: [outletId], references: [id])
   status           StopStatus @default(PENDING)
   plannedArrivalAt String
+  /// When service begins: the arrival, or the window opening if later.
+  serviceStartAt   String?
+  leaveAt          String?
+  /// Road distance and time of the leg that reaches this stop.
+  legKm            Float?
+  legMinutes       Float?
   etaAt            String?
   arrivedAt        DateTime?
   leftAt           DateTime?

@@ -15,6 +15,7 @@ const ALLOWED_EMAILS = new Set([
   "nimal@waypoint.lk",
   "ranjith@waypoint.lk",
   "sunil@waypoint.lk",
+  "asha@waypoint.lk",
 ]);
 
 const SAFE_HOMES = new Set(["/store", "/dispatcher", "/loader", "/driver"]);
@@ -26,6 +27,7 @@ const DEMO_STAFF: Record<string, { staffId: string; pin: string }> = {
   "ranjith@waypoint.lk": { staffId: "LDR-0142", pin: "4826" },
   "sunil@waypoint.lk": { staffId: "DRV-0207", pin: "1357" },
   "fathima@waypoint.lk": { staffId: "STR-0074", pin: "9024" },
+  "asha@waypoint.lk": { staffId: "ADM-0001", pin: "7531" },
 };
 
 /**

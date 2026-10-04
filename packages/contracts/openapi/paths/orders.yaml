@@ -209,7 +209,7 @@ limits:
     description: >
       Per temperature: the outlet's unit-size estimate and the most units one
       order can hold on the roomiest vehicle allowed to carry it (reefers for
-      chilled, vans for a van-only outlet). The whole depot fleet counts,
+      chilled and frozen, vans for a van-only outlet). The whole depot fleet counts,
       workshop or not. Store manager only.
     tags: [orders]
     responses:
@@ -220,5 +220,6 @@ limits:
             schema: { $ref: "../components/schemas/orders.yaml#/OrderLimits" }
             example:
               chilled: { m3PerUnit: 0.09, kgPerUnit: 8, maxUnitsPerOrder: 333 }
+              frozen: { m3PerUnit: 0.09, kgPerUnit: 8, maxUnitsPerOrder: 333 }
               ambient: { m3PerUnit: 0.1125, kgPerUnit: 8, maxUnitsPerOrder: 302 }
       "403": { $ref: "../components/responses/common.yaml#/Forbidden" }

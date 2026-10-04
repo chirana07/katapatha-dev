@@ -83,6 +83,8 @@ tags:
     description: Dispatcher reports for the depot.
   - name: capacity
     description: Capacity actions proposed from the demand forecast.
+  - name: admin
+    description: Waypoint-wide accounts, outlets, vehicles and overview, kept by the admin.
 
 components:
   securitySchemes:
@@ -104,6 +106,7 @@ paths:
   /auth/session:                              { $ref: "./paths/auth.yaml#/session" }
   /auth/me:                                   { $ref: "./paths/auth.yaml#/me" }
   /reference/outlets:                         { $ref: "./paths/reference.yaml#/outlets" }
+  /reference/outlets/{outletId}/location:     { $ref: "./paths/reference.yaml#/outletLocation" }
   /reference/vehicles:                        { $ref: "./paths/reference.yaml#/vehicles" }
   /reference/vocabularies:                    { $ref: "./paths/reference.yaml#/vocabularies" }
   /reference/calendar/next-operating-day:     { $ref: "./paths/reference.yaml#/nextOperatingDay" }
@@ -163,6 +166,17 @@ paths:
   /issues:                                    { $ref: "./paths/issues.yaml#/collection" }
   /notifications:                             { $ref: "./paths/notifications.yaml#/collection" }
   /notifications/{notificationId}/read:       { $ref: "./paths/notifications.yaml#/read" }
+
+  # ---- admin ----
+  /admin/directory:                           { $ref: "./paths/admin.yaml#/directory" }
+  /admin/overview:                            { $ref: "./paths/admin.yaml#/overview" }
+  /admin/activity:                            { $ref: "./paths/admin.yaml#/activity" }
+  /admin/users:                               { $ref: "./paths/admin.yaml#/users" }
+  /admin/users/{userId}:                      { $ref: "./paths/admin.yaml#/user" }
+  /admin/outlets:                             { $ref: "./paths/admin.yaml#/outlets" }
+  /admin/outlets/{outletId}:                  { $ref: "./paths/admin.yaml#/outlet" }
+  /admin/vehicles:                            { $ref: "./paths/admin.yaml#/vehicles" }
+  /admin/vehicles/{vehicleId}:                { $ref: "./paths/admin.yaml#/vehicle" }
 
   # ---- reports / capacity ----
   /reports/overview:                          { $ref: "./paths/reports.yaml#/overview" }

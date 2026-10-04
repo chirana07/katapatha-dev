@@ -19,6 +19,15 @@ describe("compatibleVehicles", () => {
   });
 });
 
+describe("compatibleVehicles, frozen", () => {
+  it("treats frozen like chilled: reefers only", () => {
+    expect(compatibleVehicles(FLEET, { tempRequirement: "frozen", vanOnly: false })).toEqual(
+      compatibleVehicles(FLEET, { tempRequirement: "chilled", vanOnly: false }),
+    );
+    expect(compatibleVehicles(FLEET, { tempRequirement: "frozen", vanOnly: true })).toHaveLength(1);
+  });
+});
+
 describe("maxUnitsPerOrder", () => {
   // DEMO-012: 400 units, 45 m³ → 0.1125 m³ per unit.
   const demo012 = { m3PerUnit: 0.1125, kgPerUnit: 8 };

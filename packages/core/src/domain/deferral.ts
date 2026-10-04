@@ -22,6 +22,10 @@ const SUGGESTION: Readonly<Record<string, DeferralReasonCode>> = {
   NO_VAN_AVAILABLE: "NO_VAN",
   NO_VAN_IN_FLEET: "NO_VAN",
   WINDOW_UNREACHABLE: "WINDOW_UNREACHABLE",
+  NO_COMMON_WINDOW: "WINDOW_UNREACHABLE",
+  FRESH_DEADLINE_UNREACHABLE: "WINDOW_UNREACHABLE",
+  OUTLET_UNREACHABLE_IN_WINDOW: "WINDOW_UNREACHABLE",
+  TRIP_SEQUENCE_CONFLICT: "TIME_BUDGET",
   PREDAWN_BUDGET_EXCEEDED: "TIME_BUDGET",
   DAYTIME_BUDGET_EXCEEDED: "TIME_BUDGET",
   NO_TRIP_SLOT: "TIME_BUDGET",
@@ -38,6 +42,7 @@ const BUSY_CODES = new Set([
   "VOLUME_CAP_EXCEEDED",
   "WEIGHT_CAP_EXCEEDED",
   "NO_TRIP_SLOT",
+  "TRIP_SEQUENCE_CONFLICT",
   "PREDAWN_BUDGET_EXCEEDED",
   "DAYTIME_BUDGET_EXCEEDED",
   "FUEL_QUOTA_EXCEEDED",
@@ -72,6 +77,15 @@ export function suggestDeferralReason(
 }
 
 /**
+ * Whether the depot runs on `date` (YYYY-MM-DD). The reference calendar decides
+ * where it has a row; where it has none, Waypoint operates Monday to Saturday.
+ */
+export function isOperatingDay(date: string, calendar: boolean | undefined): boolean {
+  if (calendar !== undefined) return calendar;
+  return new Date(`${date}T00:00:00.000Z`).getUTCDay() !== 0;
+}
+
+/**
  * The first operating day after `date` (YYYY-MM-DD).
  *
  * `isOperating` answers from the reference calendar; `undefined` means the
@@ -97,6 +111,50 @@ export function nextOperatingDate(
     if (known === undefined && d.getUTCDay() !== 0) return iso;
   }
   return dayAfter(1).toISOString().slice(0, 10);
+}
+
+/**
+ * The last operating day before `date` (YYYY-MM-DD). The mirror of
+ * `nextOperatingDate`, with the same fallback for days the calendar lacks.
+ */
+export function previousOperatingDate(
+  date: string,
+  isOperating: (date: string) => boolean | undefined,
+): string {
+  const start = new Date(`${date}T00:00:00.000Z`);
+  for (let n = 1; n <= 14; n += 1) {
+    const d = new Date(start);
+    d.setUTCDate(d.getUTCDate() - n);
+    const iso = d.toISOString().slice(0, 10);
+    if (isOperatingDay(iso, isOperating(iso))) return iso;
+  }
+  const d = new Date(start);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * How many operating days lie in (`from`, `to`]: zero when `to` is not after
+ * `from`, one for "served yesterday" when yesterday was an operating day. Used
+ * for "days since last served", where a Sunday must not count as a day an
+ * outlet went without a delivery.
+ */
+export function operatingDaysBetween(
+  from: string,
+  to: string,
+  isOperating: (date: string) => boolean | undefined,
+): number {
+  const end = new Date(`${to}T00:00:00.000Z`).getTime();
+  const d = new Date(`${from}T00:00:00.000Z`);
+  let count = 0;
+  // Bounded: a year is far past any cap a caller applies.
+  for (let n = 0; n < 366; n += 1) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    if (d.getTime() > end) break;
+    const iso = d.toISOString().slice(0, 10);
+    if (isOperatingDay(iso, isOperating(iso))) count += 1;
+  }
+  return count;
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;

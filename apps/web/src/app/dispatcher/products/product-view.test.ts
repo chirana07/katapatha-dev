@@ -27,7 +27,8 @@ const none = parseFilters({});
 
 describe("parseFilters", () => {
   it("ignores anything it does not recognise", () => {
-    expect(parseFilters({ temp: "frozen", brand: "Acme", status: "x", q: "  rice " })).toEqual({ temp: null, brand: "any", status: "all", q: "rice" });
+    expect(parseFilters({ temp: "tepid", brand: "Acme", status: "x", q: "  rice " })).toEqual({ temp: null, brand: "any", status: "all", q: "rice" });
+    expect(parseFilters({ temp: "frozen" }).temp).toBe("frozen");
   });
 
   it("reads the real values", () => {
@@ -54,8 +55,8 @@ describe("filterCatalogue", () => {
   });
 
   it("counts each temperature under the other filters", () => {
-    expect(tempCounts(catalogue, { ...none, temp: "chilled" })).toEqual({ all: 4, ambient: 3, chilled: 1 });
-    expect(tempCounts(catalogue, { ...none, status: "active" })).toEqual({ all: 3, ambient: 2, chilled: 1 });
+    expect(tempCounts(catalogue, { ...none, temp: "chilled" })).toEqual({ all: 4, ambient: 3, chilled: 1, frozen: 0 });
+    expect(tempCounts(catalogue, { ...none, status: "active" })).toEqual({ all: 3, ambient: 2, chilled: 1, frozen: 0 });
   });
 });
 

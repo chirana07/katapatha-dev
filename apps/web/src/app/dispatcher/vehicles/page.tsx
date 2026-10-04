@@ -10,7 +10,8 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { Tabs } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
 import { requireRole } from "@/lib/auth";
-import { dateParam, longDate, todayInColombo } from "@/lib/dates";
+import { longDate, todayInColombo } from "@/lib/dates";
+import { deskDate } from "../desk-date";
 import { readFailure } from "@/lib/failures";
 import { ageLabel, clockTime, percent, plural } from "@/lib/format";
 import { BackInService, MarkUnavailable } from "./availability-controls";
@@ -53,7 +54,7 @@ function href(state: { date: string; tab: VehicleTab; q: string; vehicle?: strin
 export default async function VehiclesPage({ searchParams }: { searchParams: Promise<Query> }) {
   const query = await searchParams;
   const user = await requireRole("DISPATCHER", PATH);
-  const date = dateParam(query.date);
+  const date = await deskDate(query.date);
   const tab = parseTab(query.tab);
   const q = (first(query.q) ?? "").trim().slice(0, 60);
   const selectedId = first(query.vehicle) || undefined;

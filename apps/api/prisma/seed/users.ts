@@ -1,5 +1,6 @@
 /**
- * The four seeded accounts, one per role, as the booklet requires.
+ * The seeded accounts: one per operating role, as the booklet requires, and an
+ * admin who keeps the accounts, outlets and vehicles.
  *
  * Their anchors are chosen from the hero day rather than picked at random, so
  * that signing in as each one lands you somewhere with a story:
@@ -75,6 +76,14 @@ export const SEED_USERS: SeedUser[] = [
     staffId: "STR-0074",
     pin: "9024",
     blurb: "Orders for OUT074, and needs to know when to staff the counter.",
+  },
+  {
+    email: "asha@waypoint.lk",
+    name: "Asha Wijesinghe",
+    role: "ADMIN",
+    staffId: "ADM-0001",
+    pin: "7531",
+    blurb: "Keeps the accounts, outlets and vehicles; sees every depot.",
   },
 ];
 

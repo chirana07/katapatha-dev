@@ -20,7 +20,7 @@ const sessionUserSchema = {
     id: { type: "string" },
     email: { type: "string", format: "email" },
     name: { type: "string" },
-    role: { type: "string", enum: ["DISPATCHER", "LOADER", "DRIVER", "STORE_MANAGER"] },
+    role: { type: "string", enum: ["DISPATCHER", "LOADER", "DRIVER", "STORE_MANAGER", "ADMIN"] },
     depotCode: nullableString,
     outletId: nullableString,
     defaultVehicleId: nullableString,

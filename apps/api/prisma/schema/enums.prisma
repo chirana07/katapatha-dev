@@ -12,13 +12,15 @@ enum Brand {
   Tech
 }
 
-/// What an ORDER needs. Distinct from VehicleTemp on purpose.
+/// What an ORDER needs. Distinct from VehicleTemp on purpose. `frozen` is ours,
+/// not the competition's: it needs a reefer exactly as `chilled` does.
 enum TempRequirement {
   chilled
+  frozen
   ambient
 }
 
-/// What a VEHICLE can do. A reefer may carry either; ambient may not carry chilled.
+/// What a VEHICLE can do. A reefer may carry any; ambient may carry only ambient.
 enum VehicleTemp {
   reefer
   ambient
@@ -54,11 +56,14 @@ enum Wave {
   DAYTIME
 }
 
+/// ADMIN is Waypoint-wide: it keeps the people, outlets and vehicles the four
+/// operating roles work with, and is scoped to no depot or outlet.
 enum Role {
   DISPATCHER
   LOADER
   DRIVER
   STORE_MANAGER
+  ADMIN
 }
 
 enum VehicleStatus {
@@ -198,4 +203,17 @@ enum CapacityActionStatus {
   APPROVED
   APPLIED
   REJECTED
+}
+
+/// Where an outlet's position came from.
+enum GeoSource {
+  SYNTHETIC
+  CSV
+  DISPATCHER
+}
+
+/// Whether a cached road leg was measured on the road network or estimated.
+enum RoadSource {
+  OSRM
+  ESTIMATE
 }

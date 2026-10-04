@@ -25,9 +25,9 @@ describe("the demo catalogue", () => {
     }
   });
 
-  it("covers every brand and both temperatures", () => {
+  it("covers every brand and every temperature class", () => {
     expect(new Set(PRODUCT_CATALOGUE.map((p) => p.brand))).toEqual(new Set(["Fresh", "Style", "Tech", null]));
-    expect(new Set(PRODUCT_CATALOGUE.map((p) => p.tempRequirement))).toEqual(new Set(["chilled", "ambient"]));
+    expect(new Set(PRODUCT_CATALOGUE.map((p) => p.tempRequirement))).toEqual(new Set(["chilled", "frozen", "ambient"]));
   });
 });
 

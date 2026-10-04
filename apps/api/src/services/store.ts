@@ -1,6 +1,7 @@
 
 
 import { nextOperatingDate as coreNextOperatingDate } from "@katapatha/core/domain/deferral";
+import type { TempRequirement } from "@katapatha/core/domain/types";
 import { prisma } from "../lib/db";
 import { ORDER_LINES_INCLUDE, itemsOf, type OrderItem } from "./products";
 import {
@@ -31,7 +32,7 @@ export interface StoreOrderView {
   id: string;
   ref: string;
   brand: "Fresh" | "Style" | "Tech";
-  tempRequirement: "chilled" | "ambient";
+  tempRequirement: TempRequirement;
   units: number;
   volumeM3: number;
   weightKg: number;
@@ -148,7 +149,7 @@ export async function loadStoreOrders(
  */
 export async function unitSizeFor(
   outletId: string,
-  temp: "chilled" | "ambient",
+  temp: TempRequirement,
 ): Promise<{ kgPerUnit: number; m3PerUnit: number; sample: number }> {
   const rows = await prisma.order.findMany({
     where: { outletId, tempRequirement: temp },
@@ -212,7 +213,7 @@ export interface IncomingDelivery {
   orderId: string;
   ref: string;
   brand: "Fresh" | "Style" | "Tech";
-  tempRequirement: "chilled" | "ambient";
+  tempRequirement: TempRequirement;
   units: number;
   /** What the order contains, when it was placed from products; empty otherwise. */
   items: OrderItem[];
@@ -439,6 +440,7 @@ export function accessNoteFor(outlet: {
 }
 
 /** "Dry groceries" reads better on a dock than "ambient". */
-export function goodsLabel(temp: "chilled" | "ambient"): string {
+export function goodsLabel(temp: TempRequirement): string {
+  if (temp === "frozen") return "Frozen goods";
   return temp === "chilled" ? "Chilled goods" : "Dry groceries";
 }

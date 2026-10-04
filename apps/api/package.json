@@ -16,6 +16,7 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed/index.ts",
     "db:seed:products": "tsx prisma/seed/productsOnly.ts",
+    "db:seed:geography": "tsx prisma/seed/geographyOnly.ts",
     "db:validate": "prisma validate"
   },
   "prisma": {

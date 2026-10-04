@@ -11,6 +11,7 @@ const prismaMock = vi.hoisted(() => ({
   },
   session: { create: vi.fn(), findUnique: vi.fn(), deleteMany: vi.fn() },
   vehicle: { findFirst: vi.fn() },
+  user: { findUnique: vi.fn() },
   $transaction: vi.fn(),
 }));
 
@@ -21,6 +22,8 @@ import {
   createSession,
   getSessionByToken,
   requireRoleOf,
+  verifyCredentials,
+  verifyStaffPin,
   type SessionUser,
 } from "../lib/auth.js";
 import { historyFor, recordDecision } from "../lib/audit.js";
@@ -80,6 +83,35 @@ describe("BE1 authentication, authorization and audit libraries", () => {
     expect(prismaMock.session.deleteMany).toHaveBeenCalledWith({
       where: { token: createHash("sha256").update("raw-token").digest("hex") },
     });
+  });
+
+  it("ends a disabled account's session even before it is deleted", async () => {
+    const future = new Date(Date.now() + 60_000);
+    prismaMock.session.findUnique.mockResolvedValue({ token: "h", expiresAt: future, user: { ...user, active: true } });
+    await expect(getSessionByToken("raw-token")).resolves.toMatchObject({ id: user.id });
+
+    prismaMock.session.findUnique.mockResolvedValue({ token: "h", expiresAt: future, user: { ...user, active: false } });
+    await expect(getSessionByToken("raw-token")).resolves.toBeNull();
+  });
+
+  it("refuses a disabled account's correct password with the wrong-password answer", async () => {
+    const bcrypt = (await import("bcryptjs")).default;
+    const passwordHash = await bcrypt.hash("waypoint", 4);
+    prismaMock.user.findUnique.mockResolvedValue({ ...user, passwordHash, active: true });
+    await expect(verifyCredentials("nimal@waypoint.lk", "waypoint")).resolves.toMatchObject({ id: user.id });
+
+    prismaMock.user.findUnique.mockResolvedValue({ ...user, passwordHash, active: false });
+    await expect(verifyCredentials("nimal@waypoint.lk", "waypoint")).resolves.toBeNull();
+  });
+
+  it("refuses a disabled account's correct PIN", async () => {
+    const bcrypt = (await import("bcryptjs")).default;
+    const pinHash = await bcrypt.hash("2580", 4);
+    prismaMock.user.findUnique.mockResolvedValue({ ...user, staffId: "DSP-0101", pinHash, active: true });
+    await expect(verifyStaffPin("dsp-0101", "2580")).resolves.toMatchObject({ id: user.id });
+
+    prismaMock.user.findUnique.mockResolvedValue({ ...user, staffId: "DSP-0101", pinHash, active: false });
+    await expect(verifyStaffPin("dsp-0101", "2580")).resolves.toBeNull();
   });
 
   it("rejects a dispatcher vehicle outside the caller's depot", async () => {

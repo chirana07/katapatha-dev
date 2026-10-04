@@ -35,7 +35,7 @@ const SKU_PATTERN = "^[A-Z0-9][A-Z0-9_-]{1,31}$";
 const NULLABLE_BRAND = {
   oneOf: [{ type: "string", enum: ["Fresh", "Style", "Tech"] }, { type: "null" }],
 } as const;
-const TEMP = { type: "string", enum: ["chilled", "ambient"] } as const;
+const TEMP = { type: "string", enum: ["chilled", "frozen", "ambient"] } as const;
 
 const PRODUCT = {
   type: "object",

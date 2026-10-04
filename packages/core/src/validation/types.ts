@@ -9,6 +9,7 @@
  */
 
 import type { AllowanceTable } from "../domain/tripTime";
+import type { TravelMatrix } from "../domain/travel";
 import type {
   ClockTime,
   DateOnly,
@@ -19,6 +20,7 @@ import type {
   TripNo,
   VehicleRef,
 } from "../domain/types";
+import { FRESH_DEADLINE, RELOAD_MIN } from "../domain/types";
 import type { RuleCode } from "./codes";
 
 export type Severity = "error" | "warning";
@@ -58,6 +60,14 @@ export interface PlanConfig {
   enforceNonFreshWindows: "warn" | "error";
   /** Fuel is a weekly ledger against a daily plan, so it warns before it blocks. */
   enforceFuelQuota: "off" | "warn" | "error";
+  /**
+   * Fresh deliveries must arrive by this time whatever an outlet's own window
+   * says; `null` switches the rule off. Checked only when road travel times are
+   * supplied, because that is when arrival times are real.
+   */
+  freshDeadline: ClockTime | null;
+  /** Minutes between a vehicle's first trip returning and its second leaving. */
+  reloadMin: number;
 }
 
 export const DEFAULT_PLAN_CONFIG: PlanConfig = {
@@ -66,6 +76,8 @@ export const DEFAULT_PLAN_CONFIG: PlanConfig = {
   maxTripsPerVehicle: 2,
   enforceNonFreshWindows: "warn",
   enforceFuelQuota: "error",
+  freshDeadline: FRESH_DEADLINE,
+  reloadMin: RELOAD_MIN,
 };
 
 export interface StopSnapshot {
@@ -94,6 +106,15 @@ export interface ReferenceData {
   allowance: AllowanceTable;
   vehicleStatus: ReadonlyMap<string, VehicleDayStatus>;
   fuel: ReadonlyMap<string, FuelPosition>;
+  /**
+   * Road minutes and kilometres between the depot and every outlet. When
+   * present, arrival times, windows, the Fresh deadline, a vehicle's turnaround
+   * between trips and fuel are all judged on the road; when absent the
+   * organisers' district table is used, exactly as before. Trip minutes against
+   * the wave budgets always use the district table, because that is what their
+   * checker measures.
+   */
+  travel?: TravelMatrix;
 }
 
 export interface DeferredSnapshot {

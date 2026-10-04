@@ -5,7 +5,7 @@ import {
   suggestDeferralReason,
 } from "@katapatha/core/domain/deferral";
 import { nextOperatingDate } from "./store";
-import type { Brand, DepotCode, OrderRef, OutletRef } from "@katapatha/core/domain/types";
+import { needsReefer, type Brand, type DepotCode, type OrderRef, type OutletRef } from "@katapatha/core/domain/types";
 import { isoDate, type loadPlan } from "./plans";
 
 /**
@@ -168,7 +168,7 @@ const MAX_OTHERS = 4;
 
 /** What kind of vehicle this order needed — the resource it competed for. */
 function resourceFor(a: LoadedAssignment): "refrigerated vehicle" | "van" | "vehicle" {
-  if (a.order.tempRequirement === "chilled") return "refrigerated vehicle";
+  if (needsReefer(a.order.tempRequirement)) return "refrigerated vehicle";
   if (a.order.outlet.parkingConstraint === "van_only") return "van";
   return "vehicle";
 }

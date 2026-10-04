@@ -140,7 +140,8 @@ OrderLimit:
 
 OrderLimits:
   type: object
-  required: [chilled, ambient]
+  required: [chilled, frozen, ambient]
   properties:
     chilled: { $ref: "./orders.yaml#/OrderLimit" }
+    frozen: { $ref: "./orders.yaml#/OrderLimit" }
     ambient: { $ref: "./orders.yaml#/OrderLimit" }

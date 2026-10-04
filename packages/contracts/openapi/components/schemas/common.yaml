@@ -27,7 +27,10 @@ Ulid:
 
 Role:
   type: string
-  enum: [DISPATCHER, LOADER, DRIVER, STORE_MANAGER]
+  description: >
+    The four operating roles, plus ADMIN, which is Waypoint-wide and keeps the
+    accounts, outlets and vehicles the others work with.
+  enum: [DISPATCHER, LOADER, DRIVER, STORE_MANAGER, ADMIN]
 
 Brand:
   type: string
@@ -35,14 +38,17 @@ Brand:
 
 TempRequirement:
   type: string
-  description: What an ORDER needs. Deliberately distinct from VehicleTemp.
-  enum: [chilled, ambient]
+  description: >
+    What an ORDER needs. Deliberately distinct from VehicleTemp. Chilled and
+    frozen goods both need a refrigerated vehicle; frozen is not in the
+    competition data.
+  enum: [chilled, frozen, ambient]
 
 VehicleTemp:
   type: string
   description: >
-    What a VEHICLE can do. A reefer may carry either; ambient may not carry
-    chilled. Conflating this with TempRequirement is the single most common way
+    What a VEHICLE can do. A reefer may carry any order; ambient may carry only
+    ambient. Conflating this with TempRequirement is the single most common way
     to break feasibility rule 2.
   enum: [reefer, ambient]
 

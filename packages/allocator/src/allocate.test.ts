@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { allocate } from "./allocate";
+import { allocate, createContext } from "./allocate";
+import { tryPlace, trySwapIn } from "./construct";
 import { loadPeakDayScenario, resolveDataRoot } from "./scenario";
 import type { AllocatorInput, AllocatorVehicle } from "./types";
 import { ALLOWANCE, DISTRICTS, order, outlet, vehicle } from "@katapatha/core/validation/fixtures";
@@ -86,7 +87,7 @@ describe("the allocator always passes its own validator", () => {
             outletId: id,
             brand,
             district,
-            tempRequirement: rand() < 0.4 ? "chilled" : "ambient",
+            tempRequirement: pickTemp(rand),
             volumeM3: Number((rand() * 8).toFixed(2)),
             weightKg: Number((rand() * 1500).toFixed(1)),
             windowOpen: brand === "Fresh" ? "05:00" : "09:00",
@@ -242,6 +243,73 @@ describe("scarce resources go to the work only they can do", () => {
   });
 });
 
+describe("frozen goods are refrigerated goods", () => {
+  it("defers a frozen order permanently when the fleet has no reefer, as for chilled", () => {
+    const out = allocate(
+      input({
+        outlets: [outlet("OUT001")],
+        vehicles: [avail(vehicle("VEH008", { temp: "ambient" }))],
+        orders: [order("F", { tempRequirement: "frozen" })],
+      }),
+    );
+    expect(out.deferred[0].reasonCode).toBe("NO_REEFER_IN_FLEET");
+    expect(out.deferred[0].permanent).toBe(true);
+  });
+
+  it("puts a frozen order on the reefer, never the ambient truck", () => {
+    const out = allocate(
+      input({
+        outlets: [outlet("OUT001")],
+        vehicles: [
+          avail(vehicle("VEH008", { temp: "ambient" })),
+          avail(vehicle("VEH001", { temp: "reefer" })),
+        ],
+        orders: [order("F", { tempRequirement: "frozen" })],
+      }),
+    );
+    expect(out.trips).toHaveLength(1);
+    expect(out.trips[0].vehicleId).toBe("VEH001");
+    expect(out.selfCheck).toEqual([]);
+  });
+
+  it("keeps the only reefer van for the frozen van-only outlet", () => {
+    const out = allocate(
+      input({
+        outlets: [
+          outlet("OUT001", { parkingConstraint: "van_only" }),
+          outlet("OUT002", { parkingConstraint: "van_only" }),
+        ],
+        vehicles: [
+          avail(vehicle("VAN_R", { type: "van", temp: "reefer", volumeCapM3: 7, weightCapKg: 1040 })),
+          avail(vehicle("VAN_A", { type: "van", temp: "ambient", volumeCapM3: 7, weightCapKg: 1040 })),
+        ],
+        orders: [
+          order("AMB", { outletId: "OUT002", tempRequirement: "ambient", volumeM3: 3 }),
+          order("FRZ", { outletId: "OUT001", tempRequirement: "frozen", volumeM3: 3 }),
+        ],
+      }),
+    );
+    expect(out.deferred).toHaveLength(0);
+    expect(out.trips.find((t) => t.stops.some((st) => st.orderRefs.includes("FRZ")))?.vehicleId).toBe("VAN_R");
+  });
+
+  it("lets chilled and frozen share one reefer trip (single compartment)", () => {
+    const out = allocate(
+      input({
+        outlets: [outlet("OUT001"), outlet("OUT002")],
+        vehicles: [avail(vehicle("VEH001", { temp: "reefer" }))],
+        orders: [
+          order("C", { outletId: "OUT001", tempRequirement: "chilled", volumeM3: 2 }),
+          order("F", { outletId: "OUT002", tempRequirement: "frozen", volumeM3: 2 }),
+        ],
+      }),
+    );
+    expect(out.trips).toHaveLength(1);
+    expect(out.deferred).toHaveLength(0);
+    expect(out.selfCheck).toEqual([]);
+  });
+});
+
 describe("the fairness policy has teeth", () => {
   it("serves an outlet skipped yesterday ahead of one served yesterday", () => {
     // One vehicle, room for one order. The skipped outlet must win.
@@ -272,12 +340,14 @@ describe("the fairness policy has teeth", () => {
   });
 
   /**
-   * The swap only fires when a previously-skipped order is reached too late to
-   * find space of its own. Constrained goods are placed first, so a routine
-   * CHILLED order gets on board before a skipped AMBIENT one is even tried —
-   * and the repair pass then has to take the space back.
+   * Scarce goods are placed first, but never ahead of an outlet that was skipped
+   * yesterday: that outlet's priority band comes before the scarcity tier. So a
+   * skipped AMBIENT order is placed before a routine CHILLED one, takes the only
+   * reefer, and the chilled order is the one left without a vehicle. (Before the
+   * band came first, the chilled order got on board first and the fairness swap
+   * had to take its place back.)
    */
-  it("takes a place back for an outlet that was skipped yesterday", () => {
+  it("serves an outlet that was skipped yesterday even when scarce goods compete for the only vehicle", () => {
     const out = allocate(
       input({
         outlets: [outlet("OUT001"), outlet("OUT002")],
@@ -309,8 +379,54 @@ describe("the fairness policy has teeth", () => {
     expect(served).toEqual(["AMB_SKIPPED"]);
     expect(out.deferred).toHaveLength(1);
     expect(out.deferred[0].orderRef).toBe("CHI_ROUTINE");
-    expect(out.deferred[0].reasonCode).toBe("YIELDED_TO_HIGHER_PRIORITY");
-    expect(out.deferred[0].suggestion).toMatch(/already been skipped/);
+    // Nobody was evicted: the chilled order simply found no refrigerated vehicle free.
+    expect(out.deferred[0].reasonCode).toBe("NO_REEFER_AVAILABLE");
+  });
+
+  /**
+   * The swap is a backstop now that the band decides the order, so it is tested
+   * directly on a hand-built state in which a routine order already holds the
+   * only place, as if it had been placed first.
+   */
+  it("trySwapIn takes a routine order's place for a skipped one, and says why the routine one went", () => {
+    const ctx = createContext(
+      input({
+        outlets: [outlet("OUT001"), outlet("OUT002")],
+        vehicles: [avail(vehicle("VEH001", { volumeCapM3: 10, weightCapKg: 4000 }))],
+        config: { maxTripsPerVehicle: 1 },
+        orders: [],
+      }),
+    );
+    const routine = order("ROUTINE", { outletId: "OUT001", volumeM3: 6, weightKg: 500, daysSinceLastServed: 1 });
+    const skipped = order("SKIPPED", { outletId: "OUT002", volumeM3: 6, weightKg: 500, deferredYesterday: true, daysSinceLastServed: 4 });
+    expect(tryPlace(ctx, routine)).toBe(true);
+    expect(tryPlace(ctx, skipped)).toBe(false);
+
+    const victim = trySwapIn(ctx, skipped);
+
+    expect(victim?.ref).toBe("ROUTINE");
+    expect(ctx.trips).toHaveLength(1);
+    expect(ctx.trips[0]!.stops.map((s) => s.outletId)).toEqual(["OUT002"]);
+    expect(ctx.ledger.explain(routine).reasonCode).toBe("YIELDED_TO_HIGHER_PRIORITY");
+    expect(ctx.ledger.explain(routine).suggestion).toMatch(/already been skipped/);
+  });
+
+  it("trySwapIn will not evict an order that was itself skipped yesterday", () => {
+    const ctx = createContext(
+      input({
+        outlets: [outlet("OUT001"), outlet("OUT002")],
+        vehicles: [avail(vehicle("VEH001", { volumeCapM3: 10, weightCapKg: 4000 }))],
+        config: { maxTripsPerVehicle: 1 },
+        orders: [],
+      }),
+    );
+    const first = order("FIRST", { outletId: "OUT001", volumeM3: 6, deferredYesterday: true, daysSinceLastServed: 5 });
+    const second = order("SECOND", { outletId: "OUT002", volumeM3: 6, deferredYesterday: true, daysSinceLastServed: 4 });
+    tryPlace(ctx, first);
+    tryPlace(ctx, second);
+
+    expect(trySwapIn(ctx, second)).toBeNull();
+    expect(ctx.trips[0]!.stops[0]!.outletId).toBe("OUT001");
   });
 });
 
@@ -338,6 +454,11 @@ describe("explaining a deferral", () => {
 // ---------------------------------------------------------------------------
 // The real peak-day scenario
 // ---------------------------------------------------------------------------
+
+function pickTemp(rand: () => number): "chilled" | "frozen" | "ambient" {
+  const r = rand();
+  return r < 0.3 ? "chilled" : r < 0.4 ? "frozen" : "ambient";
+}
 
 const dataRoot = resolveDataRoot();
 

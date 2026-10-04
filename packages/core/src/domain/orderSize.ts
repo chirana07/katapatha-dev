@@ -8,6 +8,8 @@
  * the store's call to make, not a split by dispatch.
  */
 
+import { needsReefer, type TempRequirement } from "./types";
+
 export interface FleetVehicle {
   type: "truck" | "van";
   temp: "reefer" | "ambient";
@@ -16,7 +18,7 @@ export interface FleetVehicle {
 }
 
 export interface OrderNeed {
-  tempRequirement: "chilled" | "ambient";
+  tempRequirement: TempRequirement;
   /** The outlet can only be reached by a van (parking constraint `van_only`). */
   vanOnly: boolean;
 }
@@ -29,7 +31,7 @@ export interface UnitSize {
 /** The vehicles allowed to carry this order at all — the allocator's own tests. */
 export function compatibleVehicles<V extends FleetVehicle>(vehicles: readonly V[], need: OrderNeed): V[] {
   return vehicles.filter(
-    (v) => (need.tempRequirement !== "chilled" || v.temp === "reefer") && (!need.vanOnly || v.type === "van"),
+    (v) => (!needsReefer(need.tempRequirement) || v.temp === "reefer") && (!need.vanOnly || v.type === "van"),
   );
 }
 

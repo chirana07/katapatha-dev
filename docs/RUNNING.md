@@ -106,6 +106,7 @@ R-01, S-01):
 | LOADER | `LDR-0142` | `4826` |
 | DRIVER | `DRV-0207` | `1357` |
 | STORE_MANAGER | `STR-0074` | `9024` |
+| ADMIN | `ADM-0001` | `7531` |
 
 The API still accepts the email and password above. Nothing on screen asks
 for them, but the native driver app and the demo/smoke scripts sign in that way.

@@ -25,6 +25,7 @@ export const DATA_FILES = {
   calendar: "calendar.csv",
   districtTravel: "district_travel.csv",
   serviceAllowance: "service_allowance.csv",
+  outletLocations: "outlet_locations.csv",
   trafficSpeed: "traffic_speed.csv",
   roadConditions: "road_conditions.csv",
   deliveriesTrain: "deliveries_train.csv",

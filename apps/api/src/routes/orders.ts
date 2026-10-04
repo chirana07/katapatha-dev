@@ -71,7 +71,7 @@ const ORDER_RESPONSE_ITEM = {
     outletId: { type: "string" },
     brand: { type: "string", enum: ["Fresh", "Style", "Tech"] },
     districtName: { type: "string" },
-    tempRequirement: { type: "string", enum: ["chilled", "ambient"] },
+    tempRequirement: { type: "string", enum: ["chilled", "frozen", "ambient"] },
     units: { type: "integer" },
     weightKg: { type: "number" },
     volumeM3: { type: "number" },
@@ -270,7 +270,7 @@ async function orderLimitsFor(outlet: { id: string; depotCode: string; parkingCo
     TempRequirement,
     { m3PerUnit: number; kgPerUnit: number; maxUnitsPerOrder: number }
   >;
-  for (const temp of ["chilled", "ambient"] as const) {
+  for (const temp of ["chilled", "frozen", "ambient"] as const) {
     const size = await unitSizeFor(outlet.id, temp);
     limits[temp as TempRequirement] = {
       m3PerUnit: size.m3PerUnit,
@@ -301,8 +301,8 @@ export default async function (fastify: FastifyInstance) {
           200: {
             type: "object",
             additionalProperties: false,
-            required: ["chilled", "ambient"],
-            properties: { chilled: LIMIT, ambient: LIMIT },
+            required: ["chilled", "frozen", "ambient"],
+            properties: { chilled: LIMIT, frozen: LIMIT, ambient: LIMIT },
           },
           403: ERROR_RESPONSE,
         },
@@ -425,7 +425,7 @@ export default async function (fastify: FastifyInstance) {
                 additionalProperties: false,
                 required: ["tempRequirement", "units"],
                 properties: {
-                  tempRequirement: { type: "string", enum: ["chilled", "ambient"] },
+                  tempRequirement: { type: "string", enum: ["chilled", "frozen", "ambient"] },
                   units: { type: "integer", minimum: 1, maximum: 10000 },
                 },
               },
@@ -454,7 +454,7 @@ export default async function (fastify: FastifyInstance) {
         requestId: string;
         forDate: string;
         items?: Array<{ productId: string; quantity: number }>;
-        lines?: Array<{ tempRequirement: "chilled" | "ambient"; units: number }>;
+        lines?: Array<{ tempRequirement: TempRequirement; units: number }>;
       };
 
       if ((body.items === undefined) === (body.lines === undefined)) {
@@ -661,6 +661,16 @@ export default async function (fastify: FastifyInstance) {
       // is likeliest in the minutes before the cutoff, when every outlet orders.
       const placeOnce = () =>
         prisma.$transaction(async (tx) => {
+          // The depot's queue for this day. Nothing else ever creates one, so
+          // without this an order for a day the seed did not cover is listed on
+          // the desk but can never be closed or planned. A day that is already
+          // closed or published is left as it is.
+          await tx.planningDay.upsert({
+            where: { date_depotCode: { date: requestedDate, depotCode: outlet.depotCode } },
+            create: { date: requestedDate, depotCode: outlet.depotCode },
+            update: {},
+          });
+
           // Allocate per-line sequential refs under the same requestedDate to
           // keep the (ref, requestedDate) unique index happy, and to leave an
           // operations-readable number on the dock card.

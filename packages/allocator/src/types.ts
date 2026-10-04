@@ -9,6 +9,8 @@
  */
 
 import type { AllowanceTable } from "@katapatha/core/domain/tripTime";
+import type { TravelMatrix, TravelSource } from "@katapatha/core/domain/travel";
+import { FRESH_DEADLINE, RELOAD_MIN } from "@katapatha/core/domain/types";
 import type {
   Brand,
   ClockTime,
@@ -45,7 +47,46 @@ export interface AllocatorConfig {
   enforceFuelQuota: boolean;
   /** Whether to try the fairness swap in the repair pass. */
   enableFairnessSwap: boolean;
+  /** Minutes between a vehicle's first trip returning and its second leaving. */
+  reloadMin: number;
+  /** Fresh trips must reach every stop by this time; `null` switches the rule off. */
+  freshDeadline: ClockTime | null;
+  /**
+   * How hard the improvement pass tries. The budget is counted in feasibility
+   * evaluations, never in time, so the same input gives the same plan on a fast
+   * machine and a slow one. `maxRounds: 0` plans with construction alone.
+   */
+  localSearch: { maxRounds: number; maxEvaluations: number };
+  objective: ObjectiveWeights;
 }
+
+/**
+ * What the improvement pass minimises. The serve weight is so much larger than
+ * the rest that the ordering is effectively lexicographic: serve as many
+ * priority-weighted orders as possible, then drive as few kilometres as
+ * possible (which is also the fuel), then use fewer trips, then wait less, then
+ * waste fewer reefers and vans on work any vehicle could do.
+ */
+export interface ObjectiveWeights {
+  /** Per served order, scaled by its priority: 1 + score / 1000. */
+  wServe: number;
+  /** Per road kilometre, the way home included. */
+  lambdaKm: number;
+  /** Per trip. A trip costs a whole outbound leg that consolidation saves. */
+  lambdaTrip: number;
+  /** Per minute spent waiting at an outlet for its window to open. */
+  lambdaWait: number;
+  /** Per order on a vehicle too capable for it (see `scarcity`). */
+  lambdaScarce: number;
+}
+
+export const DEFAULT_OBJECTIVE: ObjectiveWeights = {
+  wServe: 1e6,
+  lambdaKm: 1,
+  lambdaTrip: 25,
+  lambdaWait: 0.05,
+  lambdaScarce: 40,
+};
 
 export const DEFAULT_ALLOCATOR_CONFIG: AllocatorConfig = {
   predawnBudget: 270,
@@ -57,6 +98,10 @@ export const DEFAULT_ALLOCATOR_CONFIG: AllocatorConfig = {
   daytimeEnd: "18:00",
   enforceFuelQuota: true,
   enableFairnessSwap: true,
+  reloadMin: RELOAD_MIN,
+  freshDeadline: FRESH_DEADLINE,
+  localSearch: { maxRounds: 8, maxEvaluations: 200_000 },
+  objective: DEFAULT_OBJECTIVE,
 };
 
 export interface AllocatorInput {
@@ -68,8 +113,22 @@ export interface AllocatorInput {
   districts: ReadonlyMap<string, DistrictTravel>;
   allowance: AllowanceTable;
   fuel: ReadonlyMap<string, FuelPosition>;
-  config?: Partial<AllocatorConfig>;
+  /**
+   * Road minutes and kilometres between the depot and every outlet. The
+   * allocator never fetches this: it is handed in, so the allocator stays pure
+   * and a plan can be reproduced from its inputs. Without it (or when it does
+   * not cover every outlet in the queue) the organisers' district table is
+   * turned into legs and used instead, and the output says it is an estimate.
+   */
+  travel?: TravelMatrix;
+  config?: AllocatorOverrides;
 }
+
+/** Any setting may be overridden, and the nested ones may be overridden in part. */
+export type AllocatorOverrides = Partial<Omit<AllocatorConfig, "localSearch" | "objective">> & {
+  localSearch?: Partial<AllocatorConfig["localSearch"]>;
+  objective?: Partial<ObjectiveWeights>;
+};
 
 // ---------------------------------------------------------------------------
 // Why an order could not be placed.
@@ -89,6 +148,9 @@ export type RejectionCode =
   | "NO_REEFER_IN_FLEET"
   | "NO_VAN_IN_FLEET"
   | "DISTRICT_UNREACHABLE_IN_BUDGET"
+  | "NO_COMMON_WINDOW"
+  | "FRESH_DEADLINE_UNREACHABLE"
+  | "OUTLET_UNREACHABLE_IN_WINDOW"
   // Competitive — the fleet ran out today.
   | "NO_REEFER_AVAILABLE"
   | "NO_VAN_AVAILABLE"
@@ -101,6 +163,7 @@ export type RejectionCode =
   | "DAYTIME_BUDGET_EXCEEDED"
   | "FUEL_QUOTA_EXCEEDED"
   | "WINDOW_UNREACHABLE"
+  | "TRIP_SEQUENCE_CONFLICT"
   // Given up for a higher-priority order in the same lane.
   | "YIELDED_TO_HIGHER_PRIORITY";
 
@@ -110,6 +173,9 @@ export const PERMANENT_CODES: ReadonlySet<RejectionCode> = new Set<RejectionCode
   "NO_REEFER_IN_FLEET",
   "NO_VAN_IN_FLEET",
   "DISTRICT_UNREACHABLE_IN_BUDGET",
+  "NO_COMMON_WINDOW",
+  "FRESH_DEADLINE_UNREACHABLE",
+  "OUTLET_UNREACHABLE_IN_WINDOW",
 ]);
 
 export interface RejectionMetric {
@@ -164,6 +230,12 @@ export interface AllocatedStop {
   outletId: string;
   orderRefs: string[];
   plannedArrival: ClockTime;
+  /** When unloading begins: the arrival, or the window opening if that is later. */
+  serviceStart: ClockTime;
+  leave: ClockTime;
+  /** Road distance and time of the leg that reaches this stop. */
+  legKm: number;
+  legMinutes: number;
 }
 
 export interface AllocatedTrip {
@@ -173,11 +245,20 @@ export interface AllocatedTrip {
   district: string;
   wave: Wave;
   departAt: ClockTime;
+  /** The organisers' trip minutes, against the wave budget. Not the road time. */
   minutes: number;
+  /** Road distance, depot to depot, the way home included. */
   distanceKm: number;
+  /** Litres for that distance on this vehicle. */
   fuelL: number;
   volumeM3: number;
   weightKg: number;
+  /** Wall-clock minutes on the road, departure to return, waiting included. */
+  roadMinutes: number;
+  /** When the vehicle is back at the depot. */
+  returnAt: ClockTime;
+  /** Whether the legs came from the road network or the district table. */
+  travelSource: TravelSource;
   stops: AllocatedStop[];
 }
 
@@ -201,6 +282,30 @@ export interface AllocatorStats {
   hash: string;
 }
 
+/** The objective's parts for a plan, so the figure is explained and not merely stated. */
+export interface ObjectiveBreakdown {
+  /** The value minimised; lower is better. */
+  value: number;
+  /** Sum over served orders of 1 + priority / 1000. */
+  servedWeight: number;
+  roadKm: number;
+  trips: number;
+  waitMin: number;
+  scarcity: number;
+}
+
+/** What the improvement pass did, for the record. */
+export interface SearchSummary {
+  rounds: number;
+  /** Candidate trips checked. The budget is counted in these. */
+  evaluations: number;
+  /** How many times each kind of move was applied. */
+  moves: Record<string, number>;
+  /** The plan as construction left it, and after improvement. */
+  before: ObjectiveBreakdown;
+  after: ObjectiveBreakdown;
+}
+
 export interface AllocatorOutput {
   trips: AllocatedTrip[];
   deferred: DeferredOrder[];
@@ -214,4 +319,8 @@ export interface AllocatorOutput {
    */
   selfCheck: Violation[];
   stats: AllocatorStats;
+  /** What the plan's distances and times are made of. */
+  travelSource: TravelSource;
+  /** What the improvement pass did and what it bought. */
+  search: SearchSummary;
 }

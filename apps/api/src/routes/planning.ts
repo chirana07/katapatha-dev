@@ -8,6 +8,10 @@ import { describeDeferrals, laneAlternatives, nextRunDate } from "../services/de
 import { deferralMessage, shortDay } from "@katapatha/core/domain/deferral";
 import { DEFERRAL_REASONS } from "@katapatha/core/domain/reasons";
 import { snapshotFromPlan } from "../services/snapshot.js";
+import { isOperatingDay } from "../services/calendar.js";
+import { commitPlanFuel } from "../services/fuel.js";
+import { derivePriorityInputs } from "../services/priority.js";
+import { rollDeferredOrders } from "../services/rollover.js";
 import type { DepotCode } from "@katapatha/core/domain/types";
 
 /**
@@ -569,6 +573,18 @@ export default async function (fastify: FastifyInstance) {
         });
       }
 
+      // Waypoint operates Monday to Saturday (or as the reference calendar says).
+      // A day the depot does not run has nothing to plan, and a plan for it
+      // would spend a week's fuel on a day that cannot happen.
+      if (!(await isOperatingDay(date))) {
+        return reply.status(409).send({
+          error: {
+            code: "NON_OPERATING_DAY",
+            message: "The depot does not operate on that day, so there is nothing to plan.",
+          },
+        });
+      }
+
       // The contract allows the allocator only on a CLOSED or PLANNING day, and
       // the desk maps this 409 to "close the queue first". Without the check an
       // open queue could be planned while orders were still arriving, and a
@@ -675,14 +691,22 @@ export default async function (fastify: FastifyInstance) {
           status: { notIn: ["CANCELLED"] },
         },
       });
-      const updated = await prisma.planningDay.update({
-        where: { id: day.id },
-        data: {
-          status: "CLOSED",
-          closedAt: new Date(),
-          closedByUserId: user.id,
-          queueSnapshot: { ordersAtClose: orderCount, closedAt: new Date().toISOString() },
-        },
+      // Closing fixes the set of orders the plan is built from, so it is also
+      // where the fairness signals are settled: days since each outlet was last
+      // served, and whether it was passed over on the last run. In one
+      // transaction with the status change, so a closed day always has them.
+      const { updated, prioritised } = await prisma.$transaction(async (tx) => {
+        const prioritised = await derivePriorityInputs(tx, day.date, day.depotCode);
+        const updated = await tx.planningDay.update({
+          where: { id: day.id },
+          data: {
+            status: "CLOSED",
+            closedAt: new Date(),
+            closedByUserId: user.id,
+            queueSnapshot: { ordersAtClose: orderCount, closedAt: new Date().toISOString() },
+          },
+        });
+        return { updated, prioritised };
       });
       await recordDecision({
         actor: user,
@@ -690,7 +714,7 @@ export default async function (fastify: FastifyInstance) {
         entityType: "PlanningDay",
         entityId: updated.id,
         before: { status: day.status },
-        after: { status: updated.status, ordersAtClose: orderCount },
+        after: { status: updated.status, ordersAtClose: orderCount, prioritised },
       });
       return {
         id: updated.id,
@@ -1030,6 +1054,10 @@ export default async function (fastify: FastifyInstance) {
             where: { id: plan.planningDayId },
             data: { status: "PUBLISHED" },
           });
+          // The plan's fuel is spent here, in the same transaction, so a
+          // published plan always has its litres on the vehicles' weekly
+          // ledgers and the next day's planning sees them.
+          await commitPlanFuel(tx, plan.id, plan.planningDay.date);
           // Flip the orders the plan either served or deferred.
           const servedOrderIds = plan.assignments
             .filter((a) => a.decision === "SERVED")
@@ -1091,6 +1119,15 @@ export default async function (fastify: FastifyInstance) {
                 },
               });
             }
+            // The store has just been told the order moves to the next run, so
+            // make that true: queue it there. A permanent cause moves nowhere,
+            // and the store was told to place it again.
+            await rollDeferredOrders(tx, {
+              planId: plan.id,
+              orderIds: deferredAssignments.filter((a) => !isPermanent(a.explanation)).map((a) => a.orderId),
+              forDate: movesTo,
+              userId: user.id,
+            });
           }
         });
       } catch (error) {

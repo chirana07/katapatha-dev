@@ -116,6 +116,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
               { label: "All", href: productsHref({ ...filters, temp: null }), current: filters.temp === null, count: counts.all },
               { label: "Ambient", href: productsHref({ ...filters, temp: "ambient" }), current: filters.temp === "ambient", count: counts.ambient },
               { label: "Chilled", href: productsHref({ ...filters, temp: "chilled" }), current: filters.temp === "chilled", count: counts.chilled },
+              { label: "Frozen", href: productsHref({ ...filters, temp: "frozen" }), current: filters.temp === "frozen", count: counts.frozen },
             ]}
           />
 

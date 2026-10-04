@@ -21,6 +21,7 @@ vi.mock("../lib/db.js", () => ({
   prisma: {
     order: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     outlet: { findUnique: vi.fn() },
+    planningDay: { upsert: vi.fn() },
     vehicle: { findMany: vi.fn() },
     product: { findMany: vi.fn() },
     receiptConfirmation: { upsert: vi.fn() },
@@ -140,9 +141,10 @@ describe("orders routes", () => {
       const response = await server.inject({ method: "GET", url: "/v1/orders/limits" });
 
       expect(response.statusCode).toBe(200);
-      // Chilled needs a reefer (34 m3 / 0.1). Ambient may also ride the reefer.
+      // Chilled and frozen need a reefer (34 m3 / 0.1). Ambient may also ride the reefer.
       expect(response.json()).toEqual({
         chilled: { m3PerUnit: 0.1, kgPerUnit: 8, maxUnitsPerOrder: 340 },
+        frozen: { m3PerUnit: 0.1, kgPerUnit: 8, maxUnitsPerOrder: 340 },
         ambient: { m3PerUnit: 0.1, kgPerUnit: 8, maxUnitsPerOrder: 340 },
       });
       expect(prisma.vehicle.findMany).toHaveBeenCalledWith(
@@ -159,6 +161,7 @@ describe("orders routes", () => {
       // The only van is ambient: 10 m3 / 0.1, and no reefer van exists.
       expect(body.ambient.maxUnitsPerOrder).toBe(100);
       expect(body.chilled.maxUnitsPerOrder).toBe(0);
+      expect(body.frozen.maxUnitsPerOrder).toBe(0);
     });
 
     it("is the store manager's alone", async () => {
@@ -412,6 +415,48 @@ describe("orders routes", () => {
 
       for (const r of [response, badLine, notUuid, zero, empty]) expect(r.statusCode).toBe(422);
       expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("opens the depot's planning day for the date, so the dispatcher can close and plan it", async () => {
+      emptyDatabase();
+      const server = await serverFor();
+
+      const response = await post(server, validBody);
+
+      expect(response.statusCode).toBe(201);
+      // Upsert with an empty update: a day already closed or published is not reopened.
+      expect(prisma.planningDay.upsert).toHaveBeenCalledWith({
+        where: { date_depotCode: { date: new Date("2026-10-05T00:00:00.000Z"), depotCode: "Peliyagoda" } },
+        create: { date: new Date("2026-10-05T00:00:00.000Z"), depotCode: "Peliyagoda" },
+        update: {},
+      });
+    });
+
+    it("places a frozen line as its own order, with the frozen requirement", async () => {
+      const stored = emptyDatabase();
+      const server = await serverFor();
+
+      const response = await post(server, {
+        ...validBody,
+        lines: [
+          { tempRequirement: "frozen", units: 40 },
+          { tempRequirement: "chilled", units: 60 },
+        ],
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(stored).toHaveLength(2);
+      expect(vi.mocked(prisma.order.create).mock.calls.map((c) => c[0]!.data.tempRequirement)).toEqual(["frozen", "chilled"]);
+    });
+
+    it("refuses a frozen line larger than any reefer can carry", async () => {
+      emptyDatabase();
+      const server = await serverFor();
+
+      const response = await post(server, { ...validBody, lines: [{ tempRequirement: "frozen", units: 400 }] });
+
+      expect(response.statusCode).toBe(422);
+      expect(response.json().error.code).toBe("ORDER_TOO_LARGE");
     });
 
     it("places one order per line, with outlet details from the directory and size from the unit estimate", async () => {

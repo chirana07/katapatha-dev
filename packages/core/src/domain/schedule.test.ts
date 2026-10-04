@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeStopSchedule, effectiveWindow, latestFeasibleDeparture } from "./schedule";
+import { computeStopSchedule, effectiveWindow, latestFeasibleDeparture, windowIsEmpty } from "./schedule";
 import { ALLOWANCE, DISTRICTS, outlet } from "../validation/fixtures";
 import type { OutletRef } from "./types";
 
@@ -27,6 +27,40 @@ describe("effectiveWindow", () => {
     });
     expect(effectiveWindow(o).isMallWindow).toBe(true);
     expect(effectiveWindow(o).close).toBe("11:00");
+  });
+});
+
+describe("effectiveWindow for a mall outlet is where both windows overlap", () => {
+  const mall = (over: Partial<OutletRef>) =>
+    outlet("OUT015", { dockType: "mall_bay", parkingConstraint: "mall_dock", ...over });
+
+  it("takes the later opening and the earlier closing", () => {
+    // The shop asks for 08:00-12:00 but the mall only lets vehicles in 09:00-11:00.
+    expect(effectiveWindow(mall({ windowOpen: "08:00", windowClose: "12:00", mallWindowOpen: "09:00", mallWindowClose: "11:00" }))).toEqual({
+      open: "09:00",
+      close: "11:00",
+      isMallWindow: true,
+    });
+    // And the other way round: the shop is the tighter side.
+    expect(effectiveWindow(mall({ windowOpen: "09:30", windowClose: "10:30", mallWindowOpen: "09:00", mallWindowClose: "11:00" }))).toEqual({
+      open: "09:30",
+      close: "10:30",
+      isMallWindow: true,
+    });
+  });
+
+  it("is empty when the two windows never meet, so the outlet can never be served", () => {
+    const o = mall({ windowOpen: "05:30", windowClose: "08:00", mallWindowOpen: "09:00", mallWindowClose: "11:00" });
+    expect(windowIsEmpty(o)).toBe(true);
+    expect(windowIsEmpty(mall({ windowOpen: "08:00", windowClose: "12:00", mallWindowOpen: "09:00", mallWindowClose: "11:00" }))).toBe(false);
+    expect(windowIsEmpty(outlet("OUT001"))).toBe(false);
+  });
+
+  it("treats arriving before an empty window opens as a missed window, not as on time", () => {
+    // Arrives 04:54, waits for 09:00, but the window closed at 08:00: service would start after close.
+    const map = outlets([mall({ windowOpen: "05:30", windowClose: "08:00", mallWindowOpen: "09:00", mallWindowClose: "11:00" })]);
+    const sched = computeStopSchedule("04:30", colombo, "Fresh", [{ outletId: "OUT015", docks: ["mall_bay"] }], map, ALLOWANCE);
+    expect(sched[0]!.lateByMin).toBeGreaterThan(0);
   });
 });
 
